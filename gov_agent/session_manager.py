@@ -74,8 +74,19 @@ async def delete_session(phone: str) -> None:
     try:
         supabase.table("sessions").delete().eq("phone", phone).execute()
     except Exception as e:
-        logger.error(f"Supabase error in delete_session for phone {phone}: {e}")
-        raise
+        logger.warning(
+            "Supabase delete failed for phone %s, resetting session instead: %s",
+            phone,
+            e,
+        )
+        supabase.table("sessions").upsert(
+            {
+                "phone": phone,
+                "state": "greeting",
+                "collected_data": {},
+            },
+            on_conflict="phone",
+        ).execute()
 
 
 async def handle_incoming(msg: WhatsAppIncoming) -> str:

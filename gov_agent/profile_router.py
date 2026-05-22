@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from gov_agent.config import SECRET_KEY
 from gov_agent.db import supabase
+from gov_agent.document_vault import build_profile_updates, list_user_documents
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,6 +90,9 @@ class ProfileResponse(BaseModel):
     missing_fields: list[str]
 
 
+_PROFILE_MUTABLE_FIELDS = set(ProfileUpsert.model_fields.keys())
+
+
 # ---------------------------------------------------------------------------
 # JWT auth dependency — accepts missing / invalid token gracefully for demo
 # ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ def _optional_jwt(
         return None
     try:
         payload = jwt.decode(creds.credentials, SECRET_KEY, algorithms=["HS256"])
-        return payload.get("sub")
+        return payload.get("phone") or payload.get("sub")
     except JWTError:
         return None
 
@@ -116,6 +120,32 @@ def _compute_completeness(profile: dict) -> tuple[int, list[str]]:
             missing.append(field)
     pct = round(earned * 100 / _TOTAL_WEIGHT)
     return pct, missing
+
+
+def _collect_vault_profile_updates(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    for document in documents:
+        doc_type = str(document.get("doc_type", "")).strip()
+        extracted_data = document.get("extracted_data") or {}
+        mapped = build_profile_updates(doc_type, extracted_data)
+        for key, value in mapped.items():
+            if key not in _PROFILE_MUTABLE_FIELDS:
+                continue
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            updates.setdefault(key, value)
+    return updates
+
+
+def _merge_profile_fields(profile: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key, value in updates.items():
+        current = profile.get(key)
+        if current != value:
+            merged[key] = value
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +232,37 @@ async def populate_from_ocr(phone: str, token_phone: Optional[str] = Depends(_op
         raise
     except Exception as e:
         logger.error(f"populate_from_ocr error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{phone}/from-vault", response_model=ProfileResponse)
+async def populate_from_vault(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
+    """Copy mapped fields from the latest unified vault documents into empty profile fields."""
+    if token_phone and token_phone != phone:
+        raise HTTPException(status_code=403, detail="Access denied")
+    try:
+        documents = list_user_documents(phone, masked=False)
+        if not documents:
+            raise HTTPException(status_code=404, detail="No vault documents found for this phone")
+
+        vault_updates = _collect_vault_profile_updates(documents)
+        if not vault_updates:
+            raise HTTPException(status_code=422, detail="Vault documents did not contain mappable fields")
+
+        current_resp = supabase.table("citizen_profiles").select("*").eq("phone", phone).limit(1).execute()
+        current_profile = current_resp.data[0] if current_resp.data else {"phone": phone}
+        synced_updates = _merge_profile_fields(current_profile, vault_updates)
+
+        if synced_updates:
+            synced_updates["phone"] = phone
+            synced_updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+            supabase.table("citizen_profiles").upsert(synced_updates, on_conflict="phone").execute()
+
+        return await get_profile(phone, token_phone=token_phone)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"populate_from_vault error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

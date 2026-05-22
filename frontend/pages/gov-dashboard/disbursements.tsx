@@ -1,6 +1,23 @@
-import { useEffect, useState } from 'react';
 import Head from 'next/head';
-import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import {
+  BadgeIndianRupee,
+  CircleX,
+  Clock3,
+  CreditCard,
+  Landmark,
+  LoaderCircle,
+} from 'lucide-react';
+import { AnimatedCurrency } from '@/components/AnimatedCounter';
+import {
+  AnalyticsEmptyState,
+  AnalyticsLoadingState,
+  AnalyticsPageShell,
+  AnalyticsSection,
+  AnalyticsStatCard,
+  getAnalyticsToneClasses,
+  type AnalyticsTone,
+} from '@/components/gov-dashboard/AnalyticsPageShell';
 
 interface Disbursement {
   id: string;
@@ -51,21 +68,28 @@ export default function DisbursementsDashboard() {
     });
   };
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'text-yellow-400 bg-yellow-500/10',
-      processing: 'text-blue-400 bg-blue-500/10',
-      credited: 'text-green-400 bg-green-500/10',
-      failed: 'text-red-400 bg-red-500/10',
+  const getStatusTone = (status: string): AnalyticsTone => {
+    const tones: Record<string, AnalyticsTone> = {
+      pending: 'saffron',
+      processing: 'blue',
+      credited: 'teal',
+      failed: 'red',
     };
-    return colors[status] || 'text-gray-400 bg-gray-500/10';
+    return tones[status] || 'blue';
   };
+
+  const pendingCount = summary?.status_counts?.pending || 0;
+  const creditedCount = summary?.status_counts?.credited || 0;
+  const processingCount = summary?.status_counts?.processing || 0;
+  const failedCount = summary?.status_counts?.failed || 0;
+  const recentDisbursements = summary?.recent_disbursements || [];
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-blue-400 font-mono">Loading disbursement data...</div>
-      </div>
+      <AnalyticsLoadingState
+        title="Loading disbursement analytics"
+        description="Preparing the latest payout and NPCI tracking snapshot..."
+      />
     );
   }
 
@@ -75,136 +99,125 @@ export default function DisbursementsDashboard() {
         <title>Disbursements | GovBot Analytics</title>
       </Head>
 
-      <div className="min-h-screen bg-black p-6">
-        <div className="max-w-6xl mx-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <Link href="/gov-dashboard" className="text-green-400 hover:underline text-sm mb-2 block">
-                ← Back to Dashboard
-              </Link>
-              <h1 className="text-3xl font-bold text-white">💰 Disbursement Tracking</h1>
-              <p className="text-gray-400">Scholarship payment monitoring and NPCI transaction status</p>
-            </div>
-            <button
-              onClick={fetchDisbursementData}
-              className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition-colors"
-            >
-              Refresh
-            </button>
-          </div>
+      <AnalyticsPageShell
+        title="Disbursement Tracking"
+        description="Scholarship payment monitoring and NPCI transaction status in the same calm, readable GOVbot interface."
+        icon={<BadgeIndianRupee className="h-7 w-7" />}
+        summaryLabel="Pending amount"
+        summaryValue={<AnimatedCurrency end={summary?.pending_amount_inr || 0} />}
+        summaryText="Queued payout volume waiting for the next processing pass."
+        onRefresh={fetchDisbursementData}
+      >
+        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <AnalyticsStatCard
+            label="Pending"
+            value={pendingCount}
+            subtext={`₹${(summary?.pending_amount_inr || 0).toLocaleString('en-IN')} awaiting release`}
+            tone="saffron"
+            icon={Clock3}
+          />
+          <AnalyticsStatCard
+            label="Credited"
+            value={creditedCount}
+            subtext={`₹${(summary?.credited_amount_inr || 0).toLocaleString('en-IN')} settled successfully`}
+            tone="teal"
+            icon={Landmark}
+          />
+          <AnalyticsStatCard
+            label="Processing"
+            value={processingCount}
+            subtext="Transfers currently moving through the bank workflow"
+            tone="blue"
+            icon={LoaderCircle}
+          />
+          <AnalyticsStatCard
+            label="Failed"
+            value={failedCount}
+            subtext="Transactions needing follow-up or retry handling"
+            tone="red"
+            icon={CircleX}
+          />
+        </section>
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-gray-900 border border-yellow-500/30 rounded-lg p-6">
-              <div className="text-yellow-400 font-mono text-sm uppercase mb-2">Pending</div>
-              <div className="text-3xl font-bold text-white">
-                {summary?.status_counts?.pending || 0}
-              </div>
-              <div className="text-yellow-400/60 text-sm mt-1">
-                ₹{(summary?.pending_amount_inr || 0).toLocaleString('en-IN')}
-              </div>
-            </div>
-            <div className="bg-gray-900 border border-green-500/30 rounded-lg p-6">
-              <div className="text-green-400 font-mono text-sm uppercase mb-2">Credited</div>
-              <div className="text-3xl font-bold text-white">
-                {summary?.status_counts?.credited || 0}
-              </div>
-              <div className="text-green-400/60 text-sm mt-1">
-                ₹{(summary?.credited_amount_inr || 0).toLocaleString('en-IN')}
-              </div>
-            </div>
-            <div className="bg-gray-900 border border-blue-500/30 rounded-lg p-6">
-              <div className="text-blue-400 font-mono text-sm uppercase mb-2">Processing</div>
-              <div className="text-3xl font-bold text-white">
-                {summary?.status_counts?.processing || 0}
-              </div>
-            </div>
-            <div className="bg-gray-900 border border-red-500/30 rounded-lg p-6">
-              <div className="text-red-400 font-mono text-sm uppercase mb-2">Failed</div>
-              <div className="text-3xl font-bold text-white">
-                {summary?.status_counts?.failed || 0}
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Disbursements Table */}
-          <div className="bg-gray-900 border border-green-500/30 rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-green-500/20">
-              <h2 className="text-lg font-bold text-white">Recent Disbursements</h2>
-            </div>
-
-            {summary?.recent_disbursements && summary.recent_disbursements.length > 0 ? (
+        <div className="mb-8">
+          <AnalyticsSection
+            title="Recent disbursements"
+            description="Latest scholarship payment records with confirmation and NPCI status details."
+          >
+            {recentDisbursements.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-800">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Confirmation</th>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Phone</th>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Amount</th>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Txn ID</th>
-                      <th className="px-6 py-3 text-left text-xs font-mono text-gray-400 uppercase">Date</th>
+                <table className="w-full min-w-[720px]">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Confirmation</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Phone</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Amount</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Txn ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Date</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-800">
-                    {summary.recent_disbursements.map((d) => (
-                      <tr key={d.id} className="hover:bg-gray-800/50">
-                        <td className="px-6 py-4 font-mono text-xs text-green-400">
-                          {d.confirmation_number}
-                        </td>
-                        <td className="px-6 py-4 text-gray-300 font-mono text-xs">
-                          {d.phone}
-                        </td>
-                        <td className="px-6 py-4 text-white font-bold">
-                          ₹{d.amount.toLocaleString('en-IN')}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-1 rounded text-xs uppercase ${getStatusColor(d.status)}`}>
-                            {d.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-gray-400 font-mono text-xs">
-                          {d.npci_txn_id ? (
-                            <span className="text-blue-400">{d.npci_txn_id}</span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-gray-400 text-sm">
-                          {formatDate(d.credited_at || d.created_at)}
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y divide-slate-100">
+                    {recentDisbursements.map((disbursement) => {
+                      const tone = getStatusTone(disbursement.status);
+                      const tones = getAnalyticsToneClasses(tone);
+
+                      return (
+                        <tr key={disbursement.id} className="transition-colors hover:bg-slate-50/70">
+                          <td className="px-4 py-4 text-sm font-medium text-slate-900">{disbursement.confirmation_number}</td>
+                          <td className="px-4 py-4 text-sm text-slate-500">{disbursement.phone}</td>
+                          <td className="px-4 py-4 text-sm font-semibold text-slate-900">
+                            ₹{disbursement.amount.toLocaleString('en-IN')}
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${tones.chip}`}>
+                              {disbursement.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 text-sm text-slate-500">{disbursement.npci_txn_id || '—'}</td>
+                          <td className="px-4 py-4 text-sm text-slate-500">
+                            {formatDate(disbursement.credited_at || disbursement.created_at)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div className="p-12 text-center">
-                <div className="text-6xl mb-4">💳</div>
-                <h3 className="text-white font-bold mb-2">No Disbursements</h3>
-                <p className="text-gray-400">
-                  No scholarship disbursements have been processed yet.
-                </p>
-              </div>
+              <AnalyticsEmptyState
+                icon={<CreditCard className="h-7 w-7" />}
+                title="No disbursements yet"
+                description="No scholarship disbursements have been processed yet."
+              />
             )}
-          </div>
-
-          {/* NPCI Info */}
-          <div className="mt-8 bg-gray-900/50 border border-green-500/20 rounded-lg p-6">
-            <h3 className="text-green-400 font-mono text-sm uppercase mb-3">NPCI Integration</h3>
-            <p className="text-gray-400 text-sm mb-3">
-              Bank account verification and disbursement tracking via NPCI:
-            </p>
-            <ul className="text-gray-400 text-sm space-y-2 list-disc list-inside">
-              <li>Penny drop verification (₹0.01 test transaction)</li>
-              <li>Real-time account validation</li>
-              <li>Automatic disbursement tracking</li>
-              <li>SMS/WhatsApp notifications on credit</li>
-            </ul>
-          </div>
+          </AnalyticsSection>
         </div>
-      </div>
+
+        <AnalyticsSection
+          title="NPCI integration"
+          description="Bank account verification and payout tracking signals used during scholarship disbursement operations."
+        >
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              'Penny drop verification through a ₹0.01 test transaction',
+              'Real-time account validation before payout execution',
+              'Automatic disbursement tracking for credited and pending states',
+              'SMS and WhatsApp notifications when funds are credited',
+            ].map((item) => (
+              <div key={item} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-sm leading-6 text-slate-600">{item}</p>
+              </div>
+            ))}
+          </div>
+        </AnalyticsSection>
+
+        <div className="mt-8 text-center">
+          <p className="text-xs text-slate-400">
+            GovBot Disbursement Analytics · Monitoring scholarship payout movement and NPCI-linked status updates
+          </p>
+        </div>
+      </AnalyticsPageShell>
     </>
   );
 }

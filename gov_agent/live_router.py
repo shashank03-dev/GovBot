@@ -2,10 +2,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from gov_agent.db import supabase
+from gov_agent.profile_router import _optional_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,56 @@ async def advance_live_session(session_id: str, step: int, form_state: dict, sta
 class ActivityEvent(BaseModel):
     phone: str
     event: str
+
+
+def _build_dashboard_summary(applications: list[dict]) -> dict[str, int]:
+    return {
+        "total": len(applications),
+        "submitted": sum(1 for app in applications if app.get("status") == "submitted"),
+        "pending": sum(1 for app in applications if app.get("status") == "pending"),
+        "failed": sum(1 for app in applications if app.get("status") == "failed"),
+    }
+
+
+@router.get("/dashboard/{phone}")
+async def get_dashboard_snapshot(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
+    if token_phone and token_phone != phone:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        applications_resp = (
+            supabase.table("applications")
+            .select("id, service, status, confirmation_number, submitted_at")
+            .eq("phone", phone)
+            .order("submitted_at", desc=True)
+            .execute()
+        )
+        applications = applications_resp.data or []
+
+        activity_resp = (
+            supabase.table("activity_feed")
+            .select("event, created_at")
+            .eq("phone", phone)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        activities = [
+            {"event": row["event"], "timestamp": row["created_at"]}
+            for row in reversed(activity_resp.data or [])
+        ]
+
+        return {
+            "summary": _build_dashboard_summary(applications),
+            "applications": applications,
+            "activities": activities,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("dashboard snapshot fetch failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch dashboard snapshot")
 
 
 @router.post("/event")

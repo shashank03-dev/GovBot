@@ -4,6 +4,9 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 
+const ALLOWED_OCR_TYPES = ['image/jpeg', 'image/jpg', 'image/png'] as const;
+const MAX_OCR_BYTES = 8 * 1024 * 1024;
+
 interface OcrResult {
   name?: string;
   dob?: string;
@@ -11,6 +14,33 @@ interface OcrResult {
   gender?: string;
   address?: string;
   error?: string;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read file'));
+        return;
+      }
+      const [, base64 = ''] = result.split(',', 2);
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function validateOcrFile(file: File) {
+  if (!ALLOWED_OCR_TYPES.includes(file.type as typeof ALLOWED_OCR_TYPES[number])) {
+    return 'Only JPG or PNG Aadhaar images are supported here.';
+  }
+  if (file.size > MAX_OCR_BYTES) {
+    return 'File is too large. Please upload an Aadhaar image that is 8 MB or smaller.';
+  }
+  return '';
 }
 
 export default function OcrPage() {
@@ -36,6 +66,15 @@ export default function OcrPage() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    const validationError = validateOcrFile(file);
+    if (validationError) {
+      setImageFile(null);
+      setImagePreview(null);
+      setResult(null);
+      setError(validationError);
+      e.target.value = '';
+      return;
+    }
     setImageFile(file);
     const reader = new FileReader();
     reader.onload = () => setImagePreview(reader.result as string);
@@ -46,22 +85,29 @@ export default function OcrPage() {
 
   async function handleExtract() {
     if (!imageFile) { setError('Please upload an Aadhaar image first'); return; }
+    const validationError = validateOcrFile(imageFile);
+    if (validationError) { setError(validationError); return; }
     setLoading(true);
     setError('');
     setResult(null);
 
     try {
-      const buf = await imageFile.arrayBuffer();
-      const imageB64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const imageB64 = await fileToBase64(imageFile);
+      const phone = localStorage.getItem('govbot_phone') || '';
 
       const res = await fetch('/api/ocr/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_b64: imageB64 }),
+        body: JSON.stringify({
+          image_b64: imageB64,
+          phone,
+          file_name: imageFile.name,
+          mime_type: imageFile.type || 'image/jpeg',
+        }),
       });
 
-      if (!res.ok) throw new Error('OCR extraction failed');
       const data: OcrResult = await res.json();
+      if (!res.ok) throw new Error(data.error || 'OCR extraction failed');
 
       if (data.error) {
         setError(data.error);
@@ -116,7 +162,7 @@ export default function OcrPage() {
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:border-[#ff9933]/50 transition-colors mb-5 bg-slate-50/50">
-            <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" id="aadhaar-upload" />
+            <input type="file" accept="image/jpeg,image/png" onChange={handleFileChange} className="hidden" id="aadhaar-upload" />
             <label htmlFor="aadhaar-upload" className="cursor-pointer block">
               {imagePreview ? (
                 <div>
@@ -129,7 +175,7 @@ export default function OcrPage() {
                     <span className="text-3xl">🆔</span>
                   </div>
                   <p className="text-sm text-slate-600">Click to upload Aadhaar card image</p>
-                  <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG — front side recommended</p>
+                  <p className="text-xs text-slate-400 mt-1">Supports JPG, PNG up to 8 MB — front side recommended</p>
                 </div>
               )}
             </label>

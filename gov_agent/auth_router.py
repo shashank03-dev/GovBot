@@ -136,9 +136,8 @@ async def send_otp(body: SendOTPRequest):
         logger.error("Failed to store OTP for %s: %s", phone, e)
         raise HTTPException(status_code=500, detail="Failed to store OTP") from e
 
-    # Deliver OTP over WhatsApp
-    message = f"Your GovBot OTP is: {code}\nValid for 10 minutes."
-    delivered = await whatsapp_sender.send_message(phone, message)
+    # Deliver OTP over WhatsApp using a business-initiated template when configured.
+    delivered = await whatsapp_sender.send_otp_message(phone, code, validity_minutes=10)
     if not delivered:
         logger.error("Failed to deliver OTP to %s", phone)
         raise HTTPException(status_code=502, detail="Failed to send OTP via WhatsApp or SMS")
@@ -179,7 +178,7 @@ async def verify_otp(body: VerifyOTPRequest):
 
     # Issue a 7-day JWT
     exp = datetime.now(timezone.utc) + timedelta(days=7)
-    payload = {"phone": phone, "exp": exp}
+    payload = {"phone": phone, "sub": phone, "exp": exp}
     token = jwt.encode(payload, str(SECRET_KEY), algorithm="HS256")
 
     logger.info("JWT issued for %s", phone)

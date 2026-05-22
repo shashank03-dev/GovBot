@@ -171,6 +171,8 @@ graph TD
 | `WHATSAPP_TOKEN` | Meta WhatsApp Cloud API Access Token |
 | `WHATSAPP_PHONE_NUMBER_ID` | Your WhatsApp Phone ID |
 | `WHATSAPP_VERIFY_TOKEN` | Token for Webhook Verification |
+| `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template name to use for business-initiated OTP login |
+| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code for OTP login (default: `en_US`) |
 | `SUPABASE_URL` | Your Supabase Project URL |
 | `SUPABASE_KEY` | Supabase Service Role Key |
 | `GEMINI_API_KEY` | Google AI Studio Gemini API Key |

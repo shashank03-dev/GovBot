@@ -143,7 +143,14 @@ app.include_router(
 @asynccontextmanager
 async def lifespan(app):
     from gov_agent.config import validate_config
+    from gov_agent.document_vault import cleanup_document_duplicates
     validate_config()
+    try:
+        removed = cleanup_document_duplicates()
+        if removed:
+            print(f"Document vault: removed {removed} duplicate rows")
+    except Exception as exc:
+        print(f"Document vault cleanup skipped: {exc}")
     # Check if RAG needs ingestion
     import chromadb
     client = chromadb.PersistentClient(

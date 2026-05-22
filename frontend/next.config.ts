@@ -6,9 +6,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   async rewrites() {
     return [
       { source: '/api/send-otp', destination: `${BACKEND_URL}/auth/send-otp` },

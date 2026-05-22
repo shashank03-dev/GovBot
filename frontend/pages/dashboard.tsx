@@ -6,24 +6,49 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import AnimatedCounter from '@/components/AnimatedCounter';
 import StatusBadge from '@/components/StatusBadge';
+import { mergeRealtimeActivity } from '@/lib/dashboardRealtime.mjs';
 import { FileText, Clock, CheckCircle, XCircle, ExternalLink, ArrowRight, User, Zap, ChevronRight } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 type Application = {
   id: string;
   service: string;
-  status: 'pending' | 'submitted' | 'failed';
+  status: 'pending' | 'submitted' | 'failed' | 'approved' | 'rejected' | 'processing';
   confirmation_number?: string;
   submitted_at: string;
 };
 
+type Activity = {
+  event: string;
+  timestamp: string;
+};
+
+type DashboardSummary = {
+  total: number;
+  submitted: number;
+  pending: number;
+  failed: number;
+};
+
+type DashboardSnapshot = {
+  summary: DashboardSummary;
+  applications: Application[];
+  activities: Activity[];
+  updated_at: string;
+};
+
 export default function Dashboard() {
   const [apps, setApps] = useState<Application[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary>({
+    total: 0,
+    submitted: 0,
+    pending: 0,
+    failed: 0,
+  });
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [profilePct, setProfilePct] = useState<number | null>(null);
   const [profileName, setProfileName] = useState<string>('');
@@ -42,74 +67,151 @@ export default function Dashboard() {
       return;
     }
 
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('applications')
-          .select('*')
-          .eq('phone', phone)
-          .order('submitted_at', { ascending: false });
+    let isActive = true;
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
 
-        if (error) throw error;
-        if (data) setApps(data as Application[]);
+    const fetchDashboard = async (background = false) => {
+      try {
+        if (!background && isActive) {
+          setLoading(true);
+        }
+
+        const [snapshotRes, profileRes] = await Promise.all([
+          fetch(`/api/live/dashboard/${encodeURIComponent(phone)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`/api/profile/${encodeURIComponent(phone)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (snapshotRes.status === 401 || snapshotRes.status === 403) {
+          localStorage.removeItem('govbot_token');
+          router.push('/login');
+          return;
+        }
+
+        if (snapshotRes.ok) {
+          const snapshot: DashboardSnapshot = await snapshotRes.json();
+          if (!isActive) {
+            return;
+          }
+          setApps(snapshot.applications || []);
+          setActivities(snapshot.activities || []);
+          setSummary(snapshot.summary || { total: 0, submitted: 0, pending: 0, failed: 0 });
+        }
+
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          if (!isActive) {
+            return;
+          }
+          setProfilePct(profile.completeness_pct ?? 0);
+          setProfileName(profile.profile?.full_name || '');
+        }
       } catch (err) {
-        console.error('Error fetching applications:', err);
+        console.error('Dashboard refresh failed:', err);
       } finally {
-        setLoading(false);
+        if (isActive) {
+          setLoading(false);
+        }
       }
-
-      try {
-        const token = localStorage.getItem('govbot_token');
-        const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(phone)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const d = await res.json();
-          setProfilePct(d.completeness_pct ?? 0);
-          setProfileName(d.profile?.full_name || '');
-        }
-      } catch { /* profile optional */ }
-    })();
-  }, [router]);
-
-  const [activities, setActivities] = useState<{event: string; timestamp: string}[]>([]);
-
-  useEffect(() => {
-    const phone = localStorage.getItem('govbot_phone');
-    if (!phone) return;
-
-    const fetchActivities = async () => {
-      try {
-        const res = await fetch(`/api/live/feed/${encodeURIComponent(phone)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setActivities(data.events || []);
-        }
-      } catch {}
     };
 
-    fetchActivities();
-    const interval = setInterval(fetchActivities, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    const scheduleRefresh = () => {
+      if (refreshTimeout) {
+        return;
+      }
+      refreshTimeout = setTimeout(() => {
+        refreshTimeout = null;
+        void fetchDashboard(true);
+      }, 250);
+    };
 
-  const totalApps = apps.length;
-  const submittedCount = apps.filter(a => a.status === 'submitted').length;
-  const pendingCount = apps.filter(a => a.status === 'pending').length;
-  const failedCount = apps.filter(a => a.status === 'failed').length;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        scheduleRefresh();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      scheduleRefresh();
+    };
+
+    void fetchDashboard();
+
+    const interval = setInterval(() => {
+      void fetchDashboard(true);
+    }, 15000);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleWindowFocus);
+
+    const realtimeChannel = supabase
+      ?.channel(`dashboard:${phone}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'applications', filter: `phone=eq.${phone}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'activity_feed', filter: `phone=eq.${phone}` },
+        (payload) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setActivities((current) =>
+              mergeRealtimeActivity(current, {
+                event: String(payload.new.event || ''),
+                timestamp: String(payload.new.created_at || ''),
+              }),
+            );
+          }
+
+          scheduleRefresh();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'citizen_profiles', filter: `phone=eq.${phone}` },
+        scheduleRefresh,
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleWindowFocus);
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+      }
+      if (realtimeChannel && supabase) {
+        void supabase.removeChannel(realtimeChannel);
+      }
+    };
+  }, [router]);
 
   const stats = [
-    { label: 'Total', value: totalApps, icon: FileText, color: '#ff9933', bg: '#fff7ed' },
-    { label: 'Submitted', value: submittedCount, icon: CheckCircle, color: '#0d9488', bg: '#f0fdfa' },
-    { label: 'Pending', value: pendingCount, icon: Clock, color: '#f59e0b', bg: '#fffbeb' },
-    { label: 'Failed', value: failedCount, icon: XCircle, color: '#ef4444', bg: '#fef2f2' },
+    { label: 'Total', value: summary.total, icon: FileText, color: '#ff9933', bg: '#fff7ed' },
+    { label: 'Submitted', value: summary.submitted, icon: CheckCircle, color: '#0d9488', bg: '#f0fdfa' },
+    { label: 'Pending', value: summary.pending, icon: Clock, color: '#f59e0b', bg: '#fffbeb' },
+    { label: 'Failed', value: summary.failed, icon: XCircle, color: '#ef4444', bg: '#fef2f2' },
   ];
 
   const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr + 'Z');
-    const IST = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${pad(IST.getUTCDate())}/${pad(IST.getUTCMonth() + 1)}/${IST.getUTCFullYear()}, ${pad(IST.getUTCHours())}:${pad(IST.getUTCMinutes())}`;
+    return new Intl.DateTimeFormat('en-IN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Kolkata',
+    }).format(new Date(dateStr));
   };
 
   return (
@@ -206,7 +308,7 @@ export default function Dashboard() {
                   <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">{stat.label}</span>
                 </div>
                 <div className="text-3xl font-bold text-slate-900">
-                  {loading ? '-' : <AnimatedCounter end={stat.value} />}
+                  {loading ? '-' : <AnimatedCounter key={`${stat.label}-${stat.value}`} end={stat.value} />}
                 </div>
               </motion.div>
             );

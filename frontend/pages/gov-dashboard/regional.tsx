@@ -1,6 +1,20 @@
-import { useEffect, useState } from 'react';
 import Head from 'next/head';
-import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import {
+  BarChart3,
+  CheckCircle2,
+  Clock3,
+  Globe2,
+  Map,
+} from 'lucide-react';
+import AnimatedCounter from '@/components/AnimatedCounter';
+import {
+  AnalyticsLoadingState,
+  AnalyticsPageShell,
+  AnalyticsSection,
+  AnalyticsStatCard,
+  getAnalyticsToneClasses,
+} from '@/components/gov-dashboard/AnalyticsPageShell';
 
 interface PortalData {
   count: number;
@@ -37,15 +51,17 @@ export default function RegionalDashboard() {
     }
   };
 
-  const portals = data?.by_portal || {};
-  const totalApps = Object.values(portals).reduce((sum, p) => sum + p.count, 0);
-  const totalApproved = Object.values(portals).reduce((sum, p) => sum + (p.approved || 0), 0);
+  const portals = Object.entries(data?.by_portal || {});
+  const totalApps = portals.reduce((sum, [, portal]) => sum + portal.count, 0);
+  const totalApproved = portals.reduce((sum, [, portal]) => sum + (portal.approved || 0), 0);
+  const totalPending = portals.reduce((sum, [, portal]) => sum + (portal.submitted || 0), 0);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-green-400 font-mono">Loading regional analytics...</div>
-      </div>
+      <AnalyticsLoadingState
+        title="Loading regional analytics"
+        description="Preparing the latest portal-wise scholarship distribution snapshot..."
+      />
     );
   }
 
@@ -55,153 +71,148 @@ export default function RegionalDashboard() {
         <title>Regional Analytics | GovBot Analytics</title>
       </Head>
 
-      <div className="min-h-screen bg-black p-6">
-        <div className="max-w-6xl mx-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <Link href="/gov-dashboard" className="text-green-400 hover:underline text-sm mb-2 block">
-                ← Back to Dashboard
-              </Link>
-              <h1 className="text-3xl font-bold text-white">🗺️ Regional Analytics</h1>
-              <p className="text-gray-400">Portal-wise scholarship distribution</p>
+      <AnalyticsPageShell
+        title="Regional Analytics"
+        description="Portal-wise scholarship distribution with a more readable breakdown for approvals, pending applications, and overall participation."
+        icon={<Map className="h-7 w-7" />}
+        summaryLabel="Active portals"
+        summaryValue={<AnimatedCounter end={portals.length} />}
+        summaryText="Schemes currently represented in the scholarship analytics dataset."
+        onRefresh={fetchRegionalData}
+      >
+        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <AnalyticsStatCard
+            label="Total applications"
+            value={totalApps}
+            subtext="Combined application volume across all tracked portals"
+            tone="saffron"
+            icon={BarChart3}
+          />
+          <AnalyticsStatCard
+            label="Approved"
+            value={totalApproved}
+            subtext={`${totalApps ? ((totalApproved / totalApps) * 100).toFixed(1) : '0.0'}% approval rate`}
+            tone="teal"
+            icon={CheckCircle2}
+          />
+          <AnalyticsStatCard
+            label="Active portals"
+            value={portals.length}
+            subtext="Portal cohorts with at least one tracked application"
+            tone="blue"
+            icon={Globe2}
+          />
+          <AnalyticsStatCard
+            label="Pending"
+            value={totalPending}
+            subtext="Applications still waiting for approval or rejection"
+            tone="red"
+            icon={Clock3}
+          />
+        </section>
+
+        <div className="mb-8">
+          <AnalyticsSection
+            title="Portal breakdown"
+            description="Status mix for each supported scholarship portal based on the currently available application data."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {portals.map(([key, portal]) => {
+                const approvedPct = portal.count ? ((portal.approved || 0) / portal.count) * 100 : 0;
+                const submittedPct = portal.count ? ((portal.submitted || 0) / portal.count) * 100 : 0;
+                const rejectedPct = portal.count ? ((portal.rejected || 0) / portal.count) * 100 : 0;
+
+                return (
+                  <div key={key} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-5">
+                    <div className="mb-5 flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                          {portal.name}
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-500">Portal-wide scholarship activity snapshot</p>
+                      </div>
+                      <div className="rounded-full bg-teal-50 px-3 py-1 text-sm font-semibold text-teal-700">
+                        <AnimatedCounter end={portal.count} />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {[
+                        { label: 'Approved', value: portal.approved || 0, percent: approvedPct, tone: 'teal' as const },
+                        { label: 'Submitted', value: portal.submitted || 0, percent: submittedPct, tone: 'saffron' as const },
+                        { label: 'Rejected', value: portal.rejected || 0, percent: rejectedPct, tone: 'red' as const },
+                      ].map((item) => {
+                        const tones = getAnalyticsToneClasses(item.tone);
+
+                        return (
+                          <div key={item.label}>
+                            <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
+                              <span className={`font-medium ${tones.text}`}>{item.label}</span>
+                              <span className="font-semibold text-slate-700">{item.value}</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full bg-white">
+                              <div
+                                className={`h-full rounded-full ${tones.progress}`}
+                                style={{ width: `${item.percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-3 gap-3 border-t border-slate-200 pt-5 text-center">
+                      <div className="rounded-2xl bg-white px-3 py-3">
+                        <div className="text-2xl font-bold text-teal-700" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                          {portal.approved || 0}
+                        </div>
+                        <div className="mt-1 text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Approved</div>
+                      </div>
+                      <div className="rounded-2xl bg-white px-3 py-3">
+                        <div className="text-2xl font-bold text-[#e67e00]" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                          {portal.submitted || 0}
+                        </div>
+                        <div className="mt-1 text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Pending</div>
+                      </div>
+                      <div className="rounded-2xl bg-white px-3 py-3">
+                        <div className="text-2xl font-bold text-red-700" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                          {portal.rejected || 0}
+                        </div>
+                        <div className="mt-1 text-xs font-medium uppercase tracking-[0.16em] text-slate-400">Rejected</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <button
-              onClick={fetchRegionalData}
-              className="bg-green-500 hover:bg-green-600 text-black font-bold py-2 px-4 rounded transition-colors"
-            >
-              Refresh
-            </button>
-          </div>
+          </AnalyticsSection>
+        </div>
 
-          {/* Summary Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-gray-900 border border-green-500/30 rounded-lg p-6">
-              <div className="text-green-400 font-mono text-sm uppercase mb-2">Total Applications</div>
-              <div className="text-3xl font-bold text-white">{totalApps.toLocaleString('en-IN')}</div>
-            </div>
-            <div className="bg-gray-900 border border-green-500/30 rounded-lg p-6">
-              <div className="text-green-400 font-mono text-sm uppercase mb-2">Approved</div>
-              <div className="text-3xl font-bold text-white">{totalApproved.toLocaleString('en-IN')}</div>
-              <div className="text-green-400/60 text-sm">
-                {totalApps ? ((totalApproved / totalApps) * 100).toFixed(1) : 0}% rate
-              </div>
-            </div>
-            <div className="bg-gray-900 border border-blue-500/30 rounded-lg p-6">
-              <div className="text-blue-400 font-mono text-sm uppercase mb-2">Active Portals</div>
-              <div className="text-3xl font-bold text-white">{Object.keys(portals).length}</div>
-            </div>
-            <div className="bg-gray-900 border border-yellow-500/30 rounded-lg p-6">
-              <div className="text-yellow-400 font-mono text-sm uppercase mb-2">Pending</div>
-              <div className="text-3xl font-bold text-white">
-                {Object.values(portals).reduce((sum, p) => sum + (p.submitted || 0), 0).toLocaleString('en-IN')}
-              </div>
-            </div>
-          </div>
-
-          {/* Portal Breakdown */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-            {Object.entries(portals).map(([key, portal]) => (
-              <div key={key} className="bg-gray-900 border border-green-500/30 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold text-white">{portal.name}</h3>
-                  <span className="bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-sm font-bold">
-                    {portal.count}
-                  </span>
-                </div>
-
-                {/* Progress bars */}
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-green-400">Approved</span>
-                      <span className="text-white">{portal.approved || 0}</span>
-                    </div>
-                    <div className="w-full bg-gray-800 rounded-full h-2">
-                      <div 
-                        className="bg-green-500 h-2 rounded-full transition-all"
-                        style={{ width: `${portal.count ? ((portal.approved || 0) / portal.count) * 100 : 0}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-yellow-400">Submitted</span>
-                      <span className="text-white">{portal.submitted || 0}</span>
-                    </div>
-                    <div className="w-full bg-gray-800 rounded-full h-2">
-                      <div 
-                        className="bg-yellow-500 h-2 rounded-full transition-all"
-                        style={{ width: `${portal.count ? ((portal.submitted || 0) / portal.count) * 100 : 0}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-red-400">Rejected</span>
-                      <span className="text-white">{portal.rejected || 0}</span>
-                    </div>
-                    <div className="w-full bg-gray-800 rounded-full h-2">
-                      <div 
-                        className="bg-red-500 h-2 rounded-full transition-all"
-                        style={{ width: `${portal.count ? ((portal.rejected || 0) / portal.count) * 100 : 0}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 pt-4 border-t border-gray-800 grid grid-cols-3 gap-4 text-center">
-                  <div>
-                    <div className="text-2xl font-bold text-green-400">{portal.approved || 0}</div>
-                    <div className="text-xs text-gray-500 uppercase">Approved</div>
-                  </div>
-                  <div>
-                    <div className="text-2xl font-bold text-yellow-400">{portal.submitted || 0}</div>
-                    <div className="text-xs text-gray-500 uppercase">Pending</div>
-                  </div>
-                  <div>
-                    <div className="text-2xl font-bold text-red-400">{portal.rejected || 0}</div>
-                    <div className="text-xs text-gray-500 uppercase">Rejected</div>
-                  </div>
-                </div>
+        <AnalyticsSection
+          title="Analytics coverage"
+          description={data?.note}
+        >
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              { short: 'NSP', label: 'National Scholarship Portal' },
+              { short: 'PMSS', label: 'Post Matric (SC/ST)' },
+              { short: 'CSSS', label: 'Central Sector Scholarship' },
+              { short: 'Minority', label: 'Minority Scholarship' },
+            ].map((portal) => (
+              <div key={portal.short} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <div className="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">{portal.short}</div>
+                <div className="mt-2 text-sm font-semibold text-slate-900">{portal.label}</div>
               </div>
             ))}
           </div>
+        </AnalyticsSection>
 
-          {/* Info Note */}
-          <div className="bg-gray-900/50 border border-green-500/20 rounded-lg p-6">
-            <h3 className="text-green-400 font-mono text-sm uppercase mb-3">Analytics Coverage</h3>
-            <p className="text-gray-400 text-sm mb-3">{data?.note}</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-              <div className="bg-gray-800 rounded p-3">
-                <div className="text-xs text-gray-500 uppercase">NSP</div>
-                <div className="text-white text-sm">National Scholarship Portal</div>
-              </div>
-              <div className="bg-gray-800 rounded p-3">
-                <div className="text-xs text-gray-500 uppercase">PMSS</div>
-                <div className="text-white text-sm">Post Matric (SC/ST)</div>
-              </div>
-              <div className="bg-gray-800 rounded p-3">
-                <div className="text-xs text-gray-500 uppercase">CSSS</div>
-                <div className="text-white text-sm">Central Sector</div>
-              </div>
-              <div className="bg-gray-800 rounded p-3">
-                <div className="text-xs text-gray-500 uppercase">Minority</div>
-                <div className="text-white text-sm">Minority Scholarship</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="mt-8 text-center">
-            <p className="text-gray-500 text-xs">
-              GovBot Regional Analytics • Data from scholarship applications
-            </p>
-          </div>
+        <div className="mt-8 text-center">
+          <p className="text-xs text-slate-400">
+            GovBot Regional Analytics · Portal-wise scholarship intake and decision distribution
+          </p>
         </div>
-      </div>
+      </AnalyticsPageShell>
     </>
   );
 }

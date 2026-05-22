@@ -39,20 +39,20 @@ class BankVerifyResponse(BaseModel):
 
 # Mock database of valid bank accounts for demo
 MOCK_BANK_ACCOUNTS = {
-    "SBIN0001234_1234567890": {
-        "name": "Rahul Kumar",
+    "SBIN0012345_325671904812": {
+        "name": "SHASHANK GOWDA T",
         "status": "active",
-        "branch": "Bangalore Main",
+        "branch": "HMT Layout",
     },
     "HDFC0005678_9876543210": {
-        "name": "Priya Sharma",
+        "name": "SHASHANK GOWDA T",
         "status": "active",
-        "branch": "Mumbai Andheri",
+        "branch": "Bangalore North",
     },
     "ICIC0009012_5555666677": {
-        "name": "Amit Patel",
+        "name": "SHASHANK GOWDA T",
         "status": "active",
-        "branch": "Ahmedabad SG Road",
+        "branch": "Bangalore North",
     },
 }
 
@@ -148,12 +148,7 @@ async def mock_bank_verify(body: BankVerifyRequest):
         # Simulate 80% success rate for random accounts
         import random
         if random.random() < 0.8:
-            # Generate random name for demo
-            demo_names = [
-                "Rahul Kumar", "Priya Sharma", "Amit Patel", "Sneha Gupta",
-                "Vikram Singh", "Neha Reddy", "Arun Kumar", "Divya Nair"
-            ]
-            demo_name = random.choice(demo_names)
+            demo_name = "SHASHANK GOWDA T"
             
             supabase.table("bank_verifications").update({
                 "status": "verified",
@@ -164,7 +159,7 @@ async def mock_bank_verify(body: BankVerifyRequest):
                     "penny_drop_amount": 0.01,
                     "transaction_id": f"TXN-{uuid.uuid4().hex[:12]}",
                     "verified_at": datetime.now(timezone.utc).isoformat(),
-                    "note": "Random account verified for demo",
+                    "note": "Demo account verified",
                 },
                 "verified_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", verification_id).execute()

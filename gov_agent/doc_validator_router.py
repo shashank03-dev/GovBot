@@ -1,50 +1,56 @@
-import json
 import logging
-from datetime import date, datetime, timedelta
-from typing import Literal, Optional
+from typing import Optional
 
-import google.generativeai as genai
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from gov_agent.config import GEMINI_API_KEY
-from gov_agent.db import supabase
+from gov_agent.document_vault import (
+    DocumentVaultError,
+    analyze_document_validity,
+    create_signed_document_url,
+    delete_user_document,
+    ensure_profile_passkey,
+    get_user_document,
+    ingest_document,
+    list_user_documents,
+    log_document_access,
+    update_user_document,
+)
+from gov_agent.models import DocumentEditRequest, DocumentUploadRequest
+from gov_agent.profile_router import _optional_jwt
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
-DocType = Literal["income_cert", "caste_cert", "marksheet", "aadhaar"]
-
-VALIDITY_DAYS: dict[str, Optional[int]] = {
-    "income_cert": 365,
-    "caste_cert": 3 * 365,
-    "marksheet": 5 * 365,
-    "aadhaar": None,
-}
-
-
-def _expiry_date(issue: date, doc_type: str) -> Optional[date]:
-    days = VALIDITY_DAYS.get(doc_type)
-    if days is None:
-        return None
-    return issue + timedelta(days=days)
+def _vault_http_exception(exc: DocumentVaultError) -> HTTPException:
+    status_map = {
+        "upload": 400,
+        "ocr": 422,
+        "storage": 502,
+        "passkey_required": 401,
+        "passkey_invalid": 403,
+        "passkey_not_set": 428,
+    }
+    return HTTPException(status_code=status_map.get(exc.code, 500), detail=exc.message)
 
 
-def _parse_date(raw: str) -> Optional[date]:
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"):
-        try:
-            return datetime.strptime(raw.strip(), fmt).date()
-        except ValueError:
-            continue
-    return None
+def _require_token_phone(token_phone: Optional[str]) -> str:
+    if not token_phone:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return token_phone
+
+
+def _require_document_passkey(request: Request, phone: str) -> None:
+    pin = request.headers.get("X-Document-Passkey")
+    try:
+        ensure_profile_passkey(phone, pin)
+    except DocumentVaultError as exc:
+        raise _vault_http_exception(exc) from exc
 
 
 class DocValidateRequest(BaseModel):
-    doc_type: DocType
+    doc_type: str
     image_b64: str
     session_id: Optional[str] = None
     phone: Optional[str] = None
@@ -52,110 +58,141 @@ class DocValidateRequest(BaseModel):
 
 @router.post("/validate")
 async def validate_document(req: DocValidateRequest):
-    if not GEMINI_API_KEY:
-        return {"error": "Document validation unavailable: GEMINI_API_KEY not configured"}
+    result = analyze_document_validity(req.doc_type, req.image_b64)
+    return result
 
-    prompt = (
-        f"This is a scanned {req.doc_type.replace('_', ' ')} document image.\n"
-        "Extract:\n"
-        "- issue_date: date the document was issued (format DD/MM/YYYY or YYYY-MM-DD)\n"
-        "- doc_type_detected: what kind of document this appears to be\n"
-        "- quality: 'good' | 'low' | 'unreadable'\n"
-        "Return JSON only: "
-        '{"issue_date":"","doc_type_detected":"","quality":"good"}'
-    )
 
-    issue_date_obj: Optional[date] = None
-    flags: list[str] = []
-    raw_text = ""
-
+@router.post("/upload")
+async def upload_document(
+    req: DocumentUploadRequest,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    resolved_phone = _require_token_phone(token_phone)
+    if resolved_phone != req.phone:
+        raise HTTPException(status_code=403, detail="Access denied")
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        image_part = {
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": req.image_b64,
-            }
-        }
-        response = model.generate_content([prompt, image_part])
-        raw_text = response.text.strip()
-        json_start = raw_text.find("{")
-        json_end = raw_text.rfind("}") + 1
-        result = json.loads(raw_text[json_start:json_end])
-
-        quality = result.get("quality", "good")
-        if quality == "unreadable":
-            flags.append("unreadable")
-        elif quality == "low":
-            flags.append("low_quality")
-
-        raw_issue = result.get("issue_date", "")
-        if raw_issue:
-            issue_date_obj = _parse_date(raw_issue)
-
-    except Exception as e:
-        logger.error("Gemini doc validation failed: %s", e)
-        flags.append("unreadable")
-
-    today = date.today()
-    expiry: Optional[date] = None
-    valid = False
-
-    if req.doc_type == "aadhaar":
-        valid = True
-        issue_date_obj = issue_date_obj
-    elif issue_date_obj:
-        if issue_date_obj > today:
-            flags.append("future_date")
-            valid = False
-        else:
-            expiry = _expiry_date(issue_date_obj, req.doc_type)
-            if expiry and today > expiry:
-                flags.append("expired")
-                valid = False
-            else:
-                valid = True
-    else:
-        if "unreadable" not in flags:
-            flags.append("unreadable")
-        valid = False
-
-    max_days = VALIDITY_DAYS.get(req.doc_type)
-    if max_days and issue_date_obj and not flags:
-        age_days = (today - issue_date_obj).days
-        message = (
-            f"Valid — issued {age_days} days ago, "
-            f"expires {expiry.strftime('%d/%m/%Y') if expiry else 'N/A'}."
+        return await ingest_document(
+            phone=req.phone,
+            doc_type=req.doc_type,
+            source=req.source,
+            image_b64=req.image_b64,
+            media_id=req.media_id,
+            session_id=req.session_id,
+            file_name=req.file_name,
+            mime_type=req.mime_type,
         )
-    elif "expired" in flags:
-        message = f"{req.doc_type.replace('_', ' ').title()} has expired and may be rejected by portal."
-    elif "future_date" in flags:
-        message = "Document issue date is in the future — please check."
-    elif "unreadable" in flags:
-        message = "Document could not be read — please upload a clearer image."
-    elif "low_quality" in flags:
-        message = "Document quality is low — portal may reject it."
-    else:
-        message = "Document is valid."
+    except DocumentVaultError as exc:
+        raise _vault_http_exception(exc) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Document upload failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
+@router.get("/item/{document_id}")
+async def get_document_item(
+    document_id: str,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    return document
+
+
+@router.post("/item/{document_id}/signed-url")
+async def create_document_signed_url(
+    document_id: str,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    signed_url = create_signed_document_url(document["storage_path"])
     try:
-        supabase.table("document_checks").insert({
-            "session_id": req.session_id,
-            "phone": req.phone,
-            "doc_type": req.doc_type,
-            "issue_date": issue_date_obj.isoformat() if issue_date_obj else None,
-            "expiry_date": expiry.isoformat() if expiry else None,
-            "valid": valid,
-            "flags": flags,
-        }).execute()
-    except Exception as db_err:
-        logger.warning("Doc check DB insert failed: %s", db_err)
+        log_document_access(
+            phone=document["phone"],
+            document_id=document_id,
+            action="preview",
+            metadata={"source": "web"},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for preview %s: %s", document_id, exc)
+    return {"document_id": document_id, "signed_url": signed_url}
 
-    return {
-        "valid": valid,
-        "doc_type": req.doc_type,
-        "issue_date": issue_date_obj.strftime("%d/%m/%Y") if issue_date_obj else None,
-        "expiry_date": expiry.strftime("%d/%m/%Y") if expiry else None,
-        "flags": flags,
-        "message": message,
-    }
+
+@router.patch("/item/{document_id}")
+async def update_document_item(
+    document_id: str,
+    req: DocumentEditRequest,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    updated = update_user_document(document_id, req.extracted_data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        log_document_access(
+            phone=document["phone"],
+            document_id=document_id,
+            action="edit",
+            metadata={"fields": sorted(req.extracted_data.keys())},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for edit %s: %s", document_id, exc)
+    return updated
+
+
+@router.delete("/item/{document_id}")
+async def delete_document_item(
+    document_id: str,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    try:
+        log_document_access(
+            phone=document["phone"],
+            document_id=document_id,
+            action="delete",
+            metadata={"doc_type": document.get("doc_type")},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for delete %s: %s", document_id, exc)
+    delete_user_document(document_id)
+    return {"deleted": True, "document_id": document_id}
+
+
+@router.get("/{phone}")
+async def get_documents_for_phone(
+    phone: str,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    resolved_phone = _require_token_phone(token_phone)
+    if resolved_phone != phone:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return {"phone": phone, "documents": list_user_documents(phone)}

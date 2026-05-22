@@ -9,6 +9,15 @@ from gov_agent import rag_engine
 from gov_agent import graph
 from gov_agent.config import BASE_URL, FRONTEND_URL
 from gov_agent.config import GEMINI_API_KEY
+from gov_agent.document_vault import (
+    create_signed_document_url,
+    format_sensitive_document_reply,
+    get_latest_user_document,
+    hash_passkey,
+    ingest_document,
+    log_document_access,
+    verify_passkey,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +92,7 @@ MENU = (
     "• 'profile' — View/update profile\n"
     "• 'set pin' — Set security passkey\n"
     "• 'my pan' / 'my aadhaar' — View docs (passkey needed)\n"
+    "• 'upload pan' / 'upload aadhaar' — Save KYC docs\n"
     "• 'web' — Open web dashboard\n\n"
     "Reply with 1-5 or a command above"
 )
@@ -96,18 +106,93 @@ PORTAL_MENU = (
     "Reply with 1, 2, 3 or 4"
 )
 
+_DOCUMENT_UPLOAD_COMMANDS = {
+    "upload pan": "pan",
+    "upload aadhaar": "aadhaar",
+    "upload income cert": "income_cert",
+    "upload income certificate": "income_cert",
+    "upload caste cert": "caste_cert",
+    "upload caste certificate": "caste_cert",
+    "upload marksheet": "marksheet",
+}
+
+_DOCUMENT_UPLOAD_LABELS = {
+    "pan": "PAN card",
+    "aadhaar": "Aadhaar card",
+    "income_cert": "income certificate",
+    "caste_cert": "caste certificate",
+    "marksheet": "marksheet",
+}
+
+
+def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
+    extracted = result.get("extracted_data") or {}
+    label = _DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type.replace("_", " "))
+    lines = [f"✅ Your {label} has been saved.", f"Status: {result.get('status', 'ready')}", ""]
+
+    visible_fields = {
+        "pan": ["pan_number", "full_name", "father_name", "dob"],
+        "aadhaar": ["aadhaar_number", "full_name", "dob", "gender", "address"],
+        "income_cert": ["certificate_number", "annual_income", "issue_date", "valid_until"],
+        "caste_cert": ["certificate_number", "caste", "category", "issue_date"],
+        "marksheet": ["student_name", "roll_number", "year", "percentage", "issue_date"],
+    }.get(doc_type, [])
+
+    pretty_names = {
+        "pan_number": "PAN Number",
+        "full_name": "Full Name",
+        "father_name": "Father Name",
+        "dob": "DOB",
+        "aadhaar_number": "Aadhaar Number",
+        "gender": "Gender",
+        "address": "Address",
+        "certificate_number": "Certificate Number",
+        "annual_income": "Annual Income",
+        "issue_date": "Issue Date",
+        "valid_until": "Valid Until",
+        "caste": "Caste",
+        "category": "Category",
+        "student_name": "Student Name",
+        "roll_number": "Roll Number",
+        "year": "Year",
+        "percentage": "Percentage",
+    }
+
+    for key in visible_fields:
+        value = extracted.get(key)
+        if value in (None, "", []):
+            continue
+        lines.append(f"{pretty_names.get(key, key.replace('_', ' ').title())}: {value}")
+
+    validation = result.get("validation") or {}
+    if validation.get("message"):
+        lines.extend(["", validation["message"]])
+
+    lines.extend(["", "Type 'Hi' for menu or upload another document command."])
+    return "\n".join(lines)
+
 
 async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
     body = msg.body or ""
     data = session.get("collected_data", {})
     state = session.get("state", "greeting")
 
-    _EXIT_KEYWORDS = {"exit", "close", "restart", "cancel", "reset", "start over", "/start"}
+    _RESTART_KEYWORDS = {"restart", "reset", "start over", "/start"}
+    _EXIT_KEYWORDS = {"exit", "close", "cancel"}
     body_lower = body.strip().lower()
 
     # ── Global keyword: set passkey ────────────────────────────────────────
     if body_lower in {"set pin", "set passkey", "change pin", "change passkey"}:
         return ("🔐 Enter a 4-digit security PIN:", "set_passkey", data)
+
+    if body_lower in _DOCUMENT_UPLOAD_COMMANDS:
+        doc_type = _DOCUMENT_UPLOAD_COMMANDS[body_lower]
+        label = _DOCUMENT_UPLOAD_LABELS[doc_type]
+        return (
+            f"📎 Please send your {label} as a clear photo or document file.",
+            "kyc_document_upload",
+            {**data, "_pending_doc_type": doc_type},
+        )
 
     # ── Global keyword: open web dashboard ─────────────────────────────────
     if body_lower in {"web", "open web", "dashboard", "open dashboard", "website"}:
@@ -134,14 +219,21 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
     for keyword, field in _SENSITIVE_PATTERNS.items():
         if keyword in body_lower and ("my" in body_lower or "what" in body_lower or "show" in body_lower):
             profile = await _load_profile(msg.phone)
-            if not profile.get("passkey"):
-                data["_reveal_field"] = field
+            if not profile.get("passkey_hash"):
+                next_data = {**data, "_after_passkey": "reveal"}
+                if keyword in {"pan", "aadhaar"}:
+                    next_data["_reveal_doc_type"] = keyword
+                else:
+                    next_data["_reveal_field"] = field
                 return (
                     "🔐 First, set a 4-digit security passkey to protect your data:",
                     "set_passkey",
-                    {**data, "_reveal_field": field, "_after_passkey": "reveal"},
+                    next_data,
                 )
-            data["_reveal_field"] = field
+            if keyword in {"pan", "aadhaar"}:
+                data["_reveal_doc_type"] = keyword
+            else:
+                data["_reveal_field"] = field
             return ("🔐 Enter your 4-digit passkey:", "passkey_verify", data)
 
     # ── Global keyword: update profile ──────────────────────────────────────
@@ -174,6 +266,9 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             "form_fill_url",
             data,
         )
+
+    if body_lower in _RESTART_KEYWORDS:
+        return (MENU, "greeting", {})
 
     if body_lower in _EXIT_KEYWORDS:
         farewell = (
@@ -394,10 +489,9 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
         pin = body.strip()
         if not pin.isdigit() or len(pin) != 4:
             return ("❌ Enter a 4-digit PIN only.", "set_passkey", data)
-        await _save_profile_field(msg.phone, "passkey", pin)
+        await _save_profile_field(msg.phone, "passkey_hash", hash_passkey(pin))
         await _emit_activity(msg.phone, "🔐 Security passkey set")
         if data.get("_after_passkey") == "reveal":
-            field = data.get("_reveal_field", "")
             data.pop("_after_passkey", None)
             return ("✅ Passkey set! Now enter it to view your data:", "passkey_verify", data)
         return (
@@ -410,9 +504,41 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
     elif state == "passkey_verify":
         pin = body.strip()
         profile = await _load_profile(msg.phone)
-        stored_pin = profile.get("passkey", "")
-        if pin != stored_pin:
+        stored_digest = profile.get("passkey_hash", "")
+        legacy_pin = profile.get("passkey", "")
+        verified = verify_passkey(pin, stored_digest) or (legacy_pin and pin == legacy_pin)
+        if not verified:
             return ("❌ Wrong passkey. Try again:", "passkey_verify", data)
+        doc_type = data.get("_reveal_doc_type")
+        if doc_type:
+            document = get_latest_user_document(msg.phone, doc_type)
+            data.pop("_reveal_doc_type", None)
+            if not document:
+                return (
+                    f"❌ No {doc_type.replace('_', ' ')} found yet. Send 'upload {doc_type}' first.",
+                    "greeting",
+                    data,
+                )
+            signed_url = None
+            try:
+                signed_url = create_signed_document_url(document["storage_path"])
+            except Exception as exc:
+                logger.warning("Signed URL creation failed for %s/%s: %s", msg.phone, doc_type, exc)
+            try:
+                log_document_access(
+                    phone=msg.phone,
+                    document_id=document.get("id"),
+                    action="reveal",
+                    metadata={"doc_type": doc_type, "channel": "whatsapp"},
+                )
+            except Exception as exc:
+                logger.warning("Document access log failed for reveal %s/%s: %s", msg.phone, doc_type, exc)
+            await _emit_activity(msg.phone, f"🔓 Sensitive document accessed: {doc_type}")
+            return (
+                format_sensitive_document_reply(doc_type, document, signed_url=signed_url),
+                "greeting",
+                data,
+            )
         field = data.get("_reveal_field", "")
         value = profile.get(field, "Not available")
         await _emit_activity(msg.phone, f"🔓 Sensitive data accessed: {field}")
@@ -423,6 +549,36 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             "greeting",
             data,
         )
+
+    elif state == "kyc_document_upload":
+        doc_type = data.get("_pending_doc_type")
+        if not doc_type:
+            return (MENU, "greeting", data)
+        if msg.message_type not in {"image", "document"} or not msg.media_id:
+            return (
+                f"📎 Please send your {_DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)} as an image or document file.",
+                "kyc_document_upload",
+                data,
+            )
+        try:
+            result = await ingest_document(
+                phone=msg.phone,
+                doc_type=doc_type,
+                source="whatsapp",
+                media_id=msg.media_id,
+                file_name=msg.file_name,
+                mime_type=msg.mime_type,
+            )
+            await _emit_activity(msg.phone, f"📄 {doc_type} uploaded to vault")
+            data.pop("_pending_doc_type", None)
+            return (_format_upload_result(doc_type, result), "greeting", data)
+        except Exception as exc:
+            logger.error("WhatsApp document upload failed for %s/%s: %s", msg.phone, doc_type, exc)
+            return (
+                f"❌ Could not save your {_DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)}. Please try a clearer file.",
+                "kyc_document_upload",
+                data,
+            )
 
     elif state == "form_fill_url":
         url = body.strip()

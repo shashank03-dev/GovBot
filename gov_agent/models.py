@@ -30,9 +30,11 @@ class WhatsAppIncoming(BaseModel):
     Represents an incoming message from the WhatsApp API.
     """
     phone: str
-    message_type: Literal["text", "image"]
+    message_type: Literal["text", "image", "document"]
     body: Optional[str] = None
     media_id: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_name: Optional[str] = None
 
 
 class EligibilityRequest(BaseModel):
@@ -72,6 +74,21 @@ class DocumentCheckResult(BaseModel):
     expiry_date: Optional[str]
     flags: list[str]
     message: str
+
+
+class DocumentUploadRequest(BaseModel):
+    phone: str
+    doc_type: Literal["pan", "aadhaar", "income_cert", "caste_cert", "marksheet"]
+    source: Literal["web", "whatsapp", "digilocker"]
+    image_b64: Optional[str] = None
+    media_id: Optional[str] = None
+    session_id: Optional[str] = None
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
+
+
+class DocumentEditRequest(BaseModel):
+    extracted_data: dict[str, Any]
 
 
 class LiveSessionState(BaseModel):

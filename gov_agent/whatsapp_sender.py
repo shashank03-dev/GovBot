@@ -2,7 +2,12 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 import httpx
-from gov_agent.config import WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID
+from gov_agent.config import (
+    WHATSAPP_TOKEN,
+    WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_OTP_TEMPLATE_LANGUAGE,
+    WHATSAPP_OTP_TEMPLATE_NAME,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -14,29 +19,58 @@ _WA_MAX_RETRIES = 3
 _WA_BACKOFF_BASE = 1  # seconds; attempt n waits backoff_base * 2^(n-1)
 
 
-async def _send_whatsapp(to: str, body: str) -> dict:
+def _build_text_payload(to: str, body: str) -> dict:
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "text",
+        "text": {"body": body},
+    }
+
+
+def _build_otp_template_payload(to: str, code: str) -> dict:
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_OTP_TEMPLATE_NAME,
+            "language": {"code": WHATSAPP_OTP_TEMPLATE_LANGUAGE},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": code},
+                    ],
+                }
+            ],
+        },
+    }
+
+
+async def _post_whatsapp_payload(payload: dict) -> dict:
     # Debug: Check if credentials are loaded
-    logger.info("WhatsApp API debug - TOKEN exists: %s, PHONE_ID exists: %s, PHONE_ID value: %s", 
-                bool(WHATSAPP_TOKEN), bool(WHATSAPP_PHONE_NUMBER_ID), WHATSAPP_PHONE_NUMBER_ID)
-    
+    logger.info(
+        "WhatsApp API debug - TOKEN exists: %s, PHONE_ID exists: %s, PHONE_ID value: %s",
+        bool(WHATSAPP_TOKEN), bool(WHATSAPP_PHONE_NUMBER_ID), WHATSAPP_PHONE_NUMBER_ID,
+    )
+
     url = (
         f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}"
         f"/messages"
     )
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": to,
-        "type": "text",
-        "text": {"body": body}
+        "Content-Type": "application/json",
     }
 
-    logger.info("WhatsApp API request - URL: %s, to: %s, payload: %s", url, to, payload)
-    
+    logger.info(
+        "WhatsApp API request - URL: %s, to: %s, type: %s, payload: %s",
+        url, payload.get("to"), payload.get("type"), payload,
+    )
+
     last_error: str = "unknown error"
     async with httpx.AsyncClient(timeout=10.0) as client:
         for attempt in range(1, _WA_MAX_RETRIES + 1):
@@ -48,19 +82,26 @@ async def _send_whatsapp(to: str, body: str) -> dict:
                 last_error = f"HTTP {response.status_code}: {response.text}"
                 logger.warning(
                     "WhatsApp API error (attempt %d/%d): %s - to: %s",
-                    attempt, _WA_MAX_RETRIES, last_error, to,
+                    attempt, _WA_MAX_RETRIES, last_error, payload.get("to"),
                 )
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning(
                     "WhatsApp send exception (attempt %d/%d): %s - to: %s",
-                    attempt, _WA_MAX_RETRIES, last_error, to,
+                    attempt, _WA_MAX_RETRIES, last_error, payload.get("to"),
                 )
             if attempt < _WA_MAX_RETRIES:
                 await asyncio.sleep(_WA_BACKOFF_BASE * (2 ** (attempt - 1)))
 
-    logger.error("WhatsApp send failed after %d attempts to %s: %s", _WA_MAX_RETRIES, to, last_error)
+    logger.error(
+        "WhatsApp send failed after %d attempts to %s: %s",
+        _WA_MAX_RETRIES, payload.get("to"), last_error,
+    )
     return {"error": last_error}
+
+
+async def _send_whatsapp(to: str, body: str) -> dict:
+    return await _post_whatsapp_payload(_build_text_payload(to, body))
 
 
 async def send_message(to: str, body: str) -> bool:
@@ -74,4 +115,34 @@ async def send_message(to: str, body: str) -> bool:
     logger.info("Attempting SMS fallback to %s", to)
     sms_result = await sms_sender.send_sms(to, body)
     logger.info("SMS result for %s: %s", to, sms_result)
+    return sms_result.get("status") == "sent"
+
+
+async def send_otp_message(to: str, code: str, validity_minutes: int = 10) -> bool:
+    body = f"Your GovBot OTP is: {code}\nValid for {validity_minutes} minutes."
+
+    if not WHATSAPP_OTP_TEMPLATE_NAME:
+        logger.info(
+            "WHATSAPP_OTP_TEMPLATE_NAME is not configured; sending OTP as a free-form WhatsApp "
+            "message, which only works when the user already has an open conversation window."
+        )
+        return await send_message(to, body)
+
+    logger.info(
+        "Attempting OTP template message to %s using template %s",
+        to, WHATSAPP_OTP_TEMPLATE_NAME,
+    )
+    result = await _post_whatsapp_payload(_build_otp_template_payload(to, code))
+    if result.get("ok"):
+        logger.info("WhatsApp OTP template sent successfully to %s", to)
+        return True
+
+    logger.warning(
+        "WhatsApp OTP template failed for %s, falling back to SMS only: %s",
+        to, result.get("error"),
+    )
+    from gov_agent import sms_sender
+
+    sms_result = await sms_sender.send_sms(to, body)
+    logger.info("SMS OTP fallback result for %s: %s", to, sms_result)
     return sms_result.get("status") == "sent"

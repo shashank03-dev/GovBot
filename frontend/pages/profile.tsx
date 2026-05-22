@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  User, Calendar, MapPin, IndianRupee, GraduationCap, CreditCard,
+  User, MapPin, IndianRupee, GraduationCap, CreditCard,
   ScanLine, Link2, CheckCircle, AlertCircle, ChevronRight, Save, ArrowLeft
 } from 'lucide-react';
 
@@ -48,6 +48,13 @@ type FieldDef = {
   type?: string;
   placeholder?: string;
   options?: string[];
+};
+
+type ProfileApiResponse = {
+  profile?: Profile;
+  completeness_pct?: number;
+  missing_fields?: string[];
+  detail?: string;
 };
 
 const SECTIONS: Section[] = [
@@ -141,7 +148,6 @@ function CompletenessBar({ pct }: { pct: number }) {
 
 export default function ProfilePage() {
   const router = useRouter();
-  const [phone, setPhone] = useState<string>('');
   const [profile, setProfile] = useState<Profile>({});
   const [formData, setFormData] = useState<Profile>({});
   const [completeness, setCompleteness] = useState(0);
@@ -151,6 +157,8 @@ export default function ProfilePage() {
   const [savedSection, setSavedSection] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('personal');
   const [ocrLoading, setOcrLoading] = useState(false);
+  const [vaultLoading, setVaultLoading] = useState(false);
+  const [vaultAlert, setVaultAlert] = useState<string[]>([]);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -158,15 +166,12 @@ export default function ProfilePage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  useEffect(() => {
-    const token = localStorage.getItem('govbot_token');
-    if (!token) { router.push('/login'); return; }
-    const p = localStorage.getItem('govbot_phone') || '';
-    setPhone(p);
-    if (p) fetchProfile(p);
-  }, [router]);
+  const getStoredPhone = () => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('govbot_phone') || '';
+  };
 
-  const applyProfileData = (data: any) => {
+  const applyProfileData = (data: ProfileApiResponse) => {
     const p = data.profile || {};
     setProfile(p);
     setFormData(p);
@@ -174,7 +179,7 @@ export default function ProfilePage() {
     setMissingFields(data.missing_fields || []);
   };
 
-  const fetchProfile = async (p: string) => {
+  const fetchProfile = useEffectEvent(async (p: string) => {
     setLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
@@ -184,7 +189,14 @@ export default function ProfilePage() {
       if (res.ok) applyProfileData(await res.json());
     } catch { /* profile may not exist yet */ }
     setLoading(false);
-  };
+  });
+
+  useEffect(() => {
+    const token = localStorage.getItem('govbot_token');
+    if (!token) { router.push('/login'); return; }
+    const p = getStoredPhone();
+    if (p) fetchProfile(p);
+  }, [router]);
 
   const updateField = (key: keyof Profile, value: string) => {
     setFormData(prev => ({ ...prev, [key]: value }));
@@ -208,6 +220,7 @@ export default function ProfilePage() {
   const hasDirtyFields = Object.keys(getDirtyFields(activeSection)).length > 0;
 
   const saveSection = async () => {
+    const phone = getStoredPhone();
     if (!phone) return;
     const dirty = getDirtyFields(activeSection);
     if (Object.keys(dirty).length === 0) return;
@@ -232,6 +245,7 @@ export default function ProfilePage() {
   };
 
   const fillFromOcr = async () => {
+    const phone = getStoredPhone();
     if (!phone) return;
     setOcrLoading(true);
     try {
@@ -248,6 +262,31 @@ export default function ProfilePage() {
       }
     } catch { showToast('OCR fill failed', 'error'); }
     setOcrLoading(false);
+  };
+
+  const fillFromVault = async () => {
+    const phone = getStoredPhone();
+    if (!phone) return;
+    setVaultLoading(true);
+    try {
+      const token = localStorage.getItem('govbot_token');
+      const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(phone)}/from-vault`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data: ProfileApiResponse = await res.json().catch(() => ({}));
+      if (res.ok) {
+        applyProfileData(data);
+        const remaining = Array.isArray(data.missing_fields) ? data.missing_fields : [];
+        setVaultAlert(remaining);
+        showToast(remaining.length > 0 ? 'Vault data added. Some fields still need you.' : 'Profile filled from vault!');
+      } else {
+        showToast(data.detail || 'Vault fill failed', 'error');
+      }
+    } catch {
+      showToast('Vault fill failed', 'error');
+    }
+    setVaultLoading(false);
   };
 
   const currentSection = SECTIONS.find(s => s.id === activeSection) || SECTIONS[0];
@@ -309,6 +348,14 @@ export default function ProfilePage() {
             <CompletenessBar pct={completeness} />
             <div className="flex flex-wrap gap-2">
               <button
+                onClick={fillFromVault}
+                disabled={vaultLoading}
+                className="flex items-center gap-2 px-3 py-2 bg-orange-50 text-orange-700 rounded-xl text-xs font-semibold hover:bg-orange-100 transition-colors disabled:opacity-50"
+              >
+                <Link2 size={14} />
+                {vaultLoading ? 'Filling from Vault...' : 'Auto-fill from Vault'}
+              </button>
+              <button
                 onClick={fillFromOcr}
                 disabled={ocrLoading}
                 className="flex items-center gap-2 px-3 py-2 bg-cyan-50 text-cyan-700 rounded-xl text-xs font-semibold hover:bg-cyan-100 transition-colors disabled:opacity-50"
@@ -330,6 +377,25 @@ export default function ProfilePage() {
                 <ScanLine size={14} /> Upload Aadhaar
               </Link>
             </div>
+            {vaultAlert.length > 0 && (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-semibold text-amber-800">
+                  Vault fill finished, but {vaultAlert.length} field{vaultAlert.length === 1 ? '' : 's'} still need your input.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {vaultAlert.slice(0, 8).map(field => (
+                    <span key={field} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-medium">
+                      {field.replace(/_/g, ' ')}
+                    </span>
+                  ))}
+                  {vaultAlert.length > 8 && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-600 rounded-lg text-xs">
+                      +{vaultAlert.length - 8} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section Tabs + Form */}

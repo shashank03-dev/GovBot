@@ -91,7 +91,117 @@ create table if not exists document_checks (
 create index if not exists document_checks_phone_idx on document_checks(phone);
 
 -- ------------------------------------------------------------
--- 7. live_sessions — real-time form-fill progress
+-- 7. user_documents — unified KYC vault
+-- ------------------------------------------------------------
+create table if not exists user_documents (
+    id                  uuid        primary key default gen_random_uuid(),
+    phone               text        not null,
+    doc_type            text        not null,
+    source              text        not null,
+    storage_path        text        not null,
+    mime_type           text,
+    original_filename   text,
+    status              text        not null default 'processing',
+    verification_status text        not null default 'unknown',
+    issue_date          date,
+    expiry_date         date,
+    ocr_extracted_data  jsonb       not null default '{}',
+    user_corrected_data jsonb       not null default '{}',
+    extracted_data      jsonb       not null default '{}',
+    source_confidence   numeric(4,3) not null default 0,
+    confidence          numeric(4,3) not null default 0,
+    status_reason       text,
+    edited_by_user      boolean     not null default false,
+    edited_at           timestamptz,
+    created_at          timestamptz not null default now(),
+    updated_at          timestamptz not null default now()
+);
+
+alter table if exists user_documents add column if not exists ocr_extracted_data jsonb not null default '{}';
+alter table if exists user_documents add column if not exists user_corrected_data jsonb not null default '{}';
+alter table if exists user_documents add column if not exists source_confidence numeric(4,3) not null default 0;
+alter table if exists user_documents add column if not exists status_reason text;
+alter table if exists user_documents add column if not exists edited_by_user boolean not null default false;
+alter table if exists user_documents add column if not exists edited_at timestamptz;
+
+update user_documents
+set
+    ocr_extracted_data = case
+        when coalesce(ocr_extracted_data, '{}'::jsonb) = '{}'::jsonb then coalesce(extracted_data, '{}'::jsonb)
+        else ocr_extracted_data
+    end,
+    extracted_data = coalesce(extracted_data, '{}'::jsonb),
+    source_confidence = case
+        when coalesce(source_confidence, 0) = 0 then coalesce(confidence, 0)
+        else source_confidence
+    end
+where true;
+
+with ranked_user_documents as (
+    select
+        id,
+        row_number() over (
+            partition by phone, doc_type
+            order by created_at desc, id desc
+        ) as rn
+    from user_documents
+)
+delete from user_documents
+where id in (
+    select id from ranked_user_documents where rn > 1
+);
+
+create index if not exists user_documents_phone_idx on user_documents(phone);
+create index if not exists user_documents_phone_type_idx on user_documents(phone, doc_type);
+create index if not exists user_documents_created_idx on user_documents(created_at desc);
+create unique index if not exists user_documents_phone_doc_type_unique_idx
+    on user_documents(phone, doc_type);
+
+-- ------------------------------------------------------------
+-- 7b. document_access_logs — audit trail for preview/edit/delete/reveal
+-- ------------------------------------------------------------
+create table if not exists document_access_logs (
+    id           uuid        primary key default gen_random_uuid(),
+    document_id  uuid,
+    phone        text        not null,
+    action       text        not null,
+    metadata     jsonb       not null default '{}',
+    created_at   timestamptz not null default now()
+);
+create index if not exists document_access_logs_phone_idx on document_access_logs(phone);
+create index if not exists document_access_logs_document_idx on document_access_logs(document_id);
+create index if not exists document_access_logs_created_idx on document_access_logs(created_at desc);
+
+-- ------------------------------------------------------------
+-- 7c. Optional Supabase RLS / Storage policy scaffolding for beta
+--     Run after confirming JWT phone claims in your hosted project.
+-- ------------------------------------------------------------
+-- alter table public.user_documents enable row level security;
+-- drop policy if exists user_documents_owner_select on public.user_documents;
+-- create policy user_documents_owner_select on public.user_documents
+-- for select using ((auth.jwt() ->> 'phone') = phone);
+-- drop policy if exists user_documents_owner_write on public.user_documents;
+-- create policy user_documents_owner_write on public.user_documents
+-- for all using ((auth.jwt() ->> 'phone') = phone)
+-- with check ((auth.jwt() ->> 'phone') = phone);
+--
+-- alter table public.document_access_logs enable row level security;
+-- drop policy if exists document_access_logs_owner_select on public.document_access_logs;
+-- create policy document_access_logs_owner_select on public.document_access_logs
+-- for select using ((auth.jwt() ->> 'phone') = phone);
+--
+-- insert into storage.buckets (id, name, public)
+-- values ('user-documents', 'user-documents', false)
+-- on conflict (id) do nothing;
+-- drop policy if exists user_documents_storage_owner_read on storage.objects;
+-- create policy user_documents_storage_owner_read on storage.objects
+-- for select using (
+--   bucket_id = 'user-documents'
+--   and (storage.foldername(name))[1] = (auth.jwt() ->> 'phone')
+-- );
+
+-- ------------------------------------------------------------
+-- 8. live_sessions — real-time form-fill progress
 -- ------------------------------------------------------------
 create table if not exists live_sessions (
     session_id  text        primary key,
@@ -107,7 +217,18 @@ create table if not exists live_sessions (
 create index if not exists live_sessions_phone_idx on live_sessions(phone);
 
 -- ------------------------------------------------------------
--- 8. renewal_reminders — upcoming scholarship renewal alerts
+-- 8b. activity_feed — citizen-facing dashboard activity timeline
+-- ------------------------------------------------------------
+create table if not exists activity_feed (
+    id          uuid        primary key default gen_random_uuid(),
+    phone       text        not null,
+    event       text        not null,
+    created_at  timestamptz not null default now()
+);
+create index if not exists activity_feed_phone_created_idx on activity_feed(phone, created_at desc);
+
+-- ------------------------------------------------------------
+-- 9. renewal_reminders — upcoming scholarship renewal alerts
 -- ------------------------------------------------------------
 create table if not exists renewal_reminders (
     id                uuid        primary key default gen_random_uuid(),
@@ -245,13 +366,14 @@ create index if not exists verifiable_credentials_confirmation_idx on verifiable
 create index if not exists verifiable_credentials_tx_hash_idx on verifiable_credentials(blockchain_tx_hash);
 
 -- ------------------------------------------------------------
--- 16. citizen_profiles — persistent citizen profile (source of truth for auto-fill)
+-- 17. citizen_profiles — persistent citizen profile (source of truth for auto-fill)
 -- ------------------------------------------------------------
 create table if not exists citizen_profiles (
     phone             text        primary key,
     full_name         text,
     dob               date,
     gender            text,
+    pan_number        text,
     aadhaar_last4     text,
     address           text,
     state             text,
@@ -269,13 +391,17 @@ create table if not exists citizen_profiles (
     father_name       text,
     mother_name       text,
     email             text,
+    passkey_hash      text,
     digilocker_connected boolean  default false,
     profile_complete  boolean     default false,
     updated_at        timestamptz not null default now()
 );
 
+alter table if exists citizen_profiles add column if not exists pan_number text;
+alter table if exists citizen_profiles add column if not exists passkey_hash text;
+
 -- ------------------------------------------------------------
--- 17. form_fill_sessions — auto-fill history for any portal URL
+-- 18. form_fill_sessions — auto-fill history for any portal URL
 -- ------------------------------------------------------------
 create table if not exists form_fill_sessions (
     id              uuid        primary key default gen_random_uuid(),
@@ -289,3 +415,61 @@ create table if not exists form_fill_sessions (
     created_at      timestamptz not null default now()
 );
 create index if not exists form_fill_sessions_phone_idx on form_fill_sessions(phone);
+
+-- ------------------------------------------------------------
+-- 19. Realtime publication wiring for citizen dashboard updates
+--     Safe to re-run; skips tables already attached to supabase_realtime.
+-- ------------------------------------------------------------
+do $$
+declare
+    publication_exists boolean;
+begin
+    select exists (
+        select 1
+        from pg_publication
+        where pubname = 'supabase_realtime'
+    ) into publication_exists;
+
+    if not publication_exists then
+        return;
+    end if;
+
+    if not exists (
+        select 1
+        from pg_publication_rel pr
+        join pg_publication p on p.oid = pr.prpubid
+        join pg_class c on c.oid = pr.prrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        where p.pubname = 'supabase_realtime'
+          and n.nspname = 'public'
+          and c.relname = 'applications'
+    ) then
+        execute 'alter publication supabase_realtime add table public.applications';
+    end if;
+
+    if not exists (
+        select 1
+        from pg_publication_rel pr
+        join pg_publication p on p.oid = pr.prpubid
+        join pg_class c on c.oid = pr.prrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        where p.pubname = 'supabase_realtime'
+          and n.nspname = 'public'
+          and c.relname = 'activity_feed'
+    ) then
+        execute 'alter publication supabase_realtime add table public.activity_feed';
+    end if;
+
+    if not exists (
+        select 1
+        from pg_publication_rel pr
+        join pg_publication p on p.oid = pr.prpubid
+        join pg_class c on c.oid = pr.prrelid
+        join pg_namespace n on n.oid = c.relnamespace
+        where p.pubname = 'supabase_realtime'
+          and n.nspname = 'public'
+          and c.relname = 'citizen_profiles'
+    ) then
+        execute 'alter publication supabase_realtime add table public.citizen_profiles';
+    end if;
+end $$;

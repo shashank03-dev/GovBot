@@ -38,6 +38,9 @@ async def receive_message(request: Request):
     try:
         payload = await request.json()
         value = payload["entry"][0]["changes"][0]["value"]
+        if "statuses" in value:
+            logger.info("Received WhatsApp status update: %s", value["statuses"][0])
+            return JSONResponse({"status": "ok"}, status_code=200)
         if "messages" not in value:
             return JSONResponse({"status": "ok"}, status_code=200)
         messages = value["messages"]
@@ -49,16 +52,26 @@ async def receive_message(request: Request):
         media_id = None
         message_text = None
 
+        mime_type = None
+        file_name = None
+
         if msg_type == "text":
             message_text = message["text"]["body"]
         elif msg_type == "image":
             media_id = message.get("image", {}).get("id")
+            mime_type = message.get("image", {}).get("mime_type")
+        elif msg_type == "document":
+            media_id = message.get("document", {}).get("id")
+            mime_type = message.get("document", {}).get("mime_type")
+            file_name = message.get("document", {}).get("filename")
 
         incoming = WhatsAppIncoming(
             phone=phone,
-            message_type=msg_type if msg_type in ("text", "image") else "text",
+            message_type=msg_type if msg_type in ("text", "image", "document") else "text",
             body=message_text,
-            media_id=media_id
+            media_id=media_id,
+            mime_type=mime_type,
+            file_name=file_name,
         )
 
         reply = await session_manager.handle_incoming(incoming)

@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from gov_agent.db import supabase
 from gov_agent.config import BASE_URL
+from gov_agent.document_vault import ingest_document
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,6 +69,13 @@ MOCK_DOCUMENTS = [
         "data": "JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PAovVHlwZSAvUGFnZQo+PgplbmRvYmoK",
     },
 ]
+
+_VAULT_TYPE_MAP = {
+    "aadhaar": "aadhaar",
+    "income_certificate": "income_cert",
+    "caste_certificate": "caste_cert",
+    "marksheet": "marksheet",
+}
 
 
 @router.post("/digilocker/mock/consent", response_model=ConsentResponse)
@@ -138,6 +146,19 @@ async def mock_callback(consent_id: str, action: str = "approve"):
             "raw_data": doc["data"],
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
+        vault_type = _VAULT_TYPE_MAP.get(doc["doctype"])
+        if vault_type:
+            try:
+                await ingest_document(
+                    phone=phone,
+                    doc_type=vault_type,
+                    source="digilocker",
+                    image_b64=doc["data"],
+                    file_name=doc["name"].lower().replace(" ", "-") + ".pdf",
+                    mime_type=doc["mime_type"],
+                )
+            except Exception as exc:
+                logger.warning("DigiLocker vault sync failed for %s/%s: %s", phone, doc["doctype"], exc)
     
     # Update consent status
     supabase.table("digilocker_consents").update({

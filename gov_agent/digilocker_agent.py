@@ -46,11 +46,11 @@ def extract_aadhaar_data(doc_data: str) -> dict:
     if not GEMINI_API_KEY:
         # Return mock data for demo
         return {
-            "name": "Rahul Kumar",
-            "aadhaar_number": "XXXX-XXXX-1234",
-            "dob": "1998-05-15",
+            "name": "SHASHANK GOWDA T",
+            "aadhaar_number": "XXXX-XXXX-5424",
+            "dob": "2006-10-30",
             "gender": "Male",
-            "address": "123 Demo Street, Bangalore, Karnataka",
+            "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
         }
     
     try:
@@ -60,11 +60,11 @@ def extract_aadhaar_data(doc_data: str) -> dict:
         if doc_data.startswith("JVBER"):
             # It's our mock PDF data, return mock extracted data
             return {
-                "name": "Rahul Kumar",
-                "aadhaar_number": "XXXX-XXXX-1234",
-                "dob": "1998-05-15",
+                "name": "SHASHANK GOWDA T",
+                "aadhaar_number": "XXXX-XXXX-5424",
+                "dob": "2006-10-30",
                 "gender": "Male",
-                "address": "123 Demo Street, Bangalore, Karnataka",
+                "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
             }
         
         # For real base64 images, use Gemini
@@ -83,11 +83,11 @@ def extract_aadhaar_data(doc_data: str) -> dict:
         
         # Parse response (simplified)
         return {
-            "name": "Extracted Name",
-            "aadhaar_number": "XXXX-XXXX-XXXX",
-            "dob": "1998-01-01",
+            "name": "SHASHANK GOWDA T",
+            "aadhaar_number": "XXXX-XXXX-5424",
+            "dob": "2006-10-30",
             "gender": "Male",
-            "address": "Extracted Address",
+            "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
         }
         
     except Exception as e:
@@ -100,7 +100,7 @@ def extract_income_certificate_data(doc_data: str) -> dict:
     
     # Mock extraction for demo
     return {
-        "annual_income": 180000,
+        "annual_income": 25000,
         "income_category": "Below 2.5 Lakh",
         "certificate_number": "INC-2024-5678",
         "issue_date": "2024-01-15",
