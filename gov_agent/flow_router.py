@@ -937,13 +937,14 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
         return await _run_bank_verification(msg.phone, data)
 
     elif state == "bank_verify_failed":
-        if body.upper() == "RETRY":
+        decision = body.strip().upper()
+        if decision == "RETRY":
             return (
                 "💳 Please enter your 11-digit IFSC code:",
                 "collect_bank_ifsc",
                 data
             )
-        if body.upper() == "CONTINUE":
+        if decision == "CONTINUE":
             return await _submit_application(msg.phone, data, data.get("portal", "nsp"))
         return (
             "⚠️ Verification is still pending.\n\n"

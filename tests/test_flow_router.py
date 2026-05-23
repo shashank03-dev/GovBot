@@ -164,6 +164,24 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         submit_mock.assert_awaited_once_with("919999999999", session["collected_data"], "nsp")
         self.assertEqual((reply, new_state, new_data), ("submitted", "completed", {"portal": "nsp"}))
 
+    async def test_bank_verify_failed_continue_trims_whitespace(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "bank_verify_failed",
+            "collected_data": {"portal": "nsp", "bank_ifsc": "SBIN0012345"},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body=" CONTINUE ")
+
+        with patch.object(
+            flow_router,
+            "_submit_application",
+            new=AsyncMock(return_value=("submitted", "completed", {"portal": "nsp"})),
+        ) as submit_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        submit_mock.assert_awaited_once_with("919999999999", session["collected_data"], "nsp")
+        self.assertEqual((reply, new_state, new_data), ("submitted", "completed", {"portal": "nsp"}))
+
     async def test_ocr_confirm_no_reprompts_for_aadhaar_upload(self):
         flow_router = _load_flow_router()
         session = {
