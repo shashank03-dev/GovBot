@@ -3,9 +3,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import StatusBadge from '@/components/StatusBadge';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 interface Reminder {
   id: string;
@@ -14,6 +12,19 @@ interface Reminder {
   renewal_due_date: string;
   sent_at: string | null;
   created_at: string;
+}
+
+interface RenewalSummaryItem {
+  label: string;
+  days_until: number;
+  expiry_date?: string;
+  renewal_due_date?: string;
+}
+
+interface RenewalSummary {
+  phone: string;
+  document_expiries: RenewalSummaryItem[];
+  renewal_reminders: RenewalSummaryItem[];
 }
 
 const PORTAL_LABELS: Record<string, string> = {
@@ -36,9 +47,30 @@ function formatDate(s: string): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
+function summaryBadge(daysUntil: number) {
+  if (daysUntil < 0) {
+    return {
+      className: 'bg-red-50 text-red-700 border-red-200',
+      label: `${Math.abs(daysUntil)} days overdue`,
+    };
+  }
+  if (daysUntil <= 7) {
+    return {
+      className: 'bg-amber-50 text-amber-700 border-amber-200',
+      label: `${daysUntil} days left`,
+    };
+  }
+  return {
+    className: 'bg-green-50 text-green-700 border-green-200',
+    label: `${daysUntil} days left`,
+  };
+}
+
 export default function RenewalsPage() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [summary, setSummary] = useState<RenewalSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [phone, setPhone] = useState('');
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
@@ -58,13 +90,14 @@ export default function RenewalsPage() {
     if (!token || !storedPhone) { router.push('/'); return; }
     setPhone(storedPhone);
     fetchReminders(storedPhone);
+    fetchSummary(storedPhone);
   }, [mounted, router]);
 
   if (!mounted) return null;
 
   async function fetchReminders(userPhone: string) {
     try {
-      const res = await fetch(`${API_BASE}/renewals/reminders/${encodeURIComponent(userPhone)}`);
+      const res = await fetch(buildProxyApiPath(`renewals/reminders/${encodeURIComponent(userPhone)}`));
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setReminders(data.reminders || []);
@@ -75,13 +108,27 @@ export default function RenewalsPage() {
     }
   }
 
+  async function fetchSummary(userPhone: string) {
+    setSummaryLoading(true);
+    try {
+      const res = await fetch(buildProxyApiPath(`renewals/summary/${encodeURIComponent(userPhone)}`));
+      if (!res.ok) throw new Error('Failed to fetch summary');
+      const data = await res.json();
+      setSummary(data);
+    } catch {
+      setSummary(null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }
+
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
     if (!dueDate) return;
     setSubmitting(true);
     setFormMsg('');
     try {
-      const res = await fetch(`${API_BASE}/renewals/register`, {
+      const res = await fetch(buildProxyApiPath('renewals/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, portal, renewal_due_date: dueDate }),
@@ -91,6 +138,7 @@ export default function RenewalsPage() {
       setFormMsg(data.message || 'Reminder registered!');
       setDueDate('');
       fetchReminders(phone);
+      fetchSummary(phone);
     } catch (err: any) {
       setFormMsg(`Error: ${err.message}`);
     } finally {
@@ -100,8 +148,9 @@ export default function RenewalsPage() {
 
   async function handleDelete(id: string) {
     try {
-      await fetch(`${API_BASE}/renewals/reminders/${id}`, { method: 'DELETE' });
+      await fetch(buildProxyApiPath(`renewals/reminders/${id}`), { method: 'DELETE' });
       setReminders(prev => prev.filter(r => r.id !== id));
+      fetchSummary(phone);
     } catch {
       // ignore
     }
@@ -125,6 +174,86 @@ export default function RenewalsPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">Never miss a scholarship renewal deadline</p>
         </div>
+
+        <motion.section
+          className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.05 }}
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">GovBot Assistant View</h2>
+              <p className="text-sm text-slate-700 max-w-2xl">
+                Ask GovBot on WhatsApp: <span className="font-medium text-slate-900">"When is this expiring?"</span> or <span className="font-medium text-slate-900">"When is my NSP renewal due?"</span>
+              </p>
+              <p className="text-xs text-slate-500 mt-2">
+                GovBot checks your saved document expiries and scholarship dates, then reminds you before the deadline.
+              </p>
+            </div>
+            <div className="rounded-xl bg-orange-50 px-4 py-3 text-xs text-orange-700 font-medium">
+              Demo-ready combined summary
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2 mt-5">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Document Expiries</div>
+              {summaryLoading ? (
+                <p className="text-sm text-slate-400">Loading vault status...</p>
+              ) : summary?.document_expiries?.length ? (
+                <div className="space-y-3">
+                  {summary.document_expiries.slice(0, 3).map((item) => (
+                    (() => {
+                      const badge = summaryBadge(item.days_until);
+                      return (
+                        <div key={`${item.label}-${item.expiry_date}`} className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                            <p className="text-xs text-slate-500">Expires on {formatDate(item.expiry_date || '')}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${badge.className}`}>
+                            {badge.label}
+                          </span>
+                        </div>
+                      );
+                    })()
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No vault document expiry dates are saved yet.</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Scholarship Renewals</div>
+              {summaryLoading ? (
+                <p className="text-sm text-slate-400">Loading renewal status...</p>
+              ) : summary?.renewal_reminders?.length ? (
+                <div className="space-y-3">
+                  {summary.renewal_reminders.slice(0, 3).map((item) => (
+                    (() => {
+                      const badge = summaryBadge(item.days_until);
+                      return (
+                        <div key={`${item.label}-${item.renewal_due_date}`} className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                            <p className="text-xs text-slate-500">Due on {formatDate(item.renewal_due_date || '')}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${badge.className}`}>
+                            {badge.label}
+                          </span>
+                        </div>
+                      );
+                    })()
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No scholarship renewal reminder is registered yet.</p>
+              )}
+            </div>
+          </div>
+        </motion.section>
 
         {/* Register Form */}
         <motion.section

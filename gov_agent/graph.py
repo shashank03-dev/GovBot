@@ -5,6 +5,16 @@ from gov_agent import portal_agent
 import asyncio
 import hashlib
 
+
+def _parse_dob(value: str) -> datetime:
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError("DOB must be DD/MM/YYYY or YYYY-MM-DD")
+
+
 class ApplicationState(TypedDict):
     name: str
     dob: str
@@ -54,8 +64,7 @@ async def check_completeness(state: ApplicationState) -> ApplicationState:
 
 async def verify_eligibility(state: ApplicationState) -> ApplicationState:
     try:
-        d, m, y = state["dob"].split("/")
-        dob_date = datetime(int(y), int(m), int(d))
+        dob_date = _parse_dob(state["dob"])
         today = datetime.now()
         age = (today - dob_date).days // 365
         income_ok = int(state["income"]) < 250000

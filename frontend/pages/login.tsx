@@ -2,16 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Smartphone, ArrowRight, ShieldCheck, GraduationCap } from 'lucide-react';
 
+import { LOGIN_HIGHLIGHTS } from '@/lib/siteFeatureContent.mjs';
+import { DEFAULT_POST_LOGIN_PATH, sanitizePostLoginPath } from '@/lib/navigationLinks.mjs';
+
 export default function Login() {
+  const prefersReducedMotion = useReducedMotion();
   const [step, setStep] = useState<1 | 2>(1);
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
+  const [redirectPath, setRedirectPath] = useState(DEFAULT_POST_LOGIN_PATH);
   const router = useRouter();
 
   useEffect(() => {
@@ -26,12 +31,22 @@ export default function Login() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const nextPath = sanitizePostLoginPath(params.get('next') || DEFAULT_POST_LOGIN_PATH);
     const token = params.get('token');
     const ph = params.get('phone');
+    setRedirectPath(nextPath);
+
     if (token && ph) {
       localStorage.setItem('govbot_token', token);
       localStorage.setItem('govbot_phone', ph);
-      router.push('/dashboard');
+      router.replace(nextPath);
+      return;
+    }
+
+    const storedToken = localStorage.getItem('govbot_token');
+    const storedPhone = localStorage.getItem('govbot_phone');
+    if (storedToken && storedPhone) {
+      router.replace(nextPath);
     }
   }, [router]);
 
@@ -53,8 +68,8 @@ export default function Login() {
 
       setStep(2);
       setResendTimer(30);
-    } catch (err: any) {
-      setError(err.message || 'Failed to send OTP. Check your phone number and try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to send OTP. Check your phone number and try again.');
     } finally {
       setLoading(false);
     }
@@ -85,9 +100,9 @@ export default function Login() {
       localStorage.setItem('govbot_token', data.token);
       localStorage.setItem('govbot_phone', phone);
 
-      router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'OTP verification failed. Please check the code and try again.');
+      router.push(redirectPath);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'OTP verification failed. Please check the code and try again.');
     } finally {
       setLoading(false);
     }
@@ -128,6 +143,22 @@ export default function Login() {
               <p className="text-sm text-slate-500 mt-1.5">
                 {step === 1 ? 'Sign in with your WhatsApp number' : 'Enter the OTP sent to your WhatsApp'}
               </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 mb-6">
+              {LOGIN_HIGHLIGHTS.map((item, i) => (
+                <motion.div
+                  key={item.id}
+                  className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, delay: 0.12 + i * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                  whileHover={prefersReducedMotion ? undefined : { x: 3, backgroundColor: '#fff7ed' }}
+                >
+                  <div className="text-xs font-semibold uppercase tracking-wider text-[#e67e00]">{item.title}</div>
+                  <p className="text-xs text-slate-500 mt-1">{item.description}</p>
+                </motion.div>
+              ))}
             </div>
 
             {error && (

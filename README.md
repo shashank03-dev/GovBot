@@ -4,6 +4,8 @@ WhatsApp-first government service automation for India.
 
 GovBot brings citizen onboarding, document handling, eligibility checks, form filling, tracking, and officer-side monitoring into one flow. The repo combines a FastAPI backend, a Next.js web app, LangGraph-driven workflow orchestration, Gemini-powered extraction and mapping, and Supabase-backed state.
 
+> One citizen profile. One secured document vault. Multiple public-service workflows from the same guided surface.
+
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-2C3E50?style=for-the-badge)](https://langchain-ai.github.io/langgraph/)
@@ -17,6 +19,16 @@ https://govbot-fawn.vercel.app
 
 ![GovBot Demo](gov_agent/docs/demo1.gif)
 
+## Demo Story
+
+GovBot is designed like a relay across channels instead of a single portal:
+
+- WhatsApp handles discovery, reminders, OTP entry, and lightweight citizen guidance.
+- The web app handles profile completion, document review, form submission, live status, and proof sharing.
+- Backend agents handle OCR, renewal intelligence, portal mapping, bank verification, and operational visibility.
+
+That makes the project useful both as a citizen-facing assistant and as a hackathon/demo system you can actually walk people through end to end.
+
 ## Why GovBot Exists
 
 Most public-service workflows still fall apart in the same places:
@@ -28,6 +40,13 @@ Most public-service workflows still fall apart in the same places:
 - Officers and admins end up with fragmented operational visibility.
 
 GovBot treats WhatsApp as the front door, then uses a web dashboard and backend services to carry the workflow the rest of the way.
+
+## What Makes This Build Stand Out
+
+- A single services hub connects scholarships, PM-KISAN, DigiLocker sync, document workflows, tracking, and admin analytics.
+- Renewal reminders combine scholarship due dates with saved document expiry dates, then format them for both web and WhatsApp summaries.
+- The bank verification flow is demo-ready and simulates NPCI-style payout verification while masking stored account details.
+- Credential and QR verification pages keep a trust layer after submission instead of ending the journey at "application received".
 
 ## What The Project Covers
 
@@ -104,8 +123,28 @@ flowchart TD
 | Documents | OCR extraction, validation, vault storage, signed access links, audit logging, passkey protection |
 | Form automation | URL-based field analysis, Gemini field mapping, Playwright-backed form filling |
 | Schemes and tracking | Eligibility screeners, PM-KISAN flow, application timelines, live dashboard updates |
+| Renewals and reminders | Renewal registration, deadline summaries, document-expiry reminders, WhatsApp-friendly reminder text |
+| Bank verification | Demo NPCI/Sandbox-style account verification flow with hashed account storage and payout-readiness checks |
 | Operations | Admin analytics, fraud views, disbursement and regional dashboards |
 | Credentials | Wallet pages, issuance endpoints, verification pages, blockchain/IPFS integration hooks |
+
+## Demo-Ready Flows
+
+### 1. Citizen intake to dashboard
+
+Start on WhatsApp, verify by OTP, and hand the citizen off to the web app with a reusable profile and saved session.
+
+### 2. Documents to form-fill
+
+Import or upload documents, extract data through OCR or DigiLocker, then reuse the saved profile to prefill service forms.
+
+### 3. Submission to proof
+
+Track an application through search and dashboard views, then expose verification pages and wallet-style proof once the flow is complete.
+
+### 4. Reminders to payout readiness
+
+Show upcoming renewal deadlines, expiring citizen documents, and bank-account verification from one service surface instead of scattered tools.
 
 ## Tech Stack
 
@@ -126,7 +165,9 @@ flowchart TD
 ```text
 GovBot/
 ├── gov_agent/          FastAPI app, routers, workflow logic, vault, OCR, automation agents
+├── gov_agent/docs/     Demo assets and reference materials used in the showcase flow
 ├── frontend/           Next.js pages, dashboards, components, API relay routes
+├── frontend/lib/       Shared frontend helpers, content maps, and lightweight tests
 ├── tests/              Backend tests and realtime utility coverage
 ├── contracts/          Credential contract source
 ├── schema.sql          Database schema for Supabase
@@ -262,6 +303,20 @@ cd frontend && npm run build
 cd frontend && npm run lint
 ```
 
+## Demo Routes Worth Showing
+
+| Route | Why it matters |
+| --- | --- |
+| `/` | Landing page with cross-channel positioning and service discovery |
+| `/services` | Central hub for scholarships, tools, and official dashboards |
+| `/documents` | Passkey-protected vault for PAN, Aadhaar, certificates, and marksheets |
+| `/form-fill` | Generic form auto-fill surface driven by saved citizen data |
+| `/renewals` | Combined document expiry and scholarship reminder experience |
+| `/bank-verify` | Demo-ready payout verification flow |
+| `/track-search` | Confirmation-based application search and tracking entry point |
+| `/gov-dashboard` | Officer-side analytics, disbursement, and fraud visibility |
+| `/wallet` and `/verify/[id]` | Credential display and QR-style proof verification |
+
 ## Notable Backend Areas
 
 - [`gov_agent/main.py`](gov_agent/main.py) wires the FastAPI app and router surface.
@@ -269,6 +324,8 @@ cd frontend && npm run lint
 - [`gov_agent/profile_router.py`](gov_agent/profile_router.py) manages persistent citizen profiles and completeness tracking.
 - [`gov_agent/document_vault.py`](gov_agent/document_vault.py) contains document ingestion, storage, masking, and signed-link logic.
 - [`gov_agent/form_scanner_router.py`](gov_agent/form_scanner_router.py) covers field extraction, Gemini mapping, and form auto-fill execution.
+- [`gov_agent/renewal_intelligence.py`](gov_agent/renewal_intelligence.py) builds reminder summaries from document expiries and renewal dates.
+- [`gov_agent/npci_router.py`](gov_agent/npci_router.py) exposes the demo bank-verification flow and payout-readiness helpers.
 
 ## Notable Frontend Areas
 
@@ -276,6 +333,9 @@ cd frontend && npm run lint
 - [`frontend/pages/profile.tsx`](frontend/pages/profile.tsx) is the profile editor and completeness view.
 - [`frontend/pages/documents.tsx`](frontend/pages/documents.tsx) is the document vault UI.
 - [`frontend/pages/form-fill.tsx`](frontend/pages/form-fill.tsx) is the generic form auto-fill surface.
+- [`frontend/pages/services.tsx`](frontend/pages/services.tsx) acts as the cross-service navigation layer for citizens and officials.
+- [`frontend/pages/renewals.tsx`](frontend/pages/renewals.tsx) shows renewal reminders and document expiry summaries.
+- [`frontend/pages/bank-verify.tsx`](frontend/pages/bank-verify.tsx) presents the guided bank verification flow.
 - [`frontend/pages/gov-dashboard/index.tsx`](frontend/pages/gov-dashboard/index.tsx) starts the officer dashboard flow.
 
 ## Contributing

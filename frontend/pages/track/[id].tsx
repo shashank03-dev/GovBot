@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildApplicationTimelineApiPath } from '@/lib/backendApi.mjs';
+import { buildDashboardLoginHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
 
 interface TimelineStep {
   step: string;
@@ -125,18 +125,25 @@ export default function TrackApplication() {
   const { id } = router.query;
   const [app, setApp] = useState<AppData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<'not_found' | 'unavailable' | null>(null);
 
   useEffect(() => {
     if (!router.isReady || !id) return;
 
     const fetchApplication = async () => {
       try {
-        const res = await fetch(`${API_BASE}/applications/${id}/timeline`);
-        if (!res.ok) { setApp(null); return; }
+        const res = await fetch(buildApplicationTimelineApiPath(String(id)));
+        if (res.status === 404) {
+          setApp(null);
+          setLoadError('not_found');
+          return;
+        }
+        if (!res.ok) throw new Error(`Timeline request failed with ${res.status}`);
         const data: AppData = await res.json();
         setApp(data);
+        setLoadError(null);
       } catch {
-        setApp(null);
+        setLoadError('unavailable');
       } finally {
         setLoading(false);
       }
@@ -161,6 +168,32 @@ export default function TrackApplication() {
     );
   }
 
+  if (!app && loadError === 'unavailable') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
+        <div className="text-center space-y-4 max-w-md">
+          <div className="text-6xl mb-6">⚠️</div>
+          <h1 className="text-2xl text-amber-300 font-bold">Tracking temporarily unavailable</h1>
+          <p className="text-gray-400">
+            GovBot could not reach the live tracking service just now. Your confirmation number may still be valid.
+          </p>
+          <div className="pt-6 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.reload()}
+              className="border border-amber-400 px-6 py-2 rounded text-amber-200 hover:bg-amber-500/10 transition-colors"
+            >
+              Try Again
+            </button>
+            <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300 border border-blue-500 px-6 py-2 rounded transition-colors">
+              Search Another
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!app) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
@@ -169,7 +202,7 @@ export default function TrackApplication() {
           <h1 className="text-2xl text-red-400 font-bold">Application Not Found</h1>
           <p className="text-gray-400">Check your confirmation number and try again.</p>
           <div className="pt-6">
-            <Link href="/track" className="text-blue-400 hover:text-blue-300 border border-blue-500 px-6 py-2 rounded transition-colors">
+            <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300 border border-blue-500 px-6 py-2 rounded transition-colors">
               ← Search Again
             </Link>
           </div>
@@ -184,6 +217,7 @@ export default function TrackApplication() {
 
   const portalLabel = PORTAL_LABELS[app.portal] ?? app.portal?.toUpperCase() ?? 'NSP';
   const whatsappLink = `https://wa.me/919999999999?text=Status+of+${app.confirmation_number}`;
+  const showWaitingBanner = app.status === 'submitted' || app.status === 'processing';
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -208,6 +242,15 @@ export default function TrackApplication() {
             )}
           </div>
         </div>
+
+        {showWaitingBanner && (
+          <div className="mb-8 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+            <p className="text-sm font-semibold text-amber-200">Application received</p>
+            <p className="mt-1 text-sm text-gray-300">
+              GovBot has submitted your application. It may take some time before the portal reflects the next step for review or approval.
+            </p>
+          </div>
+        )}
 
         {/* Desktop horizontal timeline */}
         <div className="hidden md:flex items-start justify-between bg-gray-900 rounded-xl p-8 mb-8 relative">
@@ -235,10 +278,16 @@ export default function TrackApplication() {
           </a>
         </div>
 
+        {loadError === 'unavailable' && (
+          <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+            Live refresh is temporarily unavailable. The latest saved timeline is still shown below.
+          </div>
+        )}
+
         {/* Footer links */}
         <div className="mt-8 flex justify-between text-sm">
-          <Link href="/track" className="text-blue-400 hover:text-blue-300">← Check another</Link>
-          <Link href="/dashboard" className="text-blue-400 hover:text-blue-300">My Applications →</Link>
+          <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300">← Check another</Link>
+          <Link href={buildDashboardLoginHref()} className="text-blue-400 hover:text-blue-300">My Applications →</Link>
         </div>
 
       </div>

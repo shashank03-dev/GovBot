@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
 
 // ─── Demo data that GovBot "types" ───────────────────────────────────────────
 export const DEMO_DATA = {
@@ -172,6 +173,7 @@ export default function NSPApply() {
   const router = useRouter();
   const sessionParam = (router.query.session as string) || '';
   const isSpectator = !!sessionParam;
+  const portalId = typeof router.query.portal === 'string' ? router.query.portal : 'nsp';
 
   // ── spectator state ──
   const [spectatorData, setSpectatorData] = useState<{ step: number; total_steps: number; form_state: Record<string, string>; status: string } | null>(null);
@@ -194,10 +196,13 @@ export default function NSPApply() {
   const [progress, setProgress] = useState(0);
   const [confirmNumber, setConfirmNumber] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const [currentTypeTarget, setCurrentTypeTarget] = useState('');
   const [typeSpeed] = useState(55);
   const [digilockerProfile, setDigilockerProfile] = useState<typeof DEMO_DATA | null>(null);
   const activeDataRef = useRef<typeof DEMO_DATA>(DEMO_DATA);
+  const trackHref = confirmNumber ? buildTrackHref(confirmNumber) : TRACK_SEARCH_HREF;
+  const dashboardHref = buildDashboardLoginHref();
 
   // ── Load DigiLocker profile from localStorage on mount ──
   useEffect(() => {
@@ -262,17 +267,52 @@ export default function NSPApply() {
     if (demoState !== 'uploading') return;
     const fakeUpload = setTimeout(() => {
       setProgress(95);
-      setTimeout(() => {
-        const conf = `NSP2026${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-        setConfirmNumber(conf);
-        setProgress(100);
-        setDemoState('done');
-        setShowSuccess(true);
-        setStepLog((prev) => [...prev, { label: 'Documents uploaded', done: true }, { label: 'Application submitted ✅', done: true }]);
-      }, 2000);
+      const submitApplication = async () => {
+        try {
+          const rawPhone = localStorage.getItem('govbot_phone') || activeDataRef.current.mobile;
+          const digitsOnly = rawPhone.replace(/\D/g, '');
+          const phone = digitsOnly.startsWith('91') ? digitsOnly : `91${digitsOnly.slice(-10)}`;
+          const marksPct = Number.parseFloat(activeDataRef.current.marks);
+          const income = Number.parseInt(activeDataRef.current.income, 10);
+
+          const res = await fetch(`/api/portals/${portalId}/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: activeDataRef.current.name,
+              dob: activeDataRef.current.dob,
+              income: Number.isFinite(income) ? income : 25000,
+              media_id: 'web-demo',
+              phone,
+              caste: activeDataRef.current.category,
+              marks_pct: Number.isFinite(marksPct) ? marksPct : 0,
+              religion: activeDataRef.current.religion,
+              institution: activeDataRef.current.institute,
+              course: activeDataRef.current.course,
+            }),
+          });
+
+          const data = await res.json();
+          if (!res.ok || data.status !== 'success' || !data.confirmation_number) {
+            throw new Error(data.error || 'Failed to submit application');
+          }
+
+          setConfirmNumber(data.confirmation_number);
+          setProgress(100);
+          setDemoState('done');
+          setShowSuccess(true);
+          setSubmitError('');
+          setStepLog((prev) => [...prev, { label: 'Documents uploaded', done: true }, { label: 'Application submitted ✅', done: true }]);
+        } catch (error: any) {
+          setSubmitError(error?.message || 'Failed to submit application');
+          setDemoState('idle');
+        }
+      };
+
+      void submitApplication();
     }, 2500);
     return () => clearTimeout(fakeUpload);
-  }, [demoState]);
+  }, [demoState, portalId]);
 
   const startDemo = useCallback(() => {
     clearTimeouts();
@@ -281,6 +321,7 @@ export default function NSPApply() {
     setStepLog(DEMO_STEPS.map((s) => ({ label: s.label, done: false })));
     setProgress(0);
     setShowSuccess(false);
+    setSubmitError('');
     setConfirmNumber('');
     setActiveTab(0);
     stepIndexRef.current = 0;
@@ -396,6 +437,7 @@ export default function NSPApply() {
     setStepLog([]);
     setProgress(0);
     setShowSuccess(false);
+    setSubmitError('');
     setConfirmNumber('');
     setCurrentTypeTarget('');
     setActiveTab(0);
@@ -782,6 +824,12 @@ export default function NSPApply() {
                 </button>
               )}
 
+              {submitError && (
+                <div className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                  {submitError}
+                </div>
+              )}
+
               {/* Step Log */}
               {stepLog.length > 0 && (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto">
@@ -843,17 +891,23 @@ export default function NSPApply() {
             </div>
             <div className="space-y-3 text-[13px] text-gray-600 mb-6">
               <p>📱 Confirmation sent to your WhatsApp</p>
-              <p>📋 Track status at: <span className="text-[#C2185B] font-semibold">govbot.vercel.app/track/{confirmNumber}</span></p>
+              <p>⏳ Your application has been added. It may take some time before it moves to the next stage.</p>
+              <p>
+                📋 Track status at:{' '}
+                <Link href={trackHref} className="text-[#C2185B] font-semibold hover:underline">
+                  {trackHref}
+                </Link>
+              </p>
             </div>
             <div className="flex gap-3">
-              <button
-                onClick={() => { setShowSuccess(false); resetDemo(); }}
-                className="flex-1 border border-gray-300 py-2.5 text-sm hover:border-[#C2185B] hover:text-[#C2185B] transition-colors"
-              >
-                Close
-              </button>
               <Link
-                href="/dashboard"
+                href="/bank-verify"
+                className="flex-1 border border-[#C2185B] text-[#C2185B] py-2.5 text-sm font-bold hover:bg-[#C2185B] hover:text-white transition-colors flex items-center justify-center"
+              >
+                Verify Bank
+              </Link>
+              <Link
+                href={dashboardHref}
                 className="flex-1 bg-[#C2185B] text-white py-2.5 text-sm font-bold hover:bg-[#AD1457] transition-colors flex items-center justify-center"
               >
                 View Dashboard

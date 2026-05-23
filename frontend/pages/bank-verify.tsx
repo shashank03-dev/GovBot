@@ -15,16 +15,29 @@ interface VerifyResult {
   penny_drop_status?: string;
 }
 
+interface BankReadyResult {
+  ready: boolean;
+  status?: string;
+  message?: string;
+  confirmation_number?: string;
+  disbursement_id?: string;
+}
+
 export default function BankVerifyPage() {
   const [mounted, setMounted] = useState(false);
   const [phone, setPhone] = useState('');
   const [ifsc, setIfsc] = useState('');
   const [accountNo, setAccountNo] = useState('');
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<'form' | 'verifying' | 'result'>('form');
+  const [step, setStep] = useState<'form' | 'verifying' | 'result' | 'otp' | 'ready'>('form');
   const [result, setResult] = useState<VerifyResult | null>(null);
+  const [readyResult, setReadyResult] = useState<BankReadyResult | null>(null);
   const [error, setError] = useState('');
   const [verifyStage, setVerifyStage] = useState(0);
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
   const router = useRouter();
 
   useEffect(() => { setMounted(true); }, []);
@@ -76,7 +89,12 @@ export default function BankVerifyPage() {
       if (!res.ok) throw new Error('Verification request failed');
       const data: VerifyResult = await res.json();
       setResult(data);
-      setStep('result');
+      if (data.success) {
+        setStep('otp');
+        await sendOtp();
+      } else {
+        setStep('result');
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to verify bank account');
       setStep('form');
@@ -88,10 +106,78 @@ export default function BankVerifyPage() {
   function resetForm() {
     setStep('form');
     setResult(null);
+    setReadyResult(null);
     setError('');
     setIfsc('');
     setAccountNo('');
     setVerifyStage(0);
+    setOtp('');
+    setOtpError('');
+    setOtpLoading(false);
+    setOtpSent(false);
+  }
+
+  async function sendOtp() {
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const res = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.error || data.message || 'Failed to send OTP');
+      }
+      setOtpSent(true);
+    } catch (err: any) {
+      setOtpError(err.message || 'Failed to send OTP');
+    } finally {
+      setOtpLoading(false);
+    }
+  }
+
+  async function handleOtpVerify(e: React.FormEvent) {
+    e.preventDefault();
+    if (otp.trim().length !== 6) {
+      setOtpError('Enter the 6-digit OTP from WhatsApp');
+      return;
+    }
+
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const verifyRes = await fetch('/api/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, otp: otp.trim() }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok || !verifyData.valid) {
+        throw new Error(verifyData.error || verifyData.detail || verifyData.message || 'Invalid or expired OTP');
+      }
+      if (verifyData.token) {
+        localStorage.setItem('govbot_token', verifyData.token);
+      }
+
+      const readyRes = await fetch('/api/bank/ready', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const readyData: BankReadyResult = await readyRes.json();
+      if (!readyRes.ok || !readyData.ready) {
+        throw new Error(readyData.message || 'Failed to mark bank as ready for disbursement');
+      }
+
+      setReadyResult(readyData);
+      setStep('ready');
+    } catch (err: any) {
+      setOtpError(err.message || 'OTP verification failed');
+    } finally {
+      setOtpLoading(false);
+    }
   }
 
   const VERIFY_STAGES = [
@@ -159,7 +245,7 @@ export default function BankVerifyPage() {
               <button
                 type="submit"
                 disabled={loading || !ifsc || !accountNo}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold rounded-xl shadow-md shadow-emerald-200/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 transition-all text-sm"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white font-semibold rounded-xl shadow-md shadow-orange-200/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 transition-all text-sm"
               >
                 Verify Bank Account
               </button>
@@ -201,7 +287,7 @@ export default function BankVerifyPage() {
                 </motion.div>
               ))}
             </div>
-            <p className="text-center text-xs text-slate-400 mt-6">This takes about 30 seconds. Please wait...</p>
+            <p className="text-center text-xs text-slate-400 mt-6">This takes a few seconds. Please wait...</p>
           </motion.section>
         )}
 
@@ -263,16 +349,130 @@ export default function BankVerifyPage() {
                 onClick={resetForm}
                 className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-600 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors"
               >
-                {result.success ? 'Verify Another' : 'Try Again'}
+              {result.success ? 'Verify Another' : 'Try Again'}
               </button>
               {result.success && (
                 <Link
-                  href="/nsp/apply"
+                  href="/dashboard"
                   className="flex-1 py-2.5 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white text-sm text-center font-semibold rounded-xl shadow-md hover:-translate-y-0.5 transition-all"
                 >
-                  Apply Now →
+                  View Dashboard →
                 </Link>
               )}
+            </div>
+          </motion.section>
+        )}
+
+        {step === 'otp' && result && (
+          <motion.section
+            className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm space-y-5"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-green-500 text-white flex items-center justify-center text-lg">✓</div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Bank account matched</h3>
+                <p className="text-xs text-slate-500">Confirm this verified account with the OTP sent to your WhatsApp.</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {result.beneficiary_name && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3.5">
+                  <div className="text-xs text-slate-400">Beneficiary Name</div>
+                  <div className="text-sm font-semibold text-slate-900">{result.beneficiary_name}</div>
+                </div>
+              )}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3.5">
+                <div className="text-xs text-slate-400">Verified Bank</div>
+                <div className="text-sm font-medium text-slate-900">
+                  {result.bank_name || 'Bank account verified'}{result.branch ? ` — ${result.branch}` : ''}
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleOtpVerify} className="space-y-4">
+              <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-xs text-slate-600">
+                {otpSent ? 'OTP sent to your WhatsApp number. Enter the 6-digit code to complete disbursement readiness.' : 'Sending OTP to your WhatsApp number...'}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">WhatsApp OTP</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Enter 6-digit OTP"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#ff9933]/20 focus:border-[#ff9933] transition-all tracking-[0.3em]"
+                />
+              </div>
+
+              {otpError && <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3.5 py-2.5">{otpError}</p>}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={sendOtp}
+                  disabled={otpLoading}
+                  className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-600 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors"
+                >
+                  Resend OTP
+                </button>
+                <button
+                  type="submit"
+                  disabled={otpLoading || otp.length !== 6}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white font-semibold rounded-xl shadow-md shadow-orange-200/50 hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 transition-all text-sm"
+                >
+                  {otpLoading ? 'Confirming...' : 'Confirm OTP'}
+                </button>
+              </div>
+            </form>
+          </motion.section>
+        )}
+
+        {step === 'ready' && readyResult && (
+          <motion.section
+            className="border border-green-200 bg-green-50 rounded-2xl p-6"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+          >
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-green-500 text-white flex items-center justify-center text-lg">✓</div>
+              <div>
+                <h3 className="text-base font-bold text-green-800">Ready for disbursement review</h3>
+                <p className="text-xs text-slate-500">{readyResult.message || 'Bank verified and linked for payout review.'}</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white/70 p-3.5 text-sm text-slate-700">
+              Your bank account has been verified and OTP-confirmed. GovBot will now surface this application as payout-ready in the dashboard flow.
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              {readyResult.confirmation_number ? (
+                <Link
+                  href={`/track/${readyResult.confirmation_number}`}
+                  className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm text-center font-medium rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  Track Application
+                </Link>
+              ) : (
+                <button
+                  onClick={resetForm}
+                  className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 text-sm text-center font-medium rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  Verify Another
+                </button>
+              )}
+              <Link
+                href="/dashboard"
+                className="flex-1 py-2.5 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white text-sm text-center font-semibold rounded-xl shadow-md hover:-translate-y-0.5 transition-all"
+              >
+                View Dashboard
+              </Link>
             </div>
           </motion.section>
         )}

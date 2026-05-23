@@ -7,8 +7,7 @@ import {
   User, MapPin, IndianRupee, GraduationCap, CreditCard,
   ScanLine, Link2, CheckCircle, AlertCircle, ChevronRight, Save, ArrowLeft
 } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 type Profile = {
   full_name?: string;
@@ -183,7 +182,7 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(p)}`, {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(p)}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) applyProfileData(await res.json());
@@ -227,7 +226,7 @@ export default function ProfilePage() {
     setSavingSection(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(phone)}`, {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(dirty),
@@ -250,7 +249,7 @@ export default function ProfilePage() {
     setOcrLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(phone)}/from-ocr`, {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-ocr`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -270,7 +269,7 @@ export default function ProfilePage() {
     setVaultLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(phone)}/from-vault`, {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-vault`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });

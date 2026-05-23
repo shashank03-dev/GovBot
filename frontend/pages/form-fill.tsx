@@ -6,8 +6,7 @@ import {
   Search, Zap, CheckCircle, AlertCircle, ArrowLeft, ExternalLink,
   Clock, RefreshCw, ChevronRight, Globe, User
 } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 type FormField = {
   label: string;
@@ -71,7 +70,7 @@ export default function FormFillPage() {
   const fetchHistory = async (p: string) => {
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/form-scanner/history/${encodeURIComponent(p)}`, {
+      const res = await fetch(buildProxyApiPath(`form-scanner/history/${encodeURIComponent(p)}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -91,7 +90,7 @@ export default function FormFillPage() {
     setFillResult(null);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/form-scanner/analyze`, {
+      const res = await fetch(buildProxyApiPath('form-scanner/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ url: url.trim(), phone }),
@@ -113,7 +112,7 @@ export default function FormFillPage() {
     Object.entries(overrides).forEach(([k, v]) => { if (v) mergedMap[k] = v; });
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(`${API_BASE}/form-scanner/fill`, {
+      const res = await fetch(buildProxyApiPath('form-scanner/fill'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ url: analyzeResult.url, phone, field_map: mergedMap, confirm: true }),

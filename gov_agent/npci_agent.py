@@ -35,6 +35,26 @@ def has_verified_bank_account(phone: str) -> bool:
     return verification is not None and verification.get("verified", False)
 
 
+def _record_activity(phone: str, event: str):
+    try:
+        supabase.table("activity_feed").insert({
+            "phone": phone,
+            "event": event,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as exc:
+        logger.warning("Failed to record bank activity for %s: %s", phone, exc)
+
+
+def _demo_amount_for_portal(portal: str | None) -> float:
+    return {
+        "nsp": 25000.0,
+        "pmss": 18000.0,
+        "csss": 20000.0,
+        "minority": 15000.0,
+    }.get((portal or "").lower(), 10000.0)
+
+
 def get_verified_account_info(phone: str) -> dict | None:
     """Get verified account info for display (masked)."""
     verification = get_latest_verification(phone)
@@ -47,6 +67,72 @@ def get_verified_account_info(phone: str) -> dict | None:
         "ifsc_code": verification.get("ifsc_code", ""),
         "beneficiary_name": verification.get("beneficiary_name", "Unknown"),
         "verified_at": verification.get("verified_at"),
+    }
+
+
+def ensure_disbursement_ready(phone: str) -> dict:
+    """Create an idempotent pending disbursement record after OTP confirmation."""
+    verification = get_latest_verification(phone)
+    if not verification:
+        return {"ready": False, "message": "No verified bank account found"}
+
+    application_result = (
+        supabase.table("applications")
+        .select("confirmation_number, portal")
+        .eq("phone", phone)
+        .order("submitted_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    latest_application = application_result.data[0] if application_result.data else None
+
+    if not latest_application:
+        _record_activity(phone, "💳 Bank verified. Ready once an application is submitted.")
+        return {
+            "ready": True,
+            "status": "verified",
+            "message": "Bank verified. Ready once an application is submitted.",
+        }
+
+    confirmation_number = latest_application.get("confirmation_number")
+    existing = (
+        supabase.table("disbursement_tracking")
+        .select("id, status")
+        .eq("confirmation_number", confirmation_number)
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        row = existing.data[0]
+        _record_activity(phone, "💳 Bank verified and ready for disbursement review.")
+        return {
+            "ready": True,
+            "status": row.get("status", "pending"),
+            "confirmation_number": confirmation_number,
+            "disbursement_id": row.get("id"),
+            "message": "Bank verified and ready for disbursement review.",
+        }
+
+    amount = _demo_amount_for_portal(latest_application.get("portal"))
+    inserted = supabase.table("disbursement_tracking").insert({
+        "confirmation_number": confirmation_number,
+        "phone": phone,
+        "amount": amount,
+        "bank_verification_id": verification["id"],
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+    disbursement_id = inserted.data[0]["id"] if inserted.data else None
+
+    _record_activity(phone, "💳 Bank verified and ready for disbursement review.")
+    return {
+        "ready": True,
+        "status": "pending",
+        "confirmation_number": confirmation_number,
+        "disbursement_id": disbursement_id,
+        "message": "Bank verified and ready for disbursement review.",
     }
 
 

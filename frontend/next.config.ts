@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const BACKEND_URL =
+  process.env.BACKEND_URL ||
+  process.env.API_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_RAILWAY_URL ||
+  'http://localhost:8000';
 
 const nextConfig: NextConfig = {
   typescript: {
@@ -18,6 +23,7 @@ const nextConfig: NextConfig = {
       { source: '/api/analytics/:path*', destination: `${BACKEND_URL}/api/analytics/:path*` },
       { source: '/api/live/:path*', destination: `${BACKEND_URL}/live/:path*` },
       { source: '/api/pm-kisan', destination: `${BACKEND_URL}/pm-kisan/status` },
+      { source: '/api/applications/:path*', destination: `${BACKEND_URL}/applications/:path*` },
       { source: '/api/profile/:path*', destination: `${BACKEND_URL}/profile/:path*` },
       { source: '/api/form-scanner/:path*', destination: `${BACKEND_URL}/form-scanner/:path*` },
       { source: '/api/eligibility/:path*', destination: `${BACKEND_URL}/eligibility/:path*` },

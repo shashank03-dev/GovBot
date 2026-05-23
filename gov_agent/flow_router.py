@@ -1,13 +1,15 @@
 import re
 import uuid
 import logging
+from urllib.parse import quote
 from typing import Any
 import google.generativeai as genai
 from gov_agent.models import WhatsAppIncoming
 from gov_agent.db import supabase
 from gov_agent import rag_engine
 from gov_agent import graph
-from gov_agent.config import BASE_URL, FRONTEND_URL
+from gov_agent import renewal_intelligence
+from gov_agent.config import FRONTEND_URL
 from gov_agent.config import GEMINI_API_KEY
 from gov_agent.document_vault import (
     create_signed_document_url,
@@ -109,6 +111,8 @@ PORTAL_MENU = (
 _DOCUMENT_UPLOAD_COMMANDS = {
     "upload pan": "pan",
     "upload aadhaar": "aadhaar",
+    "upload aadhar": "aadhaar",
+    "upload adhaar": "aadhaar",
     "upload income cert": "income_cert",
     "upload income certificate": "income_cert",
     "upload caste cert": "caste_cert",
@@ -123,6 +127,46 @@ _DOCUMENT_UPLOAD_LABELS = {
     "caste_cert": "caste certificate",
     "marksheet": "marksheet",
 }
+
+_UPLOAD_COMMAND_HELP = (
+    "❌ Command unavailable.\n\n"
+    "Try one of these:\n"
+    "• upload pan\n"
+    "• upload aadhaar\n"
+    "• upload income certificate\n"
+    "• upload caste certificate\n"
+    "• upload marksheet"
+)
+
+_RENEWAL_PORTAL_KEYWORDS = {
+    "nsp": "nsp",
+    "pmss": "pmss",
+    "csss": "csss",
+    "minority": "minority",
+}
+
+
+def _is_renewal_question(body_lower: str) -> bool:
+    return any(
+        phrase in body_lower
+        for phrase in (
+            "when is this expiring",
+            "when is it expiring",
+            "when should i renew",
+            "when do i renew",
+            "expiry",
+            "expire",
+            "renewal",
+            "renew",
+        )
+    )
+
+
+def _extract_portal_keyword(body_lower: str) -> str | None:
+    for keyword, portal in _RENEWAL_PORTAL_KEYWORDS.items():
+        if keyword in body_lower:
+            return portal
+    return None
 
 
 def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
@@ -164,12 +208,66 @@ def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
             continue
         lines.append(f"{pretty_names.get(key, key.replace('_', ' ').title())}: {value}")
 
+    status_message = str(result.get("status_reason") or "").strip()
     validation = result.get("validation") or {}
-    if validation.get("message"):
-        lines.extend(["", validation["message"]])
+    if not status_message:
+        status_message = str(validation.get("message") or "").strip()
+    if status_message:
+        lines.extend(["", status_message])
 
     lines.extend(["", "Type 'Hi' for menu or upload another document command."])
     return "\n".join(lines)
+
+
+async def _run_bank_verification(phone: str, data: dict[str, Any]) -> tuple[str, str, dict]:
+    from gov_agent.npci_agent import send_verification_request, notify_verification_status
+
+    try:
+        result = await send_verification_request(
+            phone,
+            data.get("bank_account", ""),
+            data.get("bank_ifsc", ""),
+        )
+
+        if result.get("success"):
+            await notify_verification_status(
+                phone,
+                "success",
+                result.get("beneficiary_name"),
+            )
+            return await _submit_application(phone, data, data.get("portal", "nsp"))
+
+        await notify_verification_status(phone, "failed")
+        return (
+            f"⚠️ *Verification Failed*\n\n"
+            f"{result.get('message', 'Please check your details and try again')}\n\n"
+            f"Reply RETRY to try again or CONTINUE to skip verification",
+            "bank_verify_failed",
+            data,
+        )
+    except Exception as e:
+        logger.error(f"Bank verification error: {e}")
+        return (
+            "⚠️ Could not verify bank account.\n\n"
+            "Reply RETRY to try again or CONTINUE to proceed",
+            "bank_verify_failed",
+            data,
+        )
+
+
+def _format_submission_success_reply(phone: str, confirmation_number: str) -> str:
+    from gov_agent.qr_login import get_login_url
+
+    track_url = f"{FRONTEND_URL}/track/{quote(str(confirmation_number), safe='')}"
+    dashboard_url = get_login_url(phone, "/dashboard")
+    return (
+        f"🎉 Application Submitted!\n\n"
+        f"Confirmation: {confirmation_number}\n\n"
+        f"Track status:\n"
+        f"{track_url}\n\n"
+        f"View all your applications:\n"
+        f"{dashboard_url}"
+    )
 
 
 async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
@@ -193,6 +291,9 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             "kyc_document_upload",
             {**data, "_pending_doc_type": doc_type},
         )
+
+    if body_lower.startswith("upload "):
+        return (_UPLOAD_COMMAND_HELP, "greeting", data)
 
     # ── Global keyword: open web dashboard ─────────────────────────────────
     if body_lower in {"web", "open web", "dashboard", "open dashboard", "website"}:
@@ -264,6 +365,16 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             "Example: https://scholarships.gov.in/fresh/newstdRegfrmInstruction\n\n"
             f"🌐 Or use the web tool: {FRONTEND_URL}/form-fill",
             "form_fill_url",
+            data,
+        )
+
+    if _is_renewal_question(body_lower):
+        return (
+            renewal_intelligence.build_whatsapp_summary(
+                msg.phone,
+                portal=_extract_portal_keyword(body_lower),
+            ),
+            "greeting",
             data,
         )
 
@@ -767,14 +878,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
                 conf = result.get("submission_result", {}).get("confirmation_number")
                 if conf:
                     await _emit_activity(msg.phone, f"🎉 Application submitted! Confirmation: {conf}")
-                    return (
-                        f"🎉 Application Submitted!\n\n"
-                        f"Confirmation: {conf}\n\n"
-                        f"Track status:\n"
-                        f"{FRONTEND_URL}/track/{conf}\n\n"
-                        f"View all your applications:\n"
-                        f"{FRONTEND_URL}/dashboard",
-                        "completed", data)
+                    return (_format_submission_success_reply(msg.phone, conf), "completed", data)
 
                 error = result.get("error", "Unknown error")
                 return (f"❌ Failed: {error}\nType restart", "completed", data)
@@ -832,60 +936,11 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
                 data
             )
         data["bank_account"] = account
-        
-        # Start bank verification
-        return (
-            "⏳ *Verifying Bank Account...*\n\n"
-            "🔍 Validating IFSC code...\n"
-            "💰 Initiating penny drop (₹0.01)...\n"
-            "✅ Checking account status...\n\n"
-            "This takes about 30 seconds. Please wait...",
-            "verify_bank",
-            data
-        )
+
+        return await _run_bank_verification(msg.phone, data)
 
     elif state == "verify_bank":
-        # Perform bank verification
-        from gov_agent.npci_agent import send_verification_request, notify_verification_status
-        
-        try:
-            result = await send_verification_request(
-                msg.phone,
-                data.get("bank_account", ""),
-                data.get("bank_ifsc", "")
-            )
-            
-            if result.get("success"):
-                await notify_verification_status(
-                    msg.phone, 
-                    "success",
-                    result.get("beneficiary_name")
-                )
-                
-                # Move to application submission
-                return (
-                    f"✅ *Bank Verified: {result.get('beneficiary_name')}*\n\n"
-                    f"Submitting your scholarship application...",
-                    "verify_and_submit",
-                    data
-                )
-            else:
-                await notify_verification_status(msg.phone, "failed")
-                return (
-                    f"⚠️ *Verification Failed*\n\n"
-                    f"{result.get('message', 'Please check your details and try again')}\n\n"
-                    f"Reply RETRY to try again or CONTINUE to skip verification",
-                    "bank_verify_failed",
-                    data
-                )
-        except Exception as e:
-            logger.error(f"Bank verification error: {e}")
-            return (
-                "⚠️ Could not verify bank account.\n\n"
-                "Reply RETRY to try again or CONTINUE to proceed",
-                "bank_verify_failed",
-                data
-            )
+        return await _run_bank_verification(msg.phone, data)
 
     elif state == "bank_verify_failed":
         if body.upper() == "RETRY":
@@ -896,36 +951,10 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             )
         else:
             # Continue without bank verification
-            return (
-                "⚠️ Proceeding without bank verification.\n"
-                "You can add bank details later from the dashboard.",
-                "verify_and_submit",
-                data
-            )
+            return await _submit_application(msg.phone, data, data.get("portal", "nsp"))
 
     elif state == "verify_and_submit":
-        from gov_agent import whatsapp_sender
-        await whatsapp_sender.send_message(
-            msg.phone,
-            "✅ Submitting your scholarship application...\nThis may take 30-60 seconds."
-        )
-        try:
-            result = await graph.run_application(data)
-            conf = result.get("submission_result", {}).get("confirmation_number")
-            if conf:
-                return (
-                    f"🎉 Application Submitted!\n\n"
-                    f"Confirmation: {conf}\n\n"
-                    f"Track status:\n"
-                    f"{FRONTEND_URL}/track/{conf}\n\n"
-                    f"View all your applications:\n"
-                    f"{FRONTEND_URL}/dashboard",
-                    "completed", data)
-
-            error = result.get("error", "Unknown error")
-            return (f"❌ Failed: {error}\nType restart", "completed", data)
-        except Exception as e:
-            return (f"❌ System error: {str(e)}\nType restart", "completed", data)
+        return await _submit_application(msg.phone, data, data.get("portal", "nsp"))
 
 
     elif state == "check_status":
@@ -1200,7 +1229,6 @@ async def _submit_application(phone: str, data: dict, portal: str) -> tuple:
     """Helper to submit application and return response."""
     from gov_agent import whatsapp_sender
     from gov_agent import pmss_agent, csss_agent, minority_agent
-    import asyncio
 
     data["phone"] = phone
     data["portal"] = portal
@@ -1222,14 +1250,7 @@ async def _submit_application(phone: str, data: dict, portal: str) -> tuple:
 
         conf = result.get("submission_result", {}).get("confirmation_number")
         if conf:
-            return (
-                f"🎉 Application Submitted!\n\n"
-                f"Confirmation: {conf}\n\n"
-                f"Track status:\n"
-                f"{FRONTEND_URL}/track/{conf}\n\n"
-                f"View all your applications:\n"
-                f"{FRONTEND_URL}/dashboard",
-                "completed", data)
+            return (_format_submission_success_reply(phone, conf), "completed", data)
 
         error = result.get("error", "Unknown error")
         return (f"❌ Failed: {error}\nType restart", "completed", data)

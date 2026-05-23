@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import AnimatedCounter from '@/components/AnimatedCounter';
 import StatusBadge from '@/components/StatusBadge';
 import { mergeRealtimeActivity } from '@/lib/dashboardRealtime.mjs';
+import { resolveDashboardPhone } from '@/lib/dashboardSession.mjs';
 import { FileText, Clock, CheckCircle, XCircle, ExternalLink, ArrowRight, User, Zap, ChevronRight } from 'lucide-react';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -61,11 +62,17 @@ export default function Dashboard() {
       return;
     }
 
-    const phone = localStorage.getItem('govbot_phone');
+    const queryPhone = Array.isArray(router.query.phone) ? router.query.phone[0] : router.query.phone;
+    const phone = resolveDashboardPhone({
+      queryPhone,
+      storedPhone: localStorage.getItem('govbot_phone'),
+      token,
+    });
     if (!phone) {
       setLoading(false);
       return;
     }
+    localStorage.setItem('govbot_phone', phone);
 
     let isActive = true;
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -193,7 +200,7 @@ export default function Dashboard() {
         void supabase.removeChannel(realtimeChannel);
       }
     };
-  }, [router]);
+  }, [router, router.query.phone]);
 
   const stats = [
     { label: 'Total', value: summary.total, icon: FileText, color: '#ff9933', bg: '#fff7ed' },
@@ -201,6 +208,8 @@ export default function Dashboard() {
     { label: 'Pending', value: summary.pending, icon: Clock, color: '#f59e0b', bg: '#fffbeb' },
     { label: 'Failed', value: summary.failed, icon: XCircle, color: '#ef4444', bg: '#fef2f2' },
   ];
+  const newestApplication = apps[0];
+  const showWaitingBanner = newestApplication && ['submitted', 'processing'].includes(newestApplication.status);
 
   const formatDate = (dateStr: string) => {
     return new Intl.DateTimeFormat('en-IN', {
@@ -315,6 +324,19 @@ export default function Dashboard() {
           })}
         </div>
 
+        {showWaitingBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 rounded-2xl border border-orange-100 bg-orange-50 px-5 py-4"
+          >
+            <p className="text-sm font-semibold text-slate-900">Application received</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Your latest scholarship application has been added. It may take some time before it moves to the next stage and appears in downstream processing.
+            </p>
+          </motion.div>
+        )}
+
         {/* Applications table */}
         <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -389,7 +411,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 mb-4">
               <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
               <h3 className="font-semibold text-slate-900">Live Activity</h3>
-              <span className="text-xs text-slate-400">from WhatsApp Bot</span>
+              <span className="text-xs text-slate-400">from GovBot</span>
             </div>
             <div className="space-y-3 max-h-64 overflow-y-auto">
               {activities.map((a, i) => (

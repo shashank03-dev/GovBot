@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import confetti from 'canvas-confetti';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 interface EligibilityResult {
   eligible: boolean;
@@ -142,7 +141,7 @@ export default function EligibilityPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/eligibility/screen`, {
+      const res = await fetch(buildProxyApiPath('eligibility/screen'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

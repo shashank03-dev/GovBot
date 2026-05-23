@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Literal, Optional
+import importlib
 from gov_agent import pmss_agent, csss_agent, minority_agent
 from gov_agent.db import supabase
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -79,7 +81,7 @@ async def apply_portal(portal_id: str, body: PortalApplyRequest):
         raise HTTPException(status_code=400, detail={"error": "Invalid portal_id"})
 
     try:
-        data = body.dict()
+        data = body.model_dump()
 
         if portal_id == "pmss":
             result = await pmss_agent.run_pmss_application(data)
@@ -88,13 +90,22 @@ async def apply_portal(portal_id: str, body: PortalApplyRequest):
         elif portal_id == "minority":
             result = await minority_agent.run_minority_application(data)
         else:
-            from gov_agent import graph
+            graph = importlib.import_module("gov_agent.graph")
             result = await graph.run_application(data)
 
         if result.get("error"):
             return PortalApplyResponse(status="failed", error=result["error"])
 
         conf = result.get("submission_result", {}).get("confirmation_number")
+        if conf:
+            try:
+                supabase.table("activity_feed").insert({
+                    "phone": body.phone,
+                    "event": f"📝 {portal_id.upper()} application received. It may take some time before it moves to the next stage. Confirmation: {conf}",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }).execute()
+            except Exception:
+                pass
         return PortalApplyResponse(status="success", confirmation_number=conf)
 
     except Exception as e:

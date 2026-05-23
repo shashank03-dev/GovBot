@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import Optional
 from gov_agent.db import supabase
 from gov_agent import whatsapp_sender
+from gov_agent import renewal_intelligence
 
 router = APIRouter()
 
@@ -101,6 +102,17 @@ async def get_reminders(phone: str):
             .limit(50)\
             .execute()
         return {"reminders": result.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+@router.get("/summary/{phone}")
+async def get_renewal_summary(phone: str):
+    """
+    Get combined document expiry and scholarship renewal data for a phone number.
+    """
+    try:
+        return renewal_intelligence.build_summary(phone)
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e)})
 

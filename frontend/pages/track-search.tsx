@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Search, ArrowLeft } from 'lucide-react';
+import { buildDashboardLoginHref, buildTrackHref } from '@/lib/navigationLinks.mjs';
 
 export default function TrackSearch() {
   const [confirmationNo, setConfirmationNo] = useState('');
@@ -14,7 +15,7 @@ export default function TrackSearch() {
     e.preventDefault();
     const val = confirmationNo.trim();
     if (!val) { setError('Please enter a confirmation number'); return; }
-    router.push(`/track/${encodeURIComponent(val)}`);
+    router.push(buildTrackHref(val));
   }
 
   return (
@@ -74,7 +75,7 @@ export default function TrackSearch() {
             <Link href="/services" className="flex items-center gap-1.5 text-slate-500 hover:text-[#ff9933] transition-colors">
               <ArrowLeft className="w-3.5 h-3.5" /> All Services
             </Link>
-            <Link href="/dashboard" className="text-slate-500 hover:text-[#ff9933] transition-colors">
+            <Link href={buildDashboardLoginHref()} className="text-slate-500 hover:text-[#ff9933] transition-colors">
               My Dashboard
             </Link>
           </div>

@@ -29,7 +29,10 @@ export default async function handler(
     }
 
     const data = await response.json();
-    return res.status(200).json(data);
+    return res.status(200).json({
+      ...data,
+      success: data.status === 'success',
+    });
   } catch (error) {
     console.error('Bank verification error:', error);
     return res.status(500).json({ error: 'Failed to verify bank account' });

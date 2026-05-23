@@ -3,8 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { buildProxyApiPath } from '@/lib/backendApi.mjs';
 const ALLOWED_UPLOAD_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'] as const;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -139,7 +138,7 @@ export default function DocumentsPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(activePhone)}`, {
+      const res = await fetch(buildProxyApiPath(`documents/${encodeURIComponent(activePhone)}`), {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       const data = await res.json();
@@ -189,7 +188,7 @@ export default function DocumentsPage() {
     try {
       const imageB64 = await fileToBase64(selectedFile);
 
-      const res = await fetch(`${API_BASE}/documents/upload`, {
+      const res = await fetch(buildProxyApiPath('documents/upload'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -224,7 +223,7 @@ export default function DocumentsPage() {
     const passkey = window.prompt('Enter your 4-digit passkey to preview this document:')?.trim() || '';
     if (!passkey) return;
     try {
-      const res = await fetch(`${API_BASE}/documents/item/${documentId}/signed-url`, {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/signed-url`), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -247,7 +246,7 @@ export default function DocumentsPage() {
     setError('');
     setNotice('');
     try {
-      const res = await fetch(`${API_BASE}/documents/item/${doc.id}`, {
+      const res = await fetch(buildProxyApiPath(`documents/item/${doc.id}`), {
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
@@ -277,7 +276,7 @@ export default function DocumentsPage() {
     setSavingEdit(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/documents/item/${documentId}`, {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -307,7 +306,7 @@ export default function DocumentsPage() {
     setDeletingId(documentId);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/documents/item/${documentId}`, {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,

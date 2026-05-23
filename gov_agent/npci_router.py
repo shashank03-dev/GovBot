@@ -34,27 +34,53 @@ class BankVerifyResponse(BaseModel):
     status: str  # success, failed, pending
     account_status: str | None
     beneficiary_name: str | None
+    bank_name: str | None = None
+    branch: str | None = None
+    transaction_id: str | None = None
     message: str
 
 
 # Mock database of valid bank accounts for demo
 MOCK_BANK_ACCOUNTS = {
+    "SBIN0012345_44344429113": {
+        "name": "SHASHANK GOWDA T",
+        "status": "active",
+        "branch": "HMT LAYOUT",
+        "bank_name": "State Bank of India",
+    },
     "SBIN0012345_325671904812": {
         "name": "SHASHANK GOWDA T",
         "status": "active",
         "branch": "HMT Layout",
+        "bank_name": "State Bank of India",
     },
     "HDFC0005678_9876543210": {
         "name": "SHASHANK GOWDA T",
         "status": "active",
         "branch": "Bangalore North",
+        "bank_name": "HDFC Bank",
     },
     "ICIC0009012_5555666677": {
         "name": "SHASHANK GOWDA T",
         "status": "active",
         "branch": "Bangalore North",
+        "bank_name": "ICICI Bank",
     },
 }
+
+
+class BankReadyRequest(BaseModel):
+    phone: str
+
+
+def _infer_bank_name(ifsc_code: str) -> str:
+    if ifsc_code.startswith("SBIN"):
+        return "State Bank of India"
+    if ifsc_code.startswith("HDFC"):
+        return "HDFC Bank"
+    if ifsc_code.startswith("ICIC"):
+        return "ICICI Bank"
+    return "Demo Bank"
 
 
 def _hash_account(account_number: str) -> str:
@@ -90,11 +116,16 @@ async def mock_bank_verify(body: BankVerifyRequest):
     )
     
     if existing.data:
+        existing_row = existing.data[0]
+        existing_meta = existing_row.get("mock_response") or {}
         return BankVerifyResponse(
-            verification_id=existing.data[0]["id"],
+            verification_id=existing_row["id"],
             status="success",
             account_status="verified",
-            beneficiary_name=existing.data[0].get("beneficiary_name"),
+            beneficiary_name=existing_row.get("beneficiary_name"),
+            bank_name=existing_meta.get("bank_name") or _infer_bank_name(existing_row.get("ifsc_code", "")),
+            branch=existing_meta.get("branch"),
+            transaction_id=existing_meta.get("transaction_id"),
             message="Account already verified",
         )
     
@@ -121,6 +152,7 @@ async def mock_bank_verify(body: BankVerifyRequest):
     
     if mock_account:
         # Success case
+        transaction_id = f"TXN-{uuid.uuid4().hex[:12]}"
         supabase.table("bank_verifications").update({
             "status": "verified",
             "verified": True,
@@ -128,9 +160,10 @@ async def mock_bank_verify(body: BankVerifyRequest):
             "account_status": mock_account["status"],
             "mock_response": {
                 "penny_drop_amount": 0.01,
-                "transaction_id": f"TXN-{uuid.uuid4().hex[:12]}",
+                "transaction_id": transaction_id,
                 "verified_at": datetime.now(timezone.utc).isoformat(),
                 "branch": mock_account["branch"],
+                "bank_name": mock_account["bank_name"],
             },
             "verified_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", verification_id).execute()
@@ -142,54 +175,33 @@ async def mock_bank_verify(body: BankVerifyRequest):
             status="success",
             account_status="verified",
             beneficiary_name=mock_account["name"],
+            bank_name=mock_account["bank_name"],
+            branch=mock_account["branch"],
+            transaction_id=transaction_id,
             message=f"Account verified successfully. Name: {mock_account['name']}",
         )
     else:
-        # Simulate 80% success rate for random accounts
-        import random
-        if random.random() < 0.8:
-            demo_name = "SHASHANK GOWDA T"
-            
-            supabase.table("bank_verifications").update({
-                "status": "verified",
-                "verified": True,
-                "beneficiary_name": demo_name,
-                "account_status": "active",
-                "mock_response": {
-                    "penny_drop_amount": 0.01,
-                    "transaction_id": f"TXN-{uuid.uuid4().hex[:12]}",
-                    "verified_at": datetime.now(timezone.utc).isoformat(),
-                    "note": "Demo account verified",
-                },
-                "verified_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", verification_id).execute()
-            
-            return BankVerifyResponse(
-                verification_id=verification_id,
-                status="success",
-                account_status="verified",
-                beneficiary_name=demo_name,
-                message=f"Account verified successfully. Name: {demo_name}",
-            )
-        else:
-            # Failure case
-            supabase.table("bank_verifications").update({
-                "status": "failed",
-                "verified": False,
-                "error_message": "Account not found or inactive",
-                "mock_response": {
-                    "error": "Account verification failed",
-                    "reason": "Invalid account number or IFSC code",
-                },
-            }).eq("id", verification_id).execute()
-            
-            return BankVerifyResponse(
-                verification_id=verification_id,
-                status="failed",
-                account_status="failed",
-                beneficiary_name=None,
-                message="Account verification failed. Please check your IFSC code and account number.",
-            )
+        supabase.table("bank_verifications").update({
+            "status": "failed",
+            "verified": False,
+            "error_message": "Account number does not match bank records",
+            "mock_response": {
+                "error": "Account verification failed",
+                "reason": "Account number does not match bank records",
+                "bank_name": _infer_bank_name(body.ifsc_code),
+            },
+        }).eq("id", verification_id).execute()
+
+        return BankVerifyResponse(
+            verification_id=verification_id,
+            status="failed",
+            account_status="failed",
+            beneficiary_name=None,
+            bank_name=_infer_bank_name(body.ifsc_code),
+            branch=None,
+            transaction_id=None,
+            message="Account number does not match bank records. Enter the correct number to continue.",
+        )
 
 
 @router.get("/bank/mock/status/{verification_id}")
@@ -232,6 +244,14 @@ async def mock_npci_webhook(payload: dict):
     logger.info(f"Mock NPCI webhook received: {payload}")
     
     return {"status": "received", "message": "Webhook processed"}
+
+
+@router.post("/bank/mock/ready")
+async def mark_bank_ready(body: BankReadyRequest):
+    """Mark a verified bank as payout-ready after OTP confirmation."""
+    from gov_agent.npci_agent import ensure_disbursement_ready
+
+    return ensure_disbursement_ready(body.phone)
 
 
 @router.post("/bank/mock/reset/{phone}")
