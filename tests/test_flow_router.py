@@ -280,6 +280,55 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "awaiting_document")
         self.assertEqual(new_data["income"], 25000)
 
+    async def test_digilocker_check_for_nsp_with_zero_income_initializes_profile_and_live_session(self):
+        flow_router = _load_flow_router()
+        session = {"state": "digilocker_awaiting_auth", "collected_data": {"portal": "nsp"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="CHECK")
+
+        with patch("gov_agent.digilocker_agent.is_digilocker_connected", return_value=True), patch(
+            "gov_agent.digilocker_agent.format_digilocker_summary",
+            return_value="📋 DigiLocker Documents Fetched",
+        ), patch(
+            "gov_agent.digilocker_agent.prefill_application_data",
+            return_value={"name": "Test User", "dob": "2006-10-30", "income": 0},
+        ), patch.object(
+            flow_router,
+            "_save_profile_field",
+            new=AsyncMock(),
+        ) as save_profile_mock, patch.object(
+            flow_router,
+            "_emit_activity",
+            new=AsyncMock(),
+        ) as emit_activity_mock, patch.object(
+            flow_router,
+            "_advance",
+            new=AsyncMock(),
+        ) as advance_mock, patch(
+            "gov_agent.live_router.create_live_session",
+            new=AsyncMock(),
+        ) as create_live_session_mock, patch(
+            "gov_agent.flow_router.uuid.uuid4",
+            return_value="prefill-session-id",
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("Please send a clear photo of your Aadhaar card", reply)
+        self.assertEqual(new_state, "awaiting_document")
+        self.assertEqual(new_data["income"], 0)
+        self.assertEqual(new_data["session_id"], "prefill-session-id")
+        save_profile_mock.assert_has_awaits([
+            unittest.mock.call("919999999999", "full_name", "Test User"),
+            unittest.mock.call("919999999999", "dob", "2006-10-30"),
+            unittest.mock.call("919999999999", "income", 0),
+        ])
+        emit_activity_mock.assert_awaited_once_with("919999999999", "📝 Profile collection started")
+        create_live_session_mock.assert_awaited_once_with("prefill-session-id", "919999999999")
+        advance_mock.assert_awaited_once_with(
+            "prefill-session-id",
+            3,
+            {"name": "Test User", "dob": "2006-10-30", "income": 0},
+        )
+
     async def test_passkey_verify_wrong_pin_stays_in_loop(self):
         flow_router = _load_flow_router()
         session = {"state": "passkey_verify", "collected_data": {"_reveal_field": "bank_account"}}

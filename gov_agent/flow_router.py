@@ -219,6 +219,38 @@ def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _has_prefilled_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip() != ""
+    return True
+
+
+async def _initialize_nsp_prefill_session(phone: str, data: dict[str, Any]) -> dict[str, Any]:
+    await _save_profile_field(phone, "full_name", data["name"])
+    await _save_profile_field(phone, "dob", data["dob"])
+    await _save_profile_field(phone, "income", data["income"])
+    await _emit_activity(phone, "📝 Profile collection started")
+
+    session_id = data.get("session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        data["session_id"] = session_id
+        try:
+            from gov_agent.live_router import create_live_session
+            await create_live_session(session_id, phone)
+        except Exception:
+            pass
+
+    await _advance(
+        session_id,
+        3,
+        {"name": data["name"], "dob": data["dob"], "income": data["income"]},
+    )
+    return data
+
+
 async def _run_bank_verification(phone: str, data: dict[str, Any]) -> tuple[str, str, dict]:
     from gov_agent.npci_agent import send_verification_request, notify_verification_status
 
@@ -513,7 +545,13 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
                 summary = format_digilocker_summary(msg.phone)
                 
                 portal = data.get("portal", "nsp")
-                if portal == "nsp" and data.get("name") and data.get("dob") and data.get("income"):
+                if (
+                    portal == "nsp"
+                    and _has_prefilled_value(data.get("name"))
+                    and _has_prefilled_value(data.get("dob"))
+                    and _has_prefilled_value(data.get("income"))
+                ):
+                    data = await _initialize_nsp_prefill_session(msg.phone, data)
                     return (
                         f"{summary}\n\n✅ Continuing with pre-filled data...\n\n"
                         "Please send a clear photo of your Aadhaar card 📎",
