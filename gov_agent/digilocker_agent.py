@@ -146,7 +146,7 @@ def prefill_application_data(phone: str) -> dict:
         elif doc_type == "income_certificate":
             income_data = extract_income_certificate_data(raw_data)
             prefill_data.update({
-                "annual_income": income_data.get("annual_income"),
+                "income": income_data.get("annual_income"),
                 "income_certificate_number": income_data.get("certificate_number"),
             })
             

@@ -261,6 +261,74 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "kyc_document_upload")
         self.assertEqual(new_data["_pending_doc_type"], "aadhaar")
 
+    async def test_digilocker_check_for_nsp_skips_prefilled_steps_and_requests_aadhaar_upload(self):
+        flow_router = _load_flow_router()
+        session = {"state": "digilocker_awaiting_auth", "collected_data": {"portal": "nsp"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="CHECK")
+
+        with patch("gov_agent.digilocker_agent.is_digilocker_connected", return_value=True), patch(
+            "gov_agent.digilocker_agent.format_digilocker_summary",
+            return_value="📋 DigiLocker Documents Fetched",
+        ), patch(
+            "gov_agent.digilocker_agent.prefill_application_data",
+            return_value={"name": "Test User", "dob": "2006-10-30", "income": 25000},
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("DigiLocker Documents Fetched", reply)
+        self.assertIn("Please send a clear photo of your Aadhaar card", reply)
+        self.assertEqual(new_state, "awaiting_document")
+        self.assertEqual(new_data["income"], 25000)
+
+    async def test_passkey_verify_wrong_pin_stays_in_loop(self):
+        flow_router = _load_flow_router()
+        session = {"state": "passkey_verify", "collected_data": {"_reveal_field": "bank_account"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="1111")
+
+        with patch.object(flow_router, "_load_profile", new=AsyncMock(return_value={"passkey_hash": "deadbeef"})), patch(
+            "gov_agent.flow_router.verify_passkey",
+            return_value=False,
+        ):
+            reply, new_state, _ = await flow_router.route(session, msg)
+
+        self.assertEqual(reply, "❌ Wrong passkey. Try again:")
+        self.assertEqual(new_state, "passkey_verify")
+
+    async def test_pm_kisan_valid_identifier_returns_agent_message(self):
+        flow_router = _load_flow_router()
+        session = {"state": "pm_kisan_aadhaar", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="12345678901")
+
+        with patch(
+            "gov_agent.pm_kisan_agent.check_pm_kisan_status",
+            new=AsyncMock(return_value={"message": "PM-KISAN status reply"}),
+        ):
+            reply, new_state, _ = await flow_router.route(session, msg)
+
+        self.assertIn("PM-KISAN status reply", reply)
+        self.assertEqual(new_state, "greeting")
+
+    async def test_pmss_awaiting_document_submits_after_image_upload(self):
+        flow_router = _load_flow_router()
+        session = {"state": "pmss_awaiting_document", "collected_data": {"portal": "pmss", "name": "Test User"}}
+        msg = WhatsAppIncoming(
+            phone="919999999999",
+            message_type="image",
+            media_id="media-1",
+            body="",
+        )
+
+        with patch.object(
+            flow_router,
+            "_submit_application",
+            new=AsyncMock(return_value=("submitted", "completed", {"portal": "pmss", "media_id": "media-1"})),
+        ) as submit_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        submit_mock.assert_awaited_once()
+        self.assertEqual((reply, new_state), ("submitted", "completed"))
+        self.assertEqual(new_data["media_id"], "media-1")
+
     async def test_unknown_upload_command_returns_explicit_error(self):
         flow_router = _load_flow_router()
         session = {"state": "greeting", "collected_data": {}}
