@@ -33,6 +33,38 @@ def _load_session_manager():
 
 
 class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_collect_name_watch_live_does_not_send_unsolicited_message(self):
+        flow_router = _load_flow_router()
+        session = {"state": "collect_name", "collected_data": {"portal": "nsp"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="Test User")
+
+        with patch.object(flow_router, "_save_profile_field", new=AsyncMock()) as save_profile_mock, patch.object(
+            flow_router,
+            "_emit_activity",
+            new=AsyncMock(),
+        ) as emit_activity_mock, patch.object(
+            flow_router,
+            "_advance",
+            new=AsyncMock(),
+        ) as advance_mock, patch(
+            "gov_agent.live_router.create_live_session",
+            new=AsyncMock(),
+        ) as create_live_session_mock, patch(
+            "gov_agent.whatsapp_sender.send_message",
+            new=AsyncMock(return_value=True),
+        ) as send_message_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        save_profile_mock.assert_awaited_once_with("919999999999", "full_name", "Test User")
+        emit_activity_mock.assert_awaited_once()
+        create_live_session_mock.assert_awaited_once()
+        advance_mock.assert_awaited_once()
+        send_message_mock.assert_not_awaited()
+        self.assertEqual(reply, "Date of birth? (DD/MM/YYYY)")
+        self.assertEqual(new_state, "collect_dob")
+        self.assertEqual(new_data["name"], "Test User")
+        self.assertIn("session_id", new_data)
+
     async def test_submit_application_uses_auto_login_dashboard_link(self):
         flow_router = _load_flow_router()
 
@@ -96,6 +128,85 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("NSP20261234", reply)
         self.assertEqual(new_state, "completed")
         self.assertEqual(new_data["bank_account"], "44344429113")
+
+    async def test_bank_verify_failed_requires_explicit_retry_or_continue(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "bank_verify_failed",
+            "collected_data": {"portal": "nsp", "bank_ifsc": "SBIN0012345"},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="maybe")
+
+        with patch.object(flow_router, "_submit_application", new=AsyncMock()) as submit_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        submit_mock.assert_not_awaited()
+        self.assertIn("RETRY", reply)
+        self.assertIn("CONTINUE", reply)
+        self.assertEqual(new_state, "bank_verify_failed")
+        self.assertEqual(new_data, session["collected_data"])
+
+    async def test_bank_verify_failed_continue_calls_submit_application(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "bank_verify_failed",
+            "collected_data": {"portal": "nsp", "bank_ifsc": "SBIN0012345"},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="CONTINUE")
+
+        with patch.object(
+            flow_router,
+            "_submit_application",
+            new=AsyncMock(return_value=("submitted", "completed", {"portal": "nsp"})),
+        ) as submit_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        submit_mock.assert_awaited_once_with("919999999999", session["collected_data"], "nsp")
+        self.assertEqual((reply, new_state, new_data), ("submitted", "completed", {"portal": "nsp"}))
+
+    async def test_ocr_confirm_no_reprompts_for_aadhaar_upload(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "ocr_confirm",
+            "collected_data": {
+                "portal": "nsp",
+                "ocr": {"name": "Test User", "dob": "30/10/2006"},
+                "_pending_ocr_confirm": True,
+            },
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="NO")
+
+        reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertEqual(reply, "Please re-upload your Aadhaar card 📎")
+        self.assertEqual(new_state, "awaiting_document")
+        self.assertNotIn("ocr", new_data)
+        self.assertNotIn("_pending_ocr_confirm", new_data)
+
+    async def test_check_status_success_includes_track_link(self):
+        flow_router = _load_flow_router()
+        session = {"state": "check_status", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="NSP/2026 123")
+        response = types.SimpleNamespace(
+            data=[
+                {
+                    "confirmation_number": "NSP/2026 123",
+                    "status": "approved",
+                    "service": "NSP",
+                }
+            ]
+        )
+
+        with patch.object(flow_router, "supabase") as supabase_mock:
+            supabase_mock.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = response
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("Status: APPROVED", reply)
+        self.assertIn("Service: NSP", reply)
+        self.assertIn("Track status:", reply)
+        self.assertIn("NSP%2F2026%20123", reply)
+        self.assertEqual(new_state, "greeting")
+        self.assertEqual(new_data, {})
 
     def test_format_upload_result_hides_unreadable_warning_for_ready_aadhaar(self):
         flow_router = _load_flow_router()

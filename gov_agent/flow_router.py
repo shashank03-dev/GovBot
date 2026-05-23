@@ -792,12 +792,6 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
         except Exception:
             pass
         await _advance(session_id, 1, {"name": data["name"]})
-        live_link = f"{FRONTEND_URL}/nsp?session={session_id}"
-        from gov_agent import whatsapp_sender
-        await whatsapp_sender.send_message(
-            msg.phone,
-            f"🔴 Watch live: {live_link}"
-        )
         return ("Date of birth? (DD/MM/YYYY)", "collect_dob", data)
 
     elif state == "collect_dob":
@@ -949,23 +943,31 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
                 "collect_bank_ifsc",
                 data
             )
-        else:
-            # Continue without bank verification
+        if body.upper() == "CONTINUE":
             return await _submit_application(msg.phone, data, data.get("portal", "nsp"))
+        return (
+            "⚠️ Verification is still pending.\n\n"
+            "Reply RETRY to enter bank details again or CONTINUE to submit without verification.",
+            "bank_verify_failed",
+            data,
+        )
 
     elif state == "verify_and_submit":
         return await _submit_application(msg.phone, data, data.get("portal", "nsp"))
 
 
     elif state == "check_status":
+        confirmation_number = body.strip()
         response = supabase.table("applications").select(
-            "*").eq("confirmation_number", body.strip()).limit(1).execute()
+            "*").eq("confirmation_number", confirmation_number).limit(1).execute()
         if response.data:
             row: dict = response.data[0]  # type: ignore
+            track_url = f"{FRONTEND_URL}/track/{quote(confirmation_number, safe='')}"
             return (
-                f"📋 Application {body.strip()}\n"
+                f"📋 Application {confirmation_number}\n"
                 f"Status: {str(row.get('status', '')).upper()}\n"
-                f"Service: {row.get('service', '')}",
+                f"Service: {row.get('service', '')}\n"
+                f"Track status:\n{track_url}",
                 "greeting",
                 data
             )
