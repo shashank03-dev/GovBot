@@ -219,16 +219,6 @@ def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _continue_nsp_after_prefill(data: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
-    if not data.get("name"):
-        return ("What is your full name as per Aadhaar?", "collect_name", data)
-    if not data.get("dob"):
-        return ("Date of birth? (DD/MM/YYYY)", "collect_dob", data)
-    if not data.get("income"):
-        return ("Annual family income in ₹?", "collect_income", data)
-    return ("Please send a clear photo of your Aadhaar card 📎", "awaiting_document", data)
-
-
 async def _run_bank_verification(phone: str, data: dict[str, Any]) -> tuple[str, str, dict]:
     from gov_agent.npci_agent import send_verification_request, notify_verification_status
 
@@ -523,12 +513,12 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
                 summary = format_digilocker_summary(msg.phone)
                 
                 portal = data.get("portal", "nsp")
-                if portal == "nsp":
-                    next_reply, next_state, next_data = _continue_nsp_after_prefill(data)
+                if portal == "nsp" and data.get("name") and data.get("dob") and data.get("income"):
                     return (
-                        f"{summary}\n\n✅ Continuing with pre-filled data...\n\n{next_reply}",
-                        next_state,
-                        next_data,
+                        f"{summary}\n\n✅ Continuing with pre-filled data...\n\n"
+                        "Please send a clear photo of your Aadhaar card 📎",
+                        "awaiting_document",
+                        data,
                     )
                 next_states = {
                     "nsp": "collect_name",
