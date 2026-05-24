@@ -1,5 +1,6 @@
 import logging
 from logging.handlers import RotatingFileHandler
+import time
 from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 
@@ -15,6 +16,39 @@ file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelnam
 logger.addHandler(file_handler)
 
 router = APIRouter()
+_RECENT_MESSAGE_IDS: dict[str, float] = {}
+_RECENT_MESSAGE_TTL_SECONDS = 15 * 60
+_RECENT_MESSAGE_MAX = 2048
+
+
+def _prune_recent_message_ids(now: float) -> None:
+    stale_ids = [
+        message_id
+        for message_id, seen_at in _RECENT_MESSAGE_IDS.items()
+        if (now - seen_at) > _RECENT_MESSAGE_TTL_SECONDS
+    ]
+    for message_id in stale_ids:
+        _RECENT_MESSAGE_IDS.pop(message_id, None)
+    if len(_RECENT_MESSAGE_IDS) <= _RECENT_MESSAGE_MAX:
+        return
+    newest = sorted(_RECENT_MESSAGE_IDS.items(), key=lambda item: item[1], reverse=True)[:_RECENT_MESSAGE_MAX]
+    _RECENT_MESSAGE_IDS.clear()
+    _RECENT_MESSAGE_IDS.update(newest)
+
+
+def _mark_message_seen(message_id: str | None) -> bool:
+    if not message_id:
+        return False
+    now = time.monotonic()
+    _prune_recent_message_ids(now)
+    if message_id in _RECENT_MESSAGE_IDS:
+        return True
+    _RECENT_MESSAGE_IDS[message_id] = now
+    return False
+
+
+def reset_recent_message_ids_for_tests() -> None:
+    _RECENT_MESSAGE_IDS.clear()
 
 
 @router.get("")
@@ -45,6 +79,10 @@ async def receive_message(request: Request):
             return JSONResponse({"status": "ok"}, status_code=200)
         messages = value["messages"]
         message = messages[0]
+        message_id = message.get("id")
+        if _mark_message_seen(message_id):
+            logger.info("Ignoring duplicate WhatsApp inbound message: %s", message_id)
+            return JSONResponse({"status": "ok"}, status_code=200)
 
         phone = message["from"]
         msg_type = message["type"]
@@ -75,8 +113,9 @@ async def receive_message(request: Request):
         )
 
         reply = await session_manager.handle_incoming(incoming)
-        logger.info(f"Sending reply to {phone}: {reply[:100]}")
-        result = await whatsapp_sender.send_message(phone, reply)
+        log_preview = reply[:100] if isinstance(reply, str) else str(reply)[:100]
+        logger.info(f"Sending reply to {phone}: {log_preview}")
+        result = await whatsapp_sender.send_response(phone, reply)
         logger.info(f"WhatsApp send result: {result}")
 
     except Exception as e:

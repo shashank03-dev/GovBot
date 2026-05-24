@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
+from typing import Any
 import httpx
 from gov_agent.config import (
     WHATSAPP_TOKEN,
@@ -47,6 +48,27 @@ def _build_otp_template_payload(to: str, code: str) -> dict:
                 }
             ],
         },
+    }
+
+
+def _build_media_payload(to: str, media: dict[str, Any]) -> dict[str, Any]:
+    mime_type = str(media.get("mime_type") or "")
+    link = str(media["link"])
+    filename = str(media.get("filename") or "document")
+    if mime_type.startswith("image/"):
+        return {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "image",
+            "image": {"link": link},
+        }
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "document",
+        "document": {"link": link, "filename": filename},
     }
 
 
@@ -102,6 +124,24 @@ async def _post_whatsapp_payload(payload: dict) -> dict:
 
 async def _send_whatsapp(to: str, body: str) -> dict:
     return await _post_whatsapp_payload(_build_text_payload(to, body))
+
+
+async def send_response(to: str, response: dict[str, Any] | str) -> bool:
+    if isinstance(response, str):
+        return await send_message(to, response)
+
+    kind = str(response.get("kind") or "text")
+    if kind == "text":
+        return await send_message(to, str(response.get("text", "")))
+
+    if kind == "document_media_with_details":
+        media_result = await _post_whatsapp_payload(_build_media_payload(to, response["media"]))
+        if not media_result.get("ok"):
+            return False
+        text_result = await _post_whatsapp_payload(_build_text_payload(to, str(response.get("text", ""))))
+        return bool(text_result.get("ok"))
+
+    return await send_message(to, str(response.get("text", "")))
 
 
 async def send_message(to: str, body: str) -> bool:

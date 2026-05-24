@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { getFocusedDocumentId, orderDocumentsWithFocusFirst } from '@/lib/documentVault.mjs';
 const ALLOWED_UPLOAD_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'] as const;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -21,6 +22,11 @@ type VaultDocument = {
   confidence?: number;
   created_at?: string;
   extracted_data?: Record<string, string | number | null>;
+};
+
+type ApiErrorPayload = {
+  detail?: string;
+  error?: string;
 };
 
 const DOC_TYPES: Array<{ value: DocType; label: string; icon: string; hint: string }> = [
@@ -63,7 +69,7 @@ function validateClientFile(file: File) {
   return '';
 }
 
-function apiErrorMessage(status: number, payload: any, fallback: string) {
+function apiErrorMessage(status: number, payload: ApiErrorPayload | null | undefined, fallback: string) {
   if (status === 401 && (!payload?.detail || payload?.detail === 'Authentication required')) {
     return 'Your session expired. Please log in again and retry.';
   }
@@ -71,6 +77,10 @@ function apiErrorMessage(status: number, payload: any, fallback: string) {
     return 'Your session expired. Please log in again and retry.';
   }
   return payload?.detail || payload?.error || fallback;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function buildEditValues(docType: DocType, current: Record<string, string | number | null>) {
@@ -121,6 +131,30 @@ export default function DocumentsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
   const [editingPasskey, setEditingPasskey] = useState('');
+  const [focusedDocumentId, setFocusedDocumentId] = useState('');
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const loadDocuments = useCallback(async (activePhone: string, authToken: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(buildProxyApiPath(`documents/${encodeURIComponent(activePhone)}`), buildBackendRequestInit({
+        headers: { Authorization: `Bearer ${authToken}` },
+      }));
+      const data = await res.json() as { documents?: VaultDocument[] } & ApiErrorPayload;
+      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to load documents.'));
+      const nextFocusedId = getFocusedDocumentId(router.asPath);
+      const loadedDocuments = orderDocumentsWithFocusFirst(data.documents || [], nextFocusedId);
+      setDocuments(loadedDocuments);
+      if (nextFocusedId && !loadedDocuments.some((doc: VaultDocument) => doc.id === nextFocusedId)) {
+        setNotice('Requested document was not found in your vault.');
+      }
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to load documents'));
+    } finally {
+      setLoading(false);
+    }
+  }, [router.asPath]);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('govbot_token') || '';
@@ -132,24 +166,15 @@ export default function DocumentsPage() {
     setToken(savedToken);
     setPhone(savedPhone);
     void loadDocuments(savedPhone, savedToken);
-  }, [router]);
+  }, [loadDocuments, router]);
 
-  async function loadDocuments(activePhone: string, authToken: string) {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch(buildProxyApiPath(`documents/${encodeURIComponent(activePhone)}`), buildBackendRequestInit({
-        headers: { Authorization: `Bearer ${authToken}` },
-      }));
-      const data = await res.json();
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to load documents.'));
-      setDocuments(data.documents || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load documents');
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    if (!router.isReady) return;
+    const nextFocusedId = getFocusedDocumentId(router.asPath);
+    setFocusedDocumentId(nextFocusedId);
+    if (!nextFocusedId) return;
+    setDocuments((prev) => orderDocumentsWithFocusFirst(prev, nextFocusedId));
+  }, [router.asPath, router.isReady]);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -204,15 +229,15 @@ export default function DocumentsPage() {
         }),
       }));
 
-      const data = await res.json();
+      const data = await res.json() as ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Upload failed.'));
 
       setSelectedFile(null);
       setPreviewName('');
       setNotice(`${prettyLabel(docType)} saved to your vault.`);
       await loadDocuments(phone, token);
-    } catch (err: any) {
-      setError(err.message || 'Upload failed');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Upload failed'));
     } finally {
       setUploading(false);
     }
@@ -223,18 +248,42 @@ export default function DocumentsPage() {
     const passkey = window.prompt('Enter your 4-digit passkey to preview this document:')?.trim() || '';
     if (!passkey) return;
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/signed-url`), buildBackendRequestInit({
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/view-url`), buildBackendRequestInit({
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
         },
       }));
-      const data = await res.json();
+      const data = await res.json() as { view_url?: string } & ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Preview unavailable.'));
-      window.open(data.signed_url, '_blank', 'noopener,noreferrer');
-    } catch (err: any) {
-      setError(err.message || 'Preview unavailable');
+      window.open(data.view_url, '_blank', 'noopener,noreferrer');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Preview unavailable'));
+    }
+  }
+
+  async function downloadDocument(documentId: string) {
+    if (!token) return;
+    const passkey = window.prompt('Enter your 4-digit passkey to download this document:')?.trim() || '';
+    if (!passkey) return;
+    setDownloadingId(documentId);
+    setError('');
+    try {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/download-url`), buildBackendRequestInit({
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Document-Passkey': passkey,
+        },
+      }));
+      const data = await res.json() as { download_url?: string } & ApiErrorPayload;
+      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Download unavailable.'));
+      window.open(data.download_url, '_blank', 'noopener,noreferrer');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Download unavailable'));
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -252,14 +301,14 @@ export default function DocumentsPage() {
           'X-Document-Passkey': passkey,
         },
       }));
-      const data = await res.json();
+      const data = await res.json() as { extracted_data?: Record<string, string | number | null> } & ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
       const current = data.extracted_data || {};
       setEditingId(doc.id);
       setEditingPasskey(passkey);
       setEditValues(buildEditValues(doc.doc_type, current));
-    } catch (err: any) {
-      setError(err.message || 'Failed to open document details.');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to open document details.'));
     } finally {
       setLoadingEditId(null);
     }
@@ -285,13 +334,13 @@ export default function DocumentsPage() {
         },
         body: JSON.stringify({ extracted_data: editValues }),
       }));
-      const data = await res.json();
+      const data = await res.json() as ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to save edits.'));
       setNotice('Document details updated.');
       cancelEditing();
       await loadDocuments(phone, token);
-    } catch (err: any) {
-      setError(err.message || 'Failed to save edits');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to save edits'));
     } finally {
       setSavingEdit(false);
     }
@@ -313,13 +362,13 @@ export default function DocumentsPage() {
           'X-Document-Passkey': passkey,
         },
       }));
-      const data = await res.json();
+      const data = await res.json() as ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to delete document.'));
       setNotice('Document deleted.');
       if (editingId === documentId) cancelEditing();
       await loadDocuments(phone, token);
-    } catch (err: any) {
-      setError(err.message || 'Failed to delete document');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to delete document'));
     } finally {
       setDeletingId(null);
     }
@@ -446,7 +495,14 @@ export default function DocumentsPage() {
             ) : (
               <div className="space-y-4">
                 {documents.map(doc => (
-                  <div key={doc.id} className="rounded-3xl border border-slate-100 bg-slate-50/70 p-5">
+                  <div
+                    key={doc.id}
+                    className={`rounded-3xl border p-5 ${
+                      doc.id === focusedDocumentId
+                        ? 'border-orange-200 bg-orange-50/60'
+                        : 'border-slate-100 bg-slate-50/70'
+                    }`}
+                  >
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -473,7 +529,15 @@ export default function DocumentsPage() {
                           onClick={() => void openPreview(doc.id)}
                           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
                         >
-                          Preview
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void downloadDocument(doc.id)}
+                          disabled={downloadingId === doc.id}
+                          className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50"
+                        >
+                          {downloadingId === doc.id ? 'Downloading...' : 'Download'}
                         </button>
                         <button
                           type="button"

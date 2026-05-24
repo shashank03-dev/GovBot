@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from gov_agent.document_vault import (
     DocumentVaultError,
     analyze_document_validity,
+    create_signed_download_url,
     create_signed_document_url,
     delete_user_document,
     ensure_profile_passkey,
@@ -130,6 +131,58 @@ async def create_document_signed_url(
     except Exception as exc:
         logger.warning("Document access log failed for preview %s: %s", document_id, exc)
     return {"document_id": document_id, "signed_url": signed_url}
+
+
+@router.post("/item/{document_id}/view-url")
+async def create_document_view_url(
+    document_id: str,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    view_url = create_signed_document_url(document["storage_path"])
+    try:
+        log_document_access(
+            phone=document["phone"],
+            document_id=document_id,
+            action="preview",
+            metadata={"source": "web"},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for preview %s: %s", document_id, exc)
+    return {"document_id": document_id, "view_url": view_url}
+
+
+@router.post("/item/{document_id}/download-url")
+async def create_document_download_url(
+    document_id: str,
+    request: Request,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    _require_token_phone(token_phone)
+    document = get_user_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if token_phone and token_phone != document.get("phone"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _require_document_passkey(request, document["phone"])
+    download_url = create_signed_download_url(document["storage_path"])
+    try:
+        log_document_access(
+            phone=document["phone"],
+            document_id=document_id,
+            action="download",
+            metadata={"source": "web"},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for download %s: %s", document_id, exc)
+    return {"document_id": document_id, "download_url": download_url}
 
 
 @router.patch("/item/{document_id}")

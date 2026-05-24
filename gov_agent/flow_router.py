@@ -15,6 +15,7 @@ from gov_agent.document_vault import (
     create_signed_document_url,
     format_sensitive_document_reply,
     get_latest_user_document,
+    get_user_document,
     hash_passkey,
     ingest_document,
     log_document_access,
@@ -145,6 +146,18 @@ _RENEWAL_PORTAL_KEYWORDS = {
     "minority": "minority",
 }
 
+_DOCUMENT_ACCESS_KEYWORDS = {
+    "pan": "pan",
+    "aadhaar": "aadhaar",
+    "aadhar": "aadhaar",
+    "adhaar": "aadhaar",
+    "income certificate": "income_cert",
+    "income cert": "income_cert",
+    "caste certificate": "caste_cert",
+    "caste cert": "caste_cert",
+    "marksheet": "marksheet",
+}
+
 
 def _is_renewal_question(body_lower: str) -> bool:
     return any(
@@ -166,6 +179,16 @@ def _extract_portal_keyword(body_lower: str) -> str | None:
     for keyword, portal in _RENEWAL_PORTAL_KEYWORDS.items():
         if keyword in body_lower:
             return portal
+    return None
+
+
+def _match_document_request(body_lower: str) -> str | None:
+    has_request_intent = any(token in body_lower for token in ("my", "show", "document", "preview"))
+    if not has_request_intent:
+        return None
+    for phrase, doc_type in _DOCUMENT_ACCESS_KEYWORDS.items():
+        if phrase in body_lower:
+            return doc_type
     return None
 
 
@@ -302,7 +325,7 @@ def _format_submission_success_reply(phone: str, confirmation_number: str) -> st
     )
 
 
-async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
+async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | str, str, dict]:
     body = msg.body or ""
     data = session.get("collected_data", {})
     state = session.get("state", "greeting")
@@ -341,10 +364,23 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             data,
         )
 
+    requested_doc_type = _match_document_request(body_lower)
+    if requested_doc_type:
+        document = get_latest_user_document(msg.phone, requested_doc_type)
+        if not document:
+            return (
+                f"❌ No {requested_doc_type.replace('_', ' ')} found yet. Send 'upload {requested_doc_type}' first.",
+                "greeting",
+                data,
+            )
+        return (
+            "📄 I found your document.\n\nReply QUICK for file + details in chat, or VAULT to open it on the website.",
+            "document_retrieval_mode",
+            {**data, "_requested_doc_type": requested_doc_type, "_requested_document_id": document["id"]},
+        )
+
     # ── Sensitive data query: "whats my pan", "my aadhaar", etc. ──────────
     _SENSITIVE_PATTERNS = {
-        "pan": "pan_number",
-        "aadhaar": "aadhaar_number",
         "bank": "bank_account",
         "account": "bank_account",
         "ifsc": "bank_ifsc",
@@ -397,6 +433,37 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
             "Example: https://scholarships.gov.in/fresh/newstdRegfrmInstruction\n\n"
             f"🌐 Or use the web tool: {FRONTEND_URL}/form-fill",
             "form_fill_url",
+            data,
+        )
+
+    elif state == "document_retrieval_mode":
+        choice = body.strip().lower()
+        if choice in {"quick", "chat", "fast", "quick in chat"}:
+            profile = await _load_profile(msg.phone)
+            next_data = {**data, "_document_delivery_mode": "chat"}
+            if not profile.get("passkey_hash"):
+                next_data["_after_passkey"] = "reveal"
+                return (
+                    "🔐 First, set a 4-digit security passkey to protect your data:",
+                    "set_passkey",
+                    next_data,
+                )
+            return ("🔐 Enter your 4-digit passkey:", "passkey_verify", next_data)
+        if choice in {"vault", "web", "website", "open vault"}:
+            document_id = str(data.get("_requested_document_id") or "")
+            clean_data = dict(data)
+            clean_data.pop("_requested_doc_type", None)
+            clean_data.pop("_requested_document_id", None)
+            clean_data.pop("_document_delivery_mode", None)
+            clean_data.pop("_after_passkey", None)
+            return (
+                f"🌐 Open your document vault:\n{FRONTEND_URL}/documents?document={quote(document_id, safe='')}",
+                "greeting",
+                clean_data,
+            )
+        return (
+            "Reply QUICK for file + details in chat, or VAULT to open the website vault.",
+            "document_retrieval_mode",
             data,
         )
 
@@ -665,6 +732,39 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[str, str, dict]:
         verified = verify_passkey(pin, stored_digest) or (legacy_pin and pin == legacy_pin)
         if not verified:
             return ("❌ Wrong passkey. Try again:", "passkey_verify", data)
+        document_id = data.get("_requested_document_id")
+        if data.get("_document_delivery_mode") == "chat" and document_id:
+            document = get_user_document(str(document_id))
+            if not document:
+                return (
+                    "❌ That document is no longer available. Please open your vault and try again.",
+                    "greeting",
+                    {},
+                )
+            signed_url = create_signed_document_url(document["storage_path"])
+            try:
+                log_document_access(
+                    phone=msg.phone,
+                    document_id=document.get("id"),
+                    action="reveal",
+                    metadata={"doc_type": document.get("doc_type"), "channel": "whatsapp"},
+                )
+            except Exception as exc:
+                logger.warning("Document access log failed for reveal %s/%s: %s", msg.phone, document.get("doc_type"), exc)
+            await _emit_activity(msg.phone, f"🔓 Sensitive document accessed: {document.get('doc_type')}")
+            return (
+                {
+                    "kind": "document_media_with_details",
+                    "media": {
+                        "link": signed_url,
+                        "mime_type": document.get("mime_type") or "application/pdf",
+                        "filename": document.get("original_filename") or f"{document['doc_type']}.pdf",
+                    },
+                    "text": format_sensitive_document_reply(document["doc_type"], document, signed_url=None),
+                },
+                "greeting",
+                {},
+            )
         doc_type = data.get("_reveal_doc_type")
         if doc_type:
             document = get_latest_user_document(msg.phone, doc_type)

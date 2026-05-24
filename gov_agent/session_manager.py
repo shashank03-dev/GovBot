@@ -89,7 +89,7 @@ async def delete_session(phone: str) -> None:
         ).execute()
 
 
-async def handle_incoming(msg: WhatsAppIncoming) -> str:
+async def handle_incoming(msg: WhatsAppIncoming) -> dict | str:
     session = await get_session(msg.phone)
     data = session.get("collected_data", {})
 
@@ -102,7 +102,10 @@ async def handle_incoming(msg: WhatsAppIncoming) -> str:
 
     reply, new_state, new_data = await flow_router.route(session, msg)
 
-    reply = await flow_router.translate_reply(reply, lang)
+    if isinstance(reply, str):
+        reply = await flow_router.translate_reply(reply, lang)
+    elif isinstance(reply, dict) and isinstance(reply.get("text"), str):
+        reply = {**reply, "text": await flow_router.translate_reply(reply["text"], lang)}
 
     if new_state == "__delete__":
         await delete_session(msg.phone)

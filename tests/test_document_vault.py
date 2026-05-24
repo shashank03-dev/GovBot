@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from gov_agent.document_vault import (
     DocumentVaultError,
@@ -8,6 +9,7 @@ from gov_agent.document_vault import (
     mask_document_for_list,
     merge_extracted_data,
     format_sensitive_document_reply,
+    create_signed_download_url,
     hash_passkey,
     validate_stored_passkey,
     validate_upload_payload,
@@ -98,7 +100,7 @@ class SensitiveReplyTests(unittest.TestCase):
             signed_url="https://example.com/pan",
         )
 
-        self.assertIn("PAN Number: *ABCDE1234F*", text)
+        self.assertIn("PAN Number: *ABXXXXXX4F*", text)
         self.assertIn("Full Name: Asha Singh", text)
         self.assertIn("View file: https://example.com/pan", text)
 
@@ -116,9 +118,38 @@ class SensitiveReplyTests(unittest.TestCase):
             signed_url=None,
         )
 
-        self.assertIn("Aadhaar Number: *1234 5678 9012*", text)
+        self.assertIn("Aadhaar Number: *XXXX XXXX 9012*", text)
         self.assertIn("Full Name: Asha Singh", text)
         self.assertNotIn("View file:", text)
+
+    def test_formats_marksheet_reply_from_document_record(self):
+        text = format_sensitive_document_reply(
+            "marksheet",
+            {
+                "doc_type": "marksheet",
+                "extracted_data": {
+                    "student_name": "Asha Singh",
+                    "roll_number": "2024-7788",
+                    "percentage": "93.2",
+                },
+            },
+            signed_url=None,
+        )
+
+        self.assertIn("Student Name: Asha Singh", text)
+        self.assertIn("Roll Number: 2024-7788", text)
+
+
+class DownloadUrlHelperTests(unittest.TestCase):
+    def test_create_signed_download_url_uses_storage_path(self):
+        with patch("gov_agent.document_vault.supabase") as supabase_mock:
+            storage = supabase_mock.storage.from_.return_value
+            storage.create_signed_url.return_value = {"signedURL": "https://signed.example/download"}
+
+            url = create_signed_download_url("9199/pan/current.pdf")
+
+        self.assertEqual(url, "https://signed.example/download")
+        storage.create_signed_url.assert_called_once()
 
 
 class StatusLogicTests(unittest.TestCase):

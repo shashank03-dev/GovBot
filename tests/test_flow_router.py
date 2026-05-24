@@ -261,6 +261,92 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "kyc_document_upload")
         self.assertEqual(new_data["_pending_doc_type"], "aadhaar")
 
+    async def test_document_request_prompts_for_retrieval_mode(self):
+        flow_router = _load_flow_router()
+        session = {"state": "greeting", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="show pan")
+
+        with patch.object(
+            flow_router,
+            "get_latest_user_document",
+            return_value={"id": "doc-pan-1", "doc_type": "pan", "storage_path": "9199/pan/file.pdf"},
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("QUICK", reply.upper())
+        self.assertIn("VAULT", reply.upper())
+        self.assertEqual(new_state, "document_retrieval_mode")
+        self.assertEqual(new_data["_requested_doc_type"], "pan")
+        self.assertEqual(new_data["_requested_document_id"], "doc-pan-1")
+
+    async def test_document_request_quick_mode_asks_for_passkey(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "document_retrieval_mode",
+            "collected_data": {"_requested_doc_type": "pan", "_requested_document_id": "doc-pan-1"},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="quick")
+
+        with patch.object(flow_router, "_load_profile", new=AsyncMock(return_value={"passkey_hash": "hash"})):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertEqual(reply, "🔐 Enter your 4-digit passkey:")
+        self.assertEqual(new_state, "passkey_verify")
+        self.assertEqual(new_data["_document_delivery_mode"], "chat")
+
+    async def test_document_request_vault_mode_returns_focused_link(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "document_retrieval_mode",
+            "collected_data": {"_requested_doc_type": "pan", "_requested_document_id": "doc-pan-1"},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="vault")
+
+        reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("/documents?document=doc-pan-1", reply)
+        self.assertEqual(new_state, "greeting")
+        self.assertNotIn("_requested_doc_type", new_data)
+
+    async def test_passkey_verify_returns_structured_document_media_response(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "passkey_verify",
+            "collected_data": {
+                "_requested_doc_type": "aadhaar",
+                "_requested_document_id": "doc-aadhaar-1",
+                "_document_delivery_mode": "chat",
+            },
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="1234")
+
+        with patch.object(flow_router, "_load_profile", new=AsyncMock(return_value={"passkey_hash": "digest"})), patch(
+            "gov_agent.flow_router.verify_passkey",
+            return_value=True,
+        ), patch(
+            "gov_agent.flow_router.get_user_document",
+            return_value={
+                "id": "doc-aadhaar-1",
+                "phone": "919999999999",
+                "doc_type": "aadhaar",
+                "mime_type": "image/jpeg",
+                "original_filename": "aadhaar.jpg",
+                "storage_path": "919999999999/aadhaar/current.jpg",
+                "extracted_data": {"aadhaar_number": "1234 5678 9012", "full_name": "Asha Singh"},
+            },
+        ), patch(
+            "gov_agent.flow_router.create_signed_document_url",
+            return_value="https://signed.example/aadhaar.jpg",
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertEqual(reply["kind"], "document_media_with_details")
+        self.assertEqual(reply["media"]["link"], "https://signed.example/aadhaar.jpg")
+        self.assertIn("XXXX", reply["text"])
+        self.assertNotIn("1234 5678 9012", reply["text"])
+        self.assertEqual(new_state, "greeting")
+        self.assertEqual(new_data, {})
+
     async def test_digilocker_check_for_nsp_skips_prefilled_steps_and_requests_aadhaar_upload(self):
         flow_router = _load_flow_router()
         session = {"state": "digilocker_awaiting_auth", "collected_data": {"portal": "nsp"}}

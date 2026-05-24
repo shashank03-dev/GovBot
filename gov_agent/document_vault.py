@@ -182,32 +182,60 @@ def format_sensitive_document_reply(
     signed_url: Optional[str] = None,
 ) -> str:
     extracted = document.get("extracted_data") or {}
-    label = "PAN Card" if requested_type == "pan" else "Aadhaar Card"
+    label_map = {
+        "pan": "PAN Card",
+        "aadhaar": "Aadhaar Card",
+        "income_cert": "Income Certificate",
+        "caste_cert": "Caste Certificate",
+        "marksheet": "Marksheet",
+    }
+    label = label_map.get(requested_type, requested_type.replace("_", " ").title())
     lines = [f"🔓 Your {label} details:", ""]
 
-    if requested_type == "pan":
-        field_rows = [
-            ("PAN Number", extracted.get("pan_number")),
-            ("Full Name", extracted.get("full_name")),
-            ("Father Name", extracted.get("father_name")),
-            ("DOB", extracted.get("dob")),
-        ]
-    else:
-        field_rows = [
-            ("Aadhaar Number", extracted.get("aadhaar_number")),
-            ("Full Name", extracted.get("full_name")),
-            ("DOB", extracted.get("dob")),
-            ("Gender", extracted.get("gender")),
-            ("Address", extracted.get("address")),
-        ]
+    field_rows = {
+        "pan": [
+            ("PAN Number", "pan_number"),
+            ("Full Name", "full_name"),
+            ("Father Name", "father_name"),
+            ("DOB", "dob"),
+        ],
+        "aadhaar": [
+            ("Aadhaar Number", "aadhaar_number"),
+            ("Full Name", "full_name"),
+            ("DOB", "dob"),
+            ("Gender", "gender"),
+            ("Address", "address"),
+        ],
+        "income_cert": [
+            ("Certificate Number", "certificate_number"),
+            ("Annual Income", "annual_income"),
+            ("Issue Date", "issue_date"),
+            ("Valid Until", "valid_until"),
+        ],
+        "caste_cert": [
+            ("Certificate Number", "certificate_number"),
+            ("Caste", "caste"),
+            ("Category", "category"),
+            ("Issue Date", "issue_date"),
+        ],
+        "marksheet": [
+            ("Student Name", "student_name"),
+            ("Roll Number", "roll_number"),
+            ("Year", "year"),
+            ("Percentage", "percentage"),
+            ("Issue Date", "issue_date"),
+        ],
+    }.get(requested_type, [])
 
-    for key, value in field_rows:
+    for label_key, field_key in field_rows:
+        value = extracted.get(field_key)
         if not value:
             continue
-        if key.endswith("Number"):
-            lines.append(f"{key}: *{value}*")
+        masked_value = _mask_sensitive_value(field_key, value)
+        if field_key in {"pan_number", "aadhaar_number"}:
+            lines.append(f"{label_key}: *{masked_value}*")
         else:
-            lines.append(f"{key}: {value}")
+            lines.append(f"{label_key}: {masked_value}")
 
     if signed_url:
         lines.extend(["", f"View file: {signed_url}"])
@@ -685,6 +713,14 @@ def _upload_file(path: str, content: bytes, mime_type: str) -> None:
 
 
 def create_signed_document_url(storage_path: str, expires_in: int = 600) -> str:
+    response = supabase.storage.from_(SUPABASE_DOCUMENTS_BUCKET).create_signed_url(
+        storage_path,
+        expires_in,
+    )
+    return response["signedURL"]
+
+
+def create_signed_download_url(storage_path: str, expires_in: int = 600) -> str:
     response = supabase.storage.from_(SUPABASE_DOCUMENTS_BUCKET).create_signed_url(
         storage_path,
         expires_in,
