@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
 import { CheckCircle, Copy, ExternalLink, ChevronRight, Shield, Award } from 'lucide-react';
 import Link from 'next/link';

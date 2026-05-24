@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 interface VerifyResult {
   success: boolean;
@@ -95,8 +96,8 @@ export default function BankVerifyPage() {
       } else {
         setStep('result');
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to verify bank account');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to verify bank account'));
       setStep('form');
     } finally {
       setLoading(false);
@@ -131,8 +132,8 @@ export default function BankVerifyPage() {
         throw new Error(data.detail || data.error || data.message || 'Failed to send OTP');
       }
       setOtpSent(true);
-    } catch (err: any) {
-      setOtpError(err.message || 'Failed to send OTP');
+    } catch (error: unknown) {
+      setOtpError(getErrorMessage(error, 'Failed to send OTP'));
     } finally {
       setOtpLoading(false);
     }
@@ -173,8 +174,8 @@ export default function BankVerifyPage() {
 
       setReadyResult(readyData);
       setStep('ready');
-    } catch (err: any) {
-      setOtpError(err.message || 'OTP verification failed');
+    } catch (error: unknown) {
+      setOtpError(getErrorMessage(error, 'OTP verification failed'));
     } finally {
       setOtpLoading(false);
     }

@@ -6,6 +6,7 @@ import {
   GraduationCap, ChevronRight, ArrowLeft, Loader2,
   Smartphone, ShieldCheck, CheckCircle, MessageCircle,
 } from 'lucide-react';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 type Step = 'credentials' | 'otp' | 'success';
 
@@ -55,8 +56,8 @@ export default function DigiLockerInitPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
       setStep('otp');
       startResendTimer();
-    } catch (err: any) {
-      setError(err.message || 'Failed to send OTP. Please try again.');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to send OTP. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -81,8 +82,8 @@ export default function DigiLockerInitPage() {
       await new Promise((r) => setTimeout(r, 1200));
       const consentId = `mock_${Math.random().toString(36).slice(2, 10)}`;
       router.push(`/digilocker/callback?consent_id=${consentId}`);
-    } catch (err: any) {
-      setError(err.message || 'Verification failed. Please try again.');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Verification failed. Please try again.'));
     } finally {
       setLoading(false);
     }

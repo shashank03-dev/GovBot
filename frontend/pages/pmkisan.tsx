@@ -3,6 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Sprout, ArrowLeft, ExternalLink } from 'lucide-react';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 type StatusState = 'input' | 'loading' | 'result' | 'error';
 
@@ -40,8 +41,8 @@ export default function PmKisanChecker() {
       if (!res.ok) throw new Error(data.error || 'Lookup failed');
       setResult(data);
       setState('result');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Something went wrong');
+    } catch (error: unknown) {
+      setErrorMsg(getErrorMessage(error, 'Something went wrong'));
       setState('error');
     }
   };

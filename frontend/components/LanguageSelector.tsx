@@ -21,13 +21,9 @@ export function setStoredLanguage(code: string) {
 }
 
 export default function LanguageSelector() {
-  const [lang, setLang] = useState('en');
+  const [lang, setLang] = useState(getStoredLanguage);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setLang(getStoredLanguage());
-  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {

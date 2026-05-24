@@ -55,13 +55,13 @@ export default function DigiLockerCallback() {
           router.push('/nsp/apply');
         }, 2500);
 
-      } catch (error) {
+      } catch {
         setStatus('error');
       }
     };
 
     processDigiLocker();
-  }, [consent_id]);
+  }, [consent_id, router]);
 
   const getStatusMessage = () => {
     switch (status) {

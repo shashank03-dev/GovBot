@@ -6,7 +6,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
 
-  const { phone, code , otp} = req.body;
+  const { phone, code, otp } = req.body;
 
   try {
     const response = await fetch(
@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const data = await response.json();
     return res.status(response.status).json(data);
-  } catch (error) {
+  } catch {
     return res.status(500).json({ message: 'Internal Server Error' });
   }
 }

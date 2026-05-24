@@ -176,6 +176,8 @@ GovBot/
 └── README.md
 ```
 
+Contributor workflow, verification, and shared agent-tooling setup now live in [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md).
+
 ## Local Setup
 
 ### Prerequisites
@@ -194,32 +196,14 @@ git clone https://github.com/shashank03-dev/GovBot.git
 cd GovBot
 ```
 
-### 2. Install backend dependencies
+### 2. Add environment files
+
+Copy the tracked templates:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
+cp frontend/.env.local.example frontend/.env.local
 ```
-
-### 3. Install Playwright browser dependencies
-
-```bash
-playwright install chromium
-```
-
-### 4. Install frontend dependencies
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-### 5. Add environment files
-
-Create:
-
-- `.env` in the repo root for the backend
-- `frontend/.env.local` for the Next.js app
 
 ### Backend environment variables
 
@@ -275,20 +259,45 @@ Create:
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_KEY` | Supabase client-side key used by the frontend pages |
 
-### 6. Start the backend
+### 3. Install project dependencies
 
 ```bash
-uvicorn gov_agent.main:app --host 0.0.0.0 --port 8000 --reload
+make setup
 ```
 
-### 7. Start the frontend
+### 4. Run explicit backend bootstrap
+
+This is intentionally separate from app startup. Use it when you create a fresh workspace or need to rebuild local RAG state.
 
 ```bash
-cd frontend
-npm run dev
+make bootstrap
 ```
 
-### 8. Expose the backend for webhook testing if needed
+### 5. Start the backend
+
+```bash
+make dev-backend
+```
+
+### 6. Start the frontend
+
+```bash
+make dev-frontend
+```
+
+You can also run both together:
+
+```bash
+make dev
+```
+
+If those ports are already in use, override them explicitly:
+
+```bash
+make dev BACKEND_PORT=8001 FRONTEND_PORT=3001
+```
+
+### 7. Expose the backend for webhook testing if needed
 
 ```bash
 ngrok http 8000
@@ -297,10 +306,12 @@ ngrok http 8000
 ## Useful Development Checks
 
 ```bash
-PYTHONPATH=. pytest
-node frontend/lib/dashboardRealtime.test.mjs
-cd frontend && npm run build
-cd frontend && npm run lint
+make test-backend
+make test-frontend
+make lint
+make typecheck
+make build
+make check
 ```
 
 ## Demo Routes Worth Showing
@@ -340,7 +351,7 @@ cd frontend && npm run lint
 
 ## Contributing
 
-Issues and pull requests are welcome. If you plan to make a larger change, open an issue first so the shape of the update is clear before code starts moving.
+Use [`CONTRIBUTING.md`](CONTRIBUTING.md) for the canonical workflow and [`AGENTS.md`](AGENTS.md) for shared agent-tooling guidance.
 
 ## License
 

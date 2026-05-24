@@ -23,6 +23,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DEV_SECRET_KEY = "govbot-dev-secret-key-for-local-only"
+
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
@@ -32,7 +34,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_DOCUMENTS_BUCKET = os.getenv("SUPABASE_DOCUMENTS_BUCKET", "user-documents")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
 
 _REQUIRED = [
     "WHATSAPP_TOKEN",
@@ -51,7 +53,7 @@ def validate_config() -> None:
     Call once at application startup (e.g. lifespan handler or __main__).
     Importing the module is always safe even without a .env file.
     """
-    missing = [k for k in _REQUIRED if not globals().get(k)]
+    missing = [k for k in _REQUIRED if not os.getenv(k)]
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 

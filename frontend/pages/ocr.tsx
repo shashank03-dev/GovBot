@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import Image from 'next/image';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 const ALLOWED_OCR_TYPES = ['image/jpeg', 'image/jpg', 'image/png'] as const;
 const MAX_OCR_BYTES = 8 * 1024 * 1024;
@@ -114,8 +116,8 @@ export default function OcrPage() {
       } else {
         setResult(data);
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to extract data');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Failed to extract data'));
     } finally {
       setLoading(false);
     }
@@ -166,7 +168,14 @@ export default function OcrPage() {
             <label htmlFor="aadhaar-upload" className="cursor-pointer block">
               {imagePreview ? (
                 <div>
-                  <img src={imagePreview} alt="Aadhaar Preview" className="max-h-48 mx-auto mb-3 rounded-lg shadow-sm" />
+                  <Image
+                    src={imagePreview}
+                    alt="Aadhaar Preview"
+                    width={480}
+                    height={320}
+                    unoptimized
+                    className="max-h-48 w-auto mx-auto mb-3 rounded-lg shadow-sm"
+                  />
                   <p className="text-xs text-slate-400">Click to change image</p>
                 </div>
               ) : (

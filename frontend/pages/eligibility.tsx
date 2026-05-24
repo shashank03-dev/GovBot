@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import confetti from 'canvas-confetti';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 interface EligibilityResult {
   eligible: boolean;
@@ -101,11 +102,12 @@ export default function EligibilityPage() {
 
       const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-      const interval: any = setInterval(function() {
+      const interval = window.setInterval(() => {
         const timeLeft = animationEnd - Date.now();
 
         if (timeLeft <= 0) {
-          return clearInterval(interval);
+          window.clearInterval(interval);
+          return;
         }
 
         const particleCount = 50 * (timeLeft / duration);
@@ -121,7 +123,7 @@ export default function EligibilityPage() {
         });
       }, 250);
 
-      return () => clearInterval(interval);
+      return () => window.clearInterval(interval);
     }
   }, [result, step]);
 
@@ -155,8 +157,8 @@ export default function EligibilityPage() {
       const data: EligibilityResult = await res.json();
       setResult(data);
       setStep(TOTAL_STEPS);
-    } catch (e: any) {
-      setError(e.message || 'Eligibility check failed — server unreachable. Please try again in a moment.');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Eligibility check failed — server unreachable. Please try again in a moment.'));
     } finally {
       setLoading(false);
     }

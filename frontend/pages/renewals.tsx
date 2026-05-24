@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 interface Reminder {
   id: string;
@@ -139,8 +140,8 @@ export default function RenewalsPage() {
       setDueDate('');
       fetchReminders(phone);
       fetchSummary(phone);
-    } catch (err: any) {
-      setFormMsg(`Error: ${err.message}`);
+    } catch (error: unknown) {
+      setFormMsg(`Error: ${getErrorMessage(error, 'Registration failed')}`);
     } finally {
       setSubmitting(false);
     }
@@ -185,7 +186,7 @@ export default function RenewalsPage() {
             <div>
               <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">GovBot Assistant View</h2>
               <p className="text-sm text-slate-700 max-w-2xl">
-                Ask GovBot on WhatsApp: <span className="font-medium text-slate-900">"When is this expiring?"</span> or <span className="font-medium text-slate-900">"When is my NSP renewal due?"</span>
+                Ask GovBot on WhatsApp: <span className="font-medium text-slate-900">&quot;When is this expiring?&quot;</span> or <span className="font-medium text-slate-900">&quot;When is my NSP renewal due?&quot;</span>
               </p>
               <p className="text-xs text-slate-500 mt-2">
                 GovBot checks your saved document expiries and scholarship dates, then reminds you before the deadline.
