@@ -1,7 +1,4 @@
-import google.generativeai as genai
-from gov_agent.config import GEMINI_API_KEY
-
-genai.configure(api_key=GEMINI_API_KEY)
+from gov_agent.gemini_client import generate_text
 
 PM_KISAN_STATUS_URL = "https://pmkisan.gov.in/BeneficiaryStatus_New.aspx"
 PM_KISAN_REG_LOOKUP_URL = "https://pmkisan.gov.in/KnowYour_Registration.aspx"
@@ -26,27 +23,25 @@ async def check_pm_kisan_status(identifier: str) -> dict:
     so direct scraping is no longer possible.
     """
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
         prompt = (
             f"User provided identifier: {identifier}\n"
             f"Portal link: {PM_KISAN_STATUS_URL}\n"
             f"Registration lookup link: {PM_KISAN_REG_LOOKUP_URL}\n\n"
             f"Generate a helpful WhatsApp reply for this farmer."
         )
-        resp = model.generate_content(
-            [{"role": "user", "parts": [prompt]}],
-            generation_config={"temperature": 0.3, "max_output_tokens": 512},
+        reply_text = generate_text(
+            prompt,
             system_instruction=_SYSTEM_PROMPT,
+            temperature=0.3,
+            max_output_tokens=512,
         )
-        reply_text = resp.text.strip()
         return {
             "status": "info",
             "message": reply_text,
             "portal_url": PM_KISAN_STATUS_URL,
             "reg_lookup_url": PM_KISAN_REG_LOOKUP_URL,
         }
-
-    except Exception as e:
+    except Exception:
         # Fallback static response if Gemini fails
         return {
             "status": "info",

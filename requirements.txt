@@ -8,7 +8,7 @@ pdfplumber
 httpx
 python-dotenv
 supabase
-google-generativeai
+google-genai
 pydantic
 python-multipart
 aiofiles

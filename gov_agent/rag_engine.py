@@ -1,9 +1,7 @@
 
 import chromadb
 import pdfplumber
-from gov_agent.config import GEMINI_API_KEY
-import google.generativeai as genai
-genai.configure(api_key=GEMINI_API_KEY)
+from gov_agent.gemini_client import embed_text, generate_text
 
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -28,14 +26,9 @@ async def ingest_document(pdf_path: str) -> int:
         i += 450
 
     for idx, chunk in enumerate(chunks):
-        result = genai.embed_content(
-            model="models/gemini-embedding-001",
-            content=chunk,
-            task_type="retrieval_document"
-        )
         collection.upsert(
             ids=[f"chunk_{idx}"],
-            embeddings=[result["embedding"]],  # type: ignore
+            embeddings=[embed_text(chunk, task_type="RETRIEVAL_DOCUMENT")],
             documents=[chunk],
             metadatas=[{"source": pdf_path, "chunk_index": idx}]
         )
@@ -44,14 +37,8 @@ async def ingest_document(pdf_path: str) -> int:
 
 
 async def query_eligibility(question: str) -> str:
-    q_embed = genai.embed_content(
-        model="models/gemini-embedding-001",
-        content=question,
-        task_type="retrieval_query"
-    )
-
     results = collection.query(
-        query_embeddings=[q_embed["embedding"]],  # type: ignore
+        query_embeddings=[embed_text(question, task_type="RETRIEVAL_QUERY")],
         n_results=3
     )
 
@@ -77,6 +64,16 @@ async def query_eligibility(question: str) -> str:
     Keep answer under 200 words.
     """
 
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    try:
+        return generate_text(prompt)
+    except Exception:
+        if chunks:
+            excerpt = chunks.replace("\n", " ").strip()[:500]
+            return (
+                "Eligibility guidance is temporarily unavailable from Gemini right now. "
+                f"Please review these stored rule notes while you retry: {excerpt}"
+            )
+        return (
+            "Eligibility guidance is temporarily unavailable from Gemini right now. "
+            "Please retry in a moment or review the scheme rules manually."
+        )

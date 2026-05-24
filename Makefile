@@ -19,7 +19,7 @@ setup-frontend:
 	cd frontend && $(NPM) ci
 
 bootstrap:
-	$(PYTHON) scripts/bootstrap_backend.py
+	PYTHONPATH=. $(PYTHON) scripts/bootstrap_backend.py
 
 dev:
 	@trap 'kill 0' INT TERM EXIT; \
