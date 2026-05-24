@@ -6,7 +6,7 @@ import {
   Search, Zap, CheckCircle, AlertCircle, ArrowLeft, ExternalLink,
   Clock, RefreshCw, ChevronRight, Globe, User
 } from 'lucide-react';
-import { buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 type FormField = {
   label: string;
@@ -70,9 +70,9 @@ export default function FormFillPage() {
   const fetchHistory = async (p: string) => {
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath(`form-scanner/history/${encodeURIComponent(p)}`), {
+      const res = await fetch(buildProxyApiPath(`form-scanner/history/${encodeURIComponent(p)}`), buildBackendRequestInit({
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }));
       if (res.ok) {
         const d = await res.json();
         setHistory(d.sessions || []);
@@ -90,11 +90,11 @@ export default function FormFillPage() {
     setFillResult(null);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath('form-scanner/analyze'), {
+      const res = await fetch(buildProxyApiPath('form-scanner/analyze'), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ url: url.trim(), phone }),
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Analysis failed');
       setAnalyzeResult(data);
@@ -112,11 +112,11 @@ export default function FormFillPage() {
     Object.entries(overrides).forEach(([k, v]) => { if (v) mergedMap[k] = v; });
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath('form-scanner/fill'), {
+      const res = await fetch(buildProxyApiPath('form-scanner/fill'), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ url: analyzeResult.url, phone, field_map: mergedMap, confirm: true }),
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Fill failed');
       setFillResult(data);

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -8,13 +9,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { phone, code , otp} = req.body;
 
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/verify-otp`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ phone, code: code || otp }),
-    });
+    const response = await fetch(
+      buildBackendUrl('/auth/verify-otp'),
+      buildBackendRequestInit({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phone, code: code || otp }),
+      }),
+    );
 
     const data = await response.json();
     return res.status(response.status).json(data);

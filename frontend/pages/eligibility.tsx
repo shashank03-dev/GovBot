@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import confetti from 'canvas-confetti';
-import { buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 interface EligibilityResult {
   eligible: boolean;
@@ -141,7 +141,7 @@ export default function EligibilityPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(buildProxyApiPath('eligibility/screen'), {
+      const res = await fetch(buildProxyApiPath('eligibility/screen'), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -150,7 +150,7 @@ export default function EligibilityPage() {
           course_level: course,
           marks_pct: marks,
         }),
-      });
+      }));
       if (!res.ok) throw new Error('Server error');
       const data: EligibilityResult = await res.json();
       setResult(data);

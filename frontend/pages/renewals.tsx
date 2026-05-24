@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 interface Reminder {
   id: string;
@@ -97,7 +97,7 @@ export default function RenewalsPage() {
 
   async function fetchReminders(userPhone: string) {
     try {
-      const res = await fetch(buildProxyApiPath(`renewals/reminders/${encodeURIComponent(userPhone)}`));
+      const res = await fetch(buildProxyApiPath(`renewals/reminders/${encodeURIComponent(userPhone)}`), buildBackendRequestInit());
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       setReminders(data.reminders || []);
@@ -111,7 +111,7 @@ export default function RenewalsPage() {
   async function fetchSummary(userPhone: string) {
     setSummaryLoading(true);
     try {
-      const res = await fetch(buildProxyApiPath(`renewals/summary/${encodeURIComponent(userPhone)}`));
+      const res = await fetch(buildProxyApiPath(`renewals/summary/${encodeURIComponent(userPhone)}`), buildBackendRequestInit());
       if (!res.ok) throw new Error('Failed to fetch summary');
       const data = await res.json();
       setSummary(data);
@@ -128,11 +128,11 @@ export default function RenewalsPage() {
     setSubmitting(true);
     setFormMsg('');
     try {
-      const res = await fetch(buildProxyApiPath('renewals/register'), {
+      const res = await fetch(buildProxyApiPath('renewals/register'), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, portal, renewal_due_date: dueDate }),
-      });
+      }));
       if (!res.ok) throw new Error('Registration failed');
       const data = await res.json();
       setFormMsg(data.message || 'Reminder registered!');
@@ -148,7 +148,7 @@ export default function RenewalsPage() {
 
   async function handleDelete(id: string) {
     try {
-      await fetch(buildProxyApiPath(`renewals/reminders/${id}`), { method: 'DELETE' });
+      await fetch(buildProxyApiPath(`renewals/reminders/${id}`), buildBackendRequestInit({ method: 'DELETE' }));
       setReminders(prev => prev.filter(r => r.id !== id));
       fetchSummary(phone);
     } catch {

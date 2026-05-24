@@ -3,7 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
-import { buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 const ALLOWED_UPLOAD_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'] as const;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -138,9 +138,9 @@ export default function DocumentsPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(buildProxyApiPath(`documents/${encodeURIComponent(activePhone)}`), {
+      const res = await fetch(buildProxyApiPath(`documents/${encodeURIComponent(activePhone)}`), buildBackendRequestInit({
         headers: { Authorization: `Bearer ${authToken}` },
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to load documents.'));
       setDocuments(data.documents || []);
@@ -188,7 +188,7 @@ export default function DocumentsPage() {
     try {
       const imageB64 = await fileToBase64(selectedFile);
 
-      const res = await fetch(buildProxyApiPath('documents/upload'), {
+      const res = await fetch(buildProxyApiPath('documents/upload'), buildBackendRequestInit({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -202,7 +202,7 @@ export default function DocumentsPage() {
           file_name: selectedFile.name,
           mime_type: selectedFile.type || 'image/jpeg',
         }),
-      });
+      }));
 
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Upload failed.'));
@@ -223,13 +223,13 @@ export default function DocumentsPage() {
     const passkey = window.prompt('Enter your 4-digit passkey to preview this document:')?.trim() || '';
     if (!passkey) return;
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/signed-url`), {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/signed-url`), buildBackendRequestInit({
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
         },
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Preview unavailable.'));
       window.open(data.signed_url, '_blank', 'noopener,noreferrer');
@@ -246,12 +246,12 @@ export default function DocumentsPage() {
     setError('');
     setNotice('');
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${doc.id}`), {
+      const res = await fetch(buildProxyApiPath(`documents/item/${doc.id}`), buildBackendRequestInit({
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
         },
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
       const current = data.extracted_data || {};
@@ -276,7 +276,7 @@ export default function DocumentsPage() {
     setSavingEdit(true);
     setError('');
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), buildBackendRequestInit({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -284,7 +284,7 @@ export default function DocumentsPage() {
           'X-Document-Passkey': editingPasskey,
         },
         body: JSON.stringify({ extracted_data: editValues }),
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to save edits.'));
       setNotice('Document details updated.');
@@ -306,13 +306,13 @@ export default function DocumentsPage() {
     setDeletingId(documentId);
     setError('');
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), {
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), buildBackendRequestInit({
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
         },
-      });
+      }));
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to delete document.'));
       setNotice('Document deleted.');

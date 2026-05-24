@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -8,13 +9,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { phone } = req.body;
 
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/send-otp`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ phone }),
-    });
+    const response = await fetch(
+      buildBackendUrl('/auth/send-otp'),
+      buildBackendRequestInit({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phone }),
+      }),
+    );
 
     const data = await response.json();
     return res.status(response.status).json(data);

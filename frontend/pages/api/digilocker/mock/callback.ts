@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,7 +17,8 @@ export default async function handler(
 
   try {
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/digilocker/mock/callback?consent_id=${consent_id}&action=${action || 'approve'}`
+      buildBackendUrl(`/api/digilocker/mock/callback?consent_id=${consent_id}&action=${action || 'approve'}`),
+      buildBackendRequestInit(),
     );
 
     if (!response.ok) {

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,12 +17,12 @@ export default async function handler(
 
   try {
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/bank/mock/verify`,
-      {
+      buildBackendUrl('/api/bank/mock/verify'),
+      buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, account_number, ifsc_code }),
-      }
+      }),
     );
 
     if (!response.ok) {

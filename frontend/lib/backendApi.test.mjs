@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   LOCAL_BACKEND_FALLBACK,
+  NGROK_SKIP_BROWSER_WARNING_HEADER,
   buildApplicationTimelineApiPath,
+  buildBackendRequestInit,
+  buildBackendUrl,
   buildProxyApiPath,
   resolveBackendBaseUrl,
+  shouldUseNgrokBypassHeader,
 } from './backendApi.mjs';
 
 test('buildProxyApiPath keeps browser calls on the same origin', () => {
@@ -20,4 +24,53 @@ test('resolveBackendBaseUrl prefers configured server URLs before localhost fall
   assert.equal(resolveBackendBaseUrl({ NEXT_PUBLIC_API_URL: 'https://public-api.example/' }), 'https://public-api.example');
   assert.equal(resolveBackendBaseUrl({ NEXT_PUBLIC_RAILWAY_URL: 'https://railway.example/' }), 'https://railway.example');
   assert.equal(resolveBackendBaseUrl({}), LOCAL_BACKEND_FALLBACK);
+});
+
+test('ngrok detection recognizes ngrok-backed deployments that need the browser warning bypass', () => {
+  assert.equal(shouldUseNgrokBypassHeader({ NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/' }), true);
+  assert.equal(shouldUseNgrokBypassHeader({ NEXT_PUBLIC_API_URL: 'https://demo.ngrok.app/' }), true);
+  assert.equal(shouldUseNgrokBypassHeader({ NEXT_PUBLIC_API_URL: 'https://backend.example/' }), false);
+});
+
+test('buildBackendRequestInit adds the ngrok bypass header without dropping existing headers', () => {
+  const init = buildBackendRequestInit(
+    {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer token',
+        'Content-Type': 'application/json',
+      },
+      body: '{"ok":true}',
+    },
+    { NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/' },
+  );
+
+  assert.equal(init.method, 'POST');
+  assert.equal(init.body, '{"ok":true}');
+  assert.deepEqual(init.headers, {
+    authorization: 'Bearer token',
+    'content-type': 'application/json',
+    [NGROK_SKIP_BROWSER_WARNING_HEADER]: 'true',
+  });
+});
+
+test('buildBackendRequestInit leaves non-ngrok requests unchanged', () => {
+  const init = buildBackendRequestInit(
+    {
+      headers: {
+        Authorization: 'Bearer token',
+      },
+    },
+    { NEXT_PUBLIC_API_URL: 'https://backend.example/' },
+  );
+
+  assert.deepEqual(init.headers, {
+    authorization: 'Bearer token',
+  });
+});
+
+test('buildBackendUrl joins normalized paths onto the resolved backend URL', () => {
+  const env = { NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/' };
+  assert.equal(buildBackendUrl('/live/demo', env), 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/live/demo');
+  assert.equal(buildBackendUrl('auth/send-otp', env), 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/auth/send-otp');
 });

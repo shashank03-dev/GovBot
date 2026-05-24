@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { buildApplicationTimelineApiPath } from '@/lib/backendApi.mjs';
+import { buildApplicationTimelineApiPath, buildBackendRequestInit } from '@/lib/backendApi.mjs';
 import { buildDashboardLoginHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
 
 interface TimelineStep {
@@ -132,7 +132,7 @@ export default function TrackApplication() {
 
     const fetchApplication = async () => {
       try {
-        const res = await fetch(buildApplicationTimelineApiPath(String(id)));
+        const res = await fetch(buildApplicationTimelineApiPath(String(id)), buildBackendRequestInit());
         if (res.status === 404) {
           setApp(null);
           setLoadError('not_found');

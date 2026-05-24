@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import AnimatedCounter from '@/components/AnimatedCounter';
 import StatusBadge from '@/components/StatusBadge';
+import { buildBackendRequestInit } from '@/lib/backendApi.mjs';
 import { mergeRealtimeActivity } from '@/lib/dashboardRealtime.mjs';
 import { resolveDashboardPhone } from '@/lib/dashboardSession.mjs';
 import { FileText, Clock, CheckCircle, XCircle, ExternalLink, ArrowRight, User, Zap, ChevronRight } from 'lucide-react';
@@ -84,12 +85,12 @@ export default function Dashboard() {
         }
 
         const [snapshotRes, profileRes] = await Promise.all([
-          fetch(`/api/live/dashboard/${encodeURIComponent(phone)}`, {
+          fetch(`/api/live/dashboard/${encodeURIComponent(phone)}`, buildBackendRequestInit({
             headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(`/api/profile/${encodeURIComponent(phone)}`, {
+          })),
+          fetch(`/api/profile/${encodeURIComponent(phone)}`, buildBackendRequestInit({
             headers: { Authorization: `Bearer ${token}` },
-          }),
+          })),
         ]);
 
         if (!isActive) {

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -13,13 +14,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'Enter a 12-digit Aadhaar or 11-digit Registration Number' });
     }
 
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/pm-kisan/status`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ identifier: val }),
-    });
+    const response = await fetch(
+      buildBackendUrl('/pm-kisan/status'),
+      buildBackendRequestInit({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identifier: val }),
+      }),
+    );
 
     const data = await response.json();
     return res.status(response.status).json(data);

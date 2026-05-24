@@ -7,7 +7,7 @@ import {
   User, MapPin, IndianRupee, GraduationCap, CreditCard,
   ScanLine, Link2, CheckCircle, AlertCircle, ChevronRight, Save, ArrowLeft
 } from 'lucide-react';
-import { buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 
 type Profile = {
   full_name?: string;
@@ -182,9 +182,9 @@ export default function ProfilePage() {
     setLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(p)}`), {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(p)}`), buildBackendRequestInit({
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }));
       if (res.ok) applyProfileData(await res.json());
     } catch { /* profile may not exist yet */ }
     setLoading(false);
@@ -226,11 +226,11 @@ export default function ProfilePage() {
     setSavingSection(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}`), {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}`), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(dirty),
-      });
+      }));
       if (res.ok) {
         applyProfileData(await res.json());
         setSavedSection(activeSection);
@@ -249,10 +249,10 @@ export default function ProfilePage() {
     setOcrLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-ocr`), {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-ocr`), buildBackendRequestInit({
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }));
       if (res.ok) {
         applyProfileData(await res.json());
         showToast('✅ Profile auto-filled from Aadhaar OCR!');
@@ -269,10 +269,10 @@ export default function ProfilePage() {
     setVaultLoading(true);
     try {
       const token = localStorage.getItem('govbot_token');
-      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-vault`), {
+      const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}/from-vault`), buildBackendRequestInit({
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }));
       const data: ProfileApiResponse = await res.json().catch(() => ({}));
       if (res.ok) {
         applyProfileData(data);
