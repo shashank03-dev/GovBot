@@ -8,16 +8,11 @@ Processes documents fetched from DigiLocker (mock):
 """
 
 import logging
-import base64
 from datetime import datetime, timezone
 from gov_agent.db import supabase
-from gov_agent.config import GEMINI_API_KEY
-import google.generativeai as genai
+from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
 logger = logging.getLogger(__name__)
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 
 def get_documents_for_phone(phone: str) -> list:
@@ -43,7 +38,7 @@ def get_latest_consent(phone: str) -> dict | None:
 def extract_aadhaar_data(doc_data: str) -> dict:
     """Extract Aadhaar data using Gemini Vision (mock processing)."""
     
-    if not GEMINI_API_KEY:
+    if not has_gemini_client():
         # Return mock data for demo
         return {
             "name": "SHASHANK GOWDA T",
@@ -54,8 +49,6 @@ def extract_aadhaar_data(doc_data: str) -> dict:
         }
     
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        
         # Decode base64 if needed
         if doc_data.startswith("JVBER"):
             # It's our mock PDF data, return mock extracted data
@@ -78,8 +71,11 @@ def extract_aadhaar_data(doc_data: str) -> dict:
         
         Return as JSON.
         """
-        
-        response = model.generate_content([prompt, doc_data])
+
+        generate_text([
+            prompt,
+            inline_data_part(data_b64=doc_data, mime_type="image/jpeg"),
+        ])
         
         # Parse response (simplified)
         return {
@@ -89,7 +85,6 @@ def extract_aadhaar_data(doc_data: str) -> dict:
             "gender": "Male",
             "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
         }
-        
     except Exception as e:
         logger.error(f"Error extracting Aadhaar: {e}")
         return {}

@@ -3,6 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 // ─── Demo data that GovBot "types" ───────────────────────────────────────────
 export const DEMO_DATA = {
@@ -89,9 +90,9 @@ function useTypewriter(target: string, speed = 55): [string, boolean] {
 
 // ─── Form input styled to NSP ─────────────────────────────────────────────────
 function NSPInput({
-  label, value, active, filled, type = 'text', required = false,
+  label, value, active, filled, required = false,
 }: {
-  label: string; value: string; active: boolean; filled: boolean; type?: string; required?: boolean;
+  label: string; value: string; active: boolean; filled: boolean; required?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -182,7 +183,6 @@ export default function NSPApply() {
   // ── OCR state ──
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrDone, setOcrDone] = useState(false);
-  const [ocrAnimField, setOcrAnimField] = useState<string | null>(null);
 
   // ── doc validator state ──
   const [docSlots, setDocSlots] = useState<DocSlot[]>(INITIAL_DOC_SLOTS);
@@ -213,7 +213,7 @@ export default function NSPApply() {
         const merged = { ...DEMO_DATA, ...profile };
         setDigilockerProfile(merged);
         activeDataRef.current = merged;
-      } catch (_) {}
+      } catch {}
     }
   }, []);
 
@@ -303,8 +303,8 @@ export default function NSPApply() {
           setShowSuccess(true);
           setSubmitError('');
           setStepLog((prev) => [...prev, { label: 'Documents uploaded', done: true }, { label: 'Application submitted ✅', done: true }]);
-        } catch (error: any) {
-          setSubmitError(error?.message || 'Failed to submit application');
+        } catch (error: unknown) {
+          setSubmitError(getErrorMessage(error, 'Failed to submit application'));
           setDemoState('idle');
         }
       };
@@ -356,7 +356,7 @@ export default function NSPApply() {
           setShowSuccess(true);
           setConfirmNumber('');
         }
-      } catch (_) {}
+      } catch {}
     };
     poll();
     pollRef.current = setInterval(poll, 1500);
@@ -384,16 +384,14 @@ export default function NSPApply() {
           for (let i = 0; i < fields.length; i++) {
             const [key, value] = fields[i];
             await new Promise((r) => setTimeout(r, 300 * i));
-            setOcrAnimField(key);
             setFilledData((prev) => ({ ...prev, [key === 'aadhaar_number' ? 'aadhaar' : key]: value }));
           }
-          setOcrAnimField(null);
           setOcrDone(true);
         }
         setOcrLoading(false);
       };
       reader.readAsDataURL(file);
-    } catch (_) {
+    } catch {
       setOcrLoading(false);
     }
   }, []);
@@ -422,7 +420,7 @@ export default function NSPApply() {
         } : s));
       };
       reader.readAsDataURL(file);
-    } catch (_) {
+    } catch {
       setDocSlots((prev) => prev.map((s, i) => i === idx ? { ...s, status: 'invalid', message: 'Upload failed' } : s));
     }
   }, [docSlots]);
@@ -447,10 +445,10 @@ export default function NSPApply() {
   // Helper: get display value (typewriter for active, final for filled)
   const val = (field: keyof typeof DEMO_DATA): string => {
     if (activeField === field) return typedValue;
-    return (filledData as any)[field] || '';
+    return filledData[field] || '';
   };
   const isActive = (field: string) => activeField === field;
-  const isFilled = (field: string) => !!(filledData as any)[field] && activeField !== field;
+  const isFilled = (field: keyof typeof DEMO_DATA) => !!filledData[field] && activeField !== field;
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] font-sans text-[#212121]">
@@ -600,8 +598,8 @@ export default function NSPApply() {
                   <NSPSelect label="Gender" value={val('gender')} active={isActive('gender')} filled={isFilled('gender')} required />
                   <NSPSelect label="Category" value={val('category')} active={isActive('category')} filled={isFilled('category')} required />
                   <NSPSelect label="Religion" value={val('religion')} active={isActive('religion')} filled={isFilled('religion')} />
-                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required type="tel" />
-                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} type="email" />
+                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required />
+                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} />
                   <NSPInput label="Aadhaar Number" value={val('aadhaar')} active={isActive('aadhaar')} filled={isFilled('aadhaar')} required />
                   <NSPInput label="Annual Family Income (₹)" value={val('income')} active={isActive('income')} filled={isFilled('income')} required />
                   <NSPSelect label="State of Domicile" value={val('domicile')} active={isActive('domicile')} filled={isFilled('domicile')} required />

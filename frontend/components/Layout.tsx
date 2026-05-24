@@ -20,13 +20,7 @@ const NO_LAYOUT_PAGES = ['/nsp', '/nsp/apply', '/pmss', '/csss', '/minority', '/
 export default function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const token = localStorage.getItem('govbot_token');
-    setIsLoggedIn(!!token);
-  }, [router.pathname]);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10);
@@ -34,18 +28,16 @@ export default function Layout({ children }: LayoutProps) {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [router.pathname]);
-
   if (NO_LAYOUT_PAGES.includes(router.pathname)) {
     return <>{children}</>;
   }
 
+  const isLoggedIn = typeof window !== 'undefined' && !!localStorage.getItem('govbot_token');
+
   const handleLogout = () => {
     localStorage.removeItem('govbot_token');
     localStorage.removeItem('govbot_phone');
-    setIsLoggedIn(false);
+    setMobileOpen(false);
     router.push('/');
   };
 
@@ -137,11 +129,12 @@ export default function Layout({ children }: LayoutProps) {
                   const isActive = router.pathname === link.href;
                   return (
                     <Link
-                      key={link.href}
-                      href={link.href}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-                        isActive
-                          ? 'bg-orange-50 text-[#e67e00]'
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                      isActive
+                        ? 'bg-orange-50 text-[#e67e00]'
                           : 'text-slate-600 hover:bg-slate-50'
                       }`}
                     >
@@ -163,6 +156,7 @@ export default function Layout({ children }: LayoutProps) {
                   ) : (
                     <Link
                       href="/login"
+                      onClick={() => setMobileOpen(false)}
                       className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white text-sm font-semibold rounded-xl"
                     >
                       <LogIn className="w-4 h-4" />

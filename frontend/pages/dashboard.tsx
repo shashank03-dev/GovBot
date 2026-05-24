@@ -66,7 +66,7 @@ export default function Dashboard() {
     const queryPhone = Array.isArray(router.query.phone) ? router.query.phone[0] : router.query.phone;
     const phone = resolveDashboardPhone({
       queryPhone,
-      storedPhone: localStorage.getItem('govbot_phone'),
+      storedPhone: localStorage.getItem('govbot_phone') || undefined,
       token,
     });
     if (!phone) {

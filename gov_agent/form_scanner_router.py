@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-import google.generativeai as genai
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -29,14 +28,11 @@ from pydantic import BaseModel
 SCREENSHOT_DIR = os.environ.get("SCREENSHOT_DIR", "/tmp/govbot_screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-from gov_agent.config import GEMINI_API_KEY
 from gov_agent.db import supabase
+from gov_agent.gemini_client import generate_text, has_gemini_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 # ---------------------------------------------------------------------------
 # Citizen profile fields that the mapper can target
@@ -156,7 +152,7 @@ async def _extract_form_fields(url: str) -> List[Dict[str, str]]:
 
 async def _map_fields_with_gemini(form_fields: List[Dict[str, str]]) -> Dict[str, str]:
     """Use Gemini to map extracted form field labels to citizen profile fields."""
-    if not GEMINI_API_KEY or not form_fields:
+    if not has_gemini_client() or not form_fields:
         return {}
     try:
         field_list_text = "\n".join(
@@ -185,15 +181,11 @@ Example output:
 
 Return only valid JSON, no explanation."""
 
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        resp = model.generate_content(
+        raw = generate_text(
             prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            ),
+            response_mime_type="application/json",
+            temperature=0.1,
         )
-        raw = resp.text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):

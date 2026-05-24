@@ -143,29 +143,7 @@ app.include_router(
 @asynccontextmanager
 async def lifespan(app):
     from gov_agent.config import validate_config
-    from gov_agent.document_vault import cleanup_document_duplicates
     validate_config()
-    try:
-        removed = cleanup_document_duplicates()
-        if removed:
-            print(f"Document vault: removed {removed} duplicate rows")
-    except Exception as exc:
-        print(f"Document vault cleanup skipped: {exc}")
-    # Check if RAG needs ingestion
-    import chromadb
-    client = chromadb.PersistentClient(
-        "./chroma_db")
-    try:
-        col = client.get_collection(
-            "scheme_rules")
-        if col.count() == 0:
-            raise ValueError("Empty")
-    except Exception:
-        from gov_agent import rag_engine
-        count = await rag_engine.ingest_document(
-            "gov_agent/docs/scholarship_rules.pdf"
-        )
-        print(f"RAG: ingested {count} chunks")
     yield
 
 app.router.lifespan_context = lifespan

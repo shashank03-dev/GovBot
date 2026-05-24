@@ -9,20 +9,16 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-import google.generativeai as genai
 import httpx
 
 from gov_agent.config import (
-    GEMINI_API_KEY,
     SUPABASE_DOCUMENTS_BUCKET,
     WHATSAPP_TOKEN,
 )
 from gov_agent.db import supabase
+from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
 logger = logging.getLogger(__name__)
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 DOC_TYPES = {"pan", "aadhaar", "income_cert", "caste_cert", "marksheet"}
 DOC_SOURCES = {"web", "whatsapp", "digilocker"}
@@ -473,20 +469,18 @@ def extract_document_data(
     if doc_type not in DOC_TYPES:
         raise ValueError(f"Unsupported document type: {doc_type}")
 
-    if not GEMINI_API_KEY or mime_type == "application/pdf":
+    if not has_gemini_client() or mime_type == "application/pdf":
         return _extract_fallback(doc_type)
 
     prompt, fallback = _extraction_prompt(doc_type)
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        image_part = {
-            "inline_data": {
-                "mime_type": mime_type or "image/jpeg",
-                "data": _normalize_base64(image_b64),
-            }
-        }
-        response = model.generate_content([prompt, image_part])
-        raw_text = (response.text or "").strip()
+        raw_text = generate_text([
+            prompt,
+            inline_data_part(
+                data_b64=_normalize_base64(image_b64),
+                mime_type=mime_type or "image/jpeg",
+            ),
+        ])
         parsed = _parse_json_object(raw_text, fallback)
         confidence = float(parsed.get("confidence", 0.0) or 0.0)
         extracted = {k: v for k, v in parsed.items() if k != "confidence"}
@@ -534,7 +528,7 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
             "verification_status": "not_applicable",
         }
 
-    if not GEMINI_API_KEY:
+    if not has_gemini_client():
         flags: list[str] = []
         issue_date_obj = None
         if doc_type == "aadhaar":
@@ -571,15 +565,13 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
     flags: list[str] = []
 
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        image_part = {
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": _normalize_base64(image_b64),
-            }
-        }
-        response = model.generate_content([prompt, image_part])
-        raw_text = (response.text or "").strip()
+        raw_text = generate_text([
+            prompt,
+            inline_data_part(
+                data_b64=_normalize_base64(image_b64),
+                mime_type="image/jpeg",
+            ),
+        ])
         result = _parse_json_object(raw_text, {"issue_date": "", "doc_type_detected": "", "quality": "good"})
         quality = result.get("quality", "good")
         if quality == "unreadable":

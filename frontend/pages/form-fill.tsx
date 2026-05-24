@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
+import Image from 'next/image';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Zap, CheckCircle, AlertCircle, ArrowLeft, ExternalLink,
-  Clock, RefreshCw, ChevronRight, Globe, User
+  RefreshCw, ChevronRight, Globe, User
 } from 'lucide-react';
-import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { getErrorMessage } from '@/lib/errorMessage';
 
 type FormField = {
   label: string;
@@ -99,8 +101,8 @@ export default function FormFillPage() {
       if (!res.ok) throw new Error(data.detail || 'Analysis failed');
       setAnalyzeResult(data);
       setStep('review');
-    } catch (e: any) {
-      setError(e.message || 'Analysis failed');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Analysis failed'));
       setStep('idle');
     }
   };
@@ -122,8 +124,8 @@ export default function FormFillPage() {
       setFillResult(data);
       setStep('done');
       if (phone) fetchHistory(phone);
-    } catch (e: any) {
-      setError(e.message || 'Fill failed');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, 'Fill failed'));
       setStep('review');
     }
   };
@@ -344,9 +346,12 @@ export default function FormFillPage() {
                     <p className="text-xs font-semibold text-slate-500 px-3 py-2 bg-slate-50 border-b border-slate-100">
                       📸 Form Screenshot
                     </p>
-                    <img
-                      src={`${API_BASE}/form-scanner/screenshot/${fillResult.screenshot_path}`}
+                    <Image
+                      src={buildBackendUrl(`/form-scanner/screenshot/${fillResult.screenshot_path}`)}
                       alt="Filled form screenshot"
+                      width={1200}
+                      height={900}
+                      unoptimized
                       className="w-full max-h-80 object-top object-cover"
                     />
                   </div>

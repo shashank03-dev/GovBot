@@ -57,7 +57,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const profile = { ...MOCK_PROFILE, mobile: phone };
 
     return res.status(200).json({ success: true, profile });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ error: 'Verification failed' });
   }
 }

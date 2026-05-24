@@ -3,14 +3,13 @@ import uuid
 import logging
 from urllib.parse import quote
 from typing import Any
-import google.generativeai as genai
 from gov_agent.models import WhatsAppIncoming
 from gov_agent.db import supabase
 from gov_agent import rag_engine
 from gov_agent import graph
 from gov_agent import renewal_intelligence
 from gov_agent.config import FRONTEND_URL
-from gov_agent.config import GEMINI_API_KEY
+from gov_agent.gemini_client import generate_text, has_gemini_client
 from gov_agent.document_vault import (
     create_signed_document_url,
     format_sensitive_document_reply,
@@ -24,9 +23,6 @@ from gov_agent.document_vault import (
 
 logger = logging.getLogger(__name__)
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
 _LANG_NAMES = {
     "hi": "Hindi",
     "kn": "Kannada",
@@ -39,16 +35,15 @@ _LANG_NAMES = {
 async def translate_reply(text: str, lang: str) -> str:
     if lang == "en" or lang not in _LANG_NAMES:
         return text
-    if not GEMINI_API_KEY:
+    if not has_gemini_client():
         return text
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
         prompt = (
             f"Translate this government service message to {_LANG_NAMES[lang]}, "
             f"keeping numbers, codes and URLs in original:\n{text}"
         )
-        resp = model.generate_content(prompt)
-        return resp.text.strip()
+        translated = generate_text(prompt)
+        return translated or text
     except Exception:
         return text
 

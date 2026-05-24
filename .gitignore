@@ -60,7 +60,9 @@ frontend/.vercel/
 .DS_Store
 Thumbs.db
 .claude/
-.cursor/
+.cursor/*
+!.cursor/
+!.cursor/mcp.json
 .idea/
 .vscode/
 

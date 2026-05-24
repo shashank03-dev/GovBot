@@ -8,9 +8,6 @@ const BACKEND_URL =
   'http://localhost:8000';
 
 const nextConfig: NextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   async rewrites() {
     return [
       { source: '/api/send-otp', destination: `${BACKEND_URL}/auth/send-otp` },
