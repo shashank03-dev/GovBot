@@ -448,6 +448,18 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PM-KISAN status reply", reply)
         self.assertEqual(new_state, "greeting")
 
+    async def test_translate_reply_uses_text_router_for_supported_language(self):
+        flow_router = _load_flow_router()
+
+        with patch.object(
+            flow_router,
+            "generate_text_reply",
+            new=AsyncMock(return_value="अनुवाद"),
+        ):
+            result = await flow_router.translate_reply("Hello", "hi")
+
+        self.assertEqual(result, "अनुवाद")
+
     async def test_pmss_awaiting_document_submits_after_image_upload(self):
         flow_router = _load_flow_router()
         session = {"state": "pmss_awaiting_document", "collected_data": {"portal": "pmss", "name": "Test User"}}
