@@ -3,7 +3,6 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
-import { getErrorMessage } from '@/lib/errorMessage';
 
 // ─── Demo data that GovBot "types" ───────────────────────────────────────────
 export const DEMO_DATA = {
@@ -61,6 +60,16 @@ const DEMO_STEPS: DemoStep[] = [
 ];
 
 type FormFields = Partial<typeof DEMO_DATA>;
+type ReviewSessionPayload = {
+  portal_label?: string;
+  documents?: Array<{ name: string }>;
+  missing_fields?: string[];
+  portal_prefill?: Partial<typeof DEMO_DATA>;
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
 
 const TABS = ['Applicant Details', 'Academic Details', 'Bank Details', 'Documents & Submit'];
 
@@ -90,9 +99,9 @@ function useTypewriter(target: string, speed = 55): [string, boolean] {
 
 // ─── Form input styled to NSP ─────────────────────────────────────────────────
 function NSPInput({
-  label, value, active, filled, required = false,
+  label, value, active, filled, type = 'text', required = false,
 }: {
-  label: string; value: string; active: boolean; filled: boolean; required?: boolean;
+  label: string; value: string; active: boolean; filled: boolean; type?: string; required?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -183,6 +192,7 @@ export default function NSPApply() {
   // ── OCR state ──
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrDone, setOcrDone] = useState(false);
+  const [ocrAnimField, setOcrAnimField] = useState<string | null>(null);
 
   // ── doc validator state ──
   const [docSlots, setDocSlots] = useState<DocSlot[]>(INITIAL_DOC_SLOTS);
@@ -200,22 +210,52 @@ export default function NSPApply() {
   const [currentTypeTarget, setCurrentTypeTarget] = useState('');
   const [typeSpeed] = useState(55);
   const [digilockerProfile, setDigilockerProfile] = useState<typeof DEMO_DATA | null>(null);
+  const [digilockerReview, setDigilockerReview] = useState<ReviewSessionPayload | null>(null);
   const activeDataRef = useRef<typeof DEMO_DATA>(DEMO_DATA);
   const trackHref = confirmNumber ? buildTrackHref(confirmNumber) : TRACK_SEARCH_HREF;
   const dashboardHref = buildDashboardLoginHref();
 
-  // ── Load DigiLocker profile from localStorage on mount ──
+  // ── Load DigiLocker profile from review session or localStorage ──
   useEffect(() => {
-    const stored = localStorage.getItem('digilocker_profile');
-    if (stored) {
+    if (!router.isReady) return;
+
+    const reviewSessionId = typeof router.query.review_session === 'string' ? router.query.review_session : '';
+    const storedPhone = typeof window !== 'undefined' ? (localStorage.getItem('govbot_phone') || '') : '';
+
+    const applyProfile = (profile: Partial<typeof DEMO_DATA>, reviewMeta: ReviewSessionPayload | null = null) => {
+      const merged = { ...DEMO_DATA, ...profile };
+      setDigilockerProfile(merged);
+      activeDataRef.current = merged;
+      setDigilockerReview(reviewMeta);
+    };
+
+    const loadFromReview = async () => {
+      if (!reviewSessionId || !storedPhone) return false;
+      try {
+        const res = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(storedPhone)}`);
+        const data = await res.json();
+        if (!res.ok || !data.portal_prefill) return false;
+        applyProfile(data.portal_prefill, data);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const loadFromLocalStorage = () => {
+      const stored = localStorage.getItem('digilocker_profile');
+      if (!stored) return;
       try {
         const profile = JSON.parse(stored);
-        const merged = { ...DEMO_DATA, ...profile };
-        setDigilockerProfile(merged);
-        activeDataRef.current = merged;
-      } catch {}
-    }
-  }, []);
+        applyProfile(profile, null);
+      } catch (_) {}
+    };
+
+    void (async () => {
+      const loadedReview = await loadFromReview();
+      if (!loadedReview) loadFromLocalStorage();
+    })();
+  }, [router.isReady, router.query.review_session]);
 
   const stepIndexRef = useRef(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -356,7 +396,7 @@ export default function NSPApply() {
           setShowSuccess(true);
           setConfirmNumber('');
         }
-      } catch {}
+      } catch (_) {}
     };
     poll();
     pollRef.current = setInterval(poll, 1500);
@@ -384,14 +424,16 @@ export default function NSPApply() {
           for (let i = 0; i < fields.length; i++) {
             const [key, value] = fields[i];
             await new Promise((r) => setTimeout(r, 300 * i));
+            setOcrAnimField(key);
             setFilledData((prev) => ({ ...prev, [key === 'aadhaar_number' ? 'aadhaar' : key]: value }));
           }
+          setOcrAnimField(null);
           setOcrDone(true);
         }
         setOcrLoading(false);
       };
       reader.readAsDataURL(file);
-    } catch {
+    } catch (_) {
       setOcrLoading(false);
     }
   }, []);
@@ -420,7 +462,7 @@ export default function NSPApply() {
         } : s));
       };
       reader.readAsDataURL(file);
-    } catch {
+    } catch (_) {
       setDocSlots((prev) => prev.map((s, i) => i === idx ? { ...s, status: 'invalid', message: 'Upload failed' } : s));
     }
   }, [docSlots]);
@@ -529,10 +571,12 @@ export default function NSPApply() {
                     <span className="text-lg">🔗</span>
                     <div>
                       <div className="text-[13px] text-[#1B5E20] font-bold">
-                        DigiLocker Connected — {digilockerProfile.name}
+                        {digilockerReview ? `DigiLocker reviewed for ${digilockerReview.portal_label || 'your portal'}` : `DigiLocker Connected — ${digilockerProfile.name}`}
                       </div>
                       <div className="text-[11px] text-green-700 mt-0.5">
-                        Documents ready: Aadhaar, Income Cert, Caste Cert, Marksheet
+                        {digilockerReview
+                          ? `${digilockerReview.documents?.length || 0} documents shared • ${digilockerReview.missing_fields?.length || 0} fields still need input`
+                          : 'Documents ready: Aadhaar, Income Cert, Caste Cert, Marksheet'}
                       </div>
                     </div>
                   </div>
@@ -598,8 +642,8 @@ export default function NSPApply() {
                   <NSPSelect label="Gender" value={val('gender')} active={isActive('gender')} filled={isFilled('gender')} required />
                   <NSPSelect label="Category" value={val('category')} active={isActive('category')} filled={isFilled('category')} required />
                   <NSPSelect label="Religion" value={val('religion')} active={isActive('religion')} filled={isFilled('religion')} />
-                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required />
-                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} />
+                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required type="tel" />
+                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} type="email" />
                   <NSPInput label="Aadhaar Number" value={val('aadhaar')} active={isActive('aadhaar')} filled={isFilled('aadhaar')} required />
                   <NSPInput label="Annual Family Income (₹)" value={val('income')} active={isActive('income')} filled={isFilled('income')} required />
                   <NSPSelect label="State of Domicile" value={val('domicile')} active={isActive('domicile')} filled={isFilled('domicile')} required />

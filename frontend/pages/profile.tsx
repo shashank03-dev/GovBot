@@ -363,7 +363,7 @@ export default function ProfilePage() {
                 {ocrLoading ? 'Filling from OCR...' : 'Auto-fill from Aadhaar OCR'}
               </button>
               <Link
-                href="/digilocker/callback"
+                href="/digilocker?portal=profile"
                 className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-xs font-semibold hover:bg-blue-100 transition-colors"
               >
                 <Link2 size={14} />

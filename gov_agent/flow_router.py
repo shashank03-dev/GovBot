@@ -248,6 +248,15 @@ def _has_prefilled_value(value: Any) -> bool:
     return True
 
 
+def _portal_next_manual_state(portal: str) -> str:
+    return {
+        "nsp": "collect_name",
+        "pmss": "pmss_collect_name",
+        "csss": "csss_collect_name",
+        "minority": "minority_collect_name",
+    }.get(portal, "collect_name")
+
+
 async def _initialize_nsp_prefill_session(phone: str, data: dict[str, Any]) -> dict[str, Any]:
     await _save_profile_field(phone, "full_name", data["name"])
     await _save_profile_field(phone, "dob", data["dob"])
@@ -270,6 +279,62 @@ async def _initialize_nsp_prefill_session(phone: str, data: dict[str, Any]) -> d
         {"name": data["name"], "dob": data["dob"], "income": data["income"]},
     )
     return data
+
+
+async def _continue_after_digilocker_review(phone: str, data: dict[str, Any], review: dict[str, Any], decision: str) -> tuple[str, str, dict]:
+    portal = str(review.get("portal") or data.get("portal") or "nsp")
+
+    if decision == "save":
+        return (
+            f"✅ Saved to your GovBot profile for later.\n\n"
+            f"Open on web:\n{FRONTEND_URL}{review.get('next_url', '/profile')}",
+            "greeting",
+            {},
+        )
+
+    if decision == "edit":
+        return (
+            f"📝 Imported details are ready for review.\n\n"
+            f"Open your profile:\n{FRONTEND_URL}{review.get('next_url', '/profile')}",
+            "greeting",
+            {},
+        )
+
+    imported = dict(review.get("imported_fields") or {})
+    data.update(imported)
+    data["portal"] = portal
+
+    consent_id = str(review.get("consent_id") or data.get("consent_id") or "").strip()
+    if consent_id:
+        data["consent_id"] = consent_id
+        data["media_id"] = consent_id
+
+    if portal == "nsp":
+        if (
+            _has_prefilled_value(data.get("name"))
+            and _has_prefilled_value(data.get("dob"))
+            and _has_prefilled_value(data.get("income"))
+        ):
+            data = await _initialize_nsp_prefill_session(phone, data)
+            return (
+                "💳 *Bank Account Verification*\n\n"
+                "For scholarship disbursement, we need to verify your bank account.\n\n"
+                "Please enter your 11-digit IFSC code (e.g., SBIN0001234)",
+                "collect_bank_ifsc",
+                data,
+            )
+        return ("What is your full name as per Aadhaar?", _portal_next_manual_state(portal), data)
+
+    if portal in {"pmss", "csss", "minority"}:
+        required_fields = {
+            "pmss": ("name", "dob"),
+            "csss": ("name", "dob", "marks_pct"),
+            "minority": ("name", "dob", "income"),
+        }[portal]
+        if all(_has_prefilled_value(data.get(field)) for field in required_fields):
+            return await _submit_application(phone, data, portal)
+
+    return ("What is your full name as per Aadhaar?", _portal_next_manual_state(portal), data)
 
 
 async def _run_bank_verification(phone: str, data: dict[str, Any]) -> tuple[str, str, dict]:
@@ -534,55 +599,37 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     elif state == "portal_select":
         if body == "1":
             data["portal"] = "nsp"
-            return (
-                "🔗 *Connect DigiLocker?*\n\n"
-                "Link your DigiLocker to auto-fetch:\n"
-                "• Aadhaar Card\n"
-                "• Income Certificate\n"
-                "• Caste Certificate\n\n"
-                "Reply *YES* to connect or *NO* to enter manually",
-                "digilocker_offer",
-                data
-            )
+            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         elif body == "2":
             data["portal"] = "pmss"
-            return (
-                "🔗 *Connect DigiLocker?*\n\n"
-                "Link your DigiLocker to auto-fetch your documents.\n\n"
-                "Reply *YES* to connect or *NO* to enter manually",
-                "digilocker_offer",
-                data
-            )
+            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         elif body == "3":
             data["portal"] = "csss"
-            return (
-                "🔗 *Connect DigiLocker?*\n\n"
-                "Link your DigiLocker to auto-fetch your documents.\n\n"
-                "Reply *YES* to connect or *NO* to enter manually",
-                "digilocker_offer",
-                data
-            )
+            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         elif body == "4":
             data["portal"] = "minority"
-            return (
-                "🔗 *Connect DigiLocker?*\n\n"
-                "Link your DigiLocker to auto-fetch your documents.\n\n"
-                "Reply *YES* to connect or *NO* to enter manually",
-                "digilocker_offer",
-                data
-            )
+            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         else:
             return (PORTAL_MENU, "portal_select", data)
 
     elif state == "digilocker_offer":
         if body.lower() in ["yes", "y", "haan", "ಹೌದು"]:
             # Create mock consent and send link
-            from gov_agent.digilocker_router import create_mock_consent, CreateConsentRequest
+            from gov_agent.digilocker_router import create_mock_consent, CreateConsentRequest, get_portal_doc_plan
             try:
-                consent = await create_mock_consent(CreateConsentRequest(phone=msg.phone))
+                plan = get_portal_doc_plan(str(data.get("portal") or "profile"))
+                consent = await create_mock_consent(
+                    CreateConsentRequest(
+                        phone=msg.phone,
+                        portal=str(data.get("portal") or "profile"),
+                        channel="whatsapp",
+                    )
+                )
                 data["consent_id"] = consent.consent_id
                 return (
-                    f"⏳ *Connecting DigiLocker...*\n\n"
+                    f"⏳ *Connecting DigiLocker for {plan['label']}...*\n\n"
+                    f"Required: {', '.join(doc.replace('_', ' ') for doc in plan['required_docs'])}\n"
+                    f"Optional: {', '.join(doc.replace('_', ' ') for doc in plan['optional_docs']) or 'none'}\n\n"
                     f"🔗 Click to authorize:\n{consent.redirect_url}\n\n"
                     f"⏱️ Link expires in 30 minutes\n\n"
                     f"Reply *CHECK* when done or *SKIP* to enter manually",
@@ -606,41 +653,20 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     elif state == "digilocker_awaiting_auth":
         if body.lower() in ["check", "status"]:
             # Check if DigiLocker is connected
-            from gov_agent.digilocker_agent import is_digilocker_connected, format_digilocker_summary, prefill_application_data
+            from gov_agent.digilocker_agent import is_digilocker_connected
+            from gov_agent.digilocker_router import format_review_summary, get_latest_review_session_for_phone
             
             if is_digilocker_connected(msg.phone):
-                # Get pre-filled data
-                prefill = prefill_application_data(msg.phone)
-                data.update(prefill)
-                
-                summary = format_digilocker_summary(msg.phone)
-                
-                portal = data.get("portal", "nsp")
-                if (
-                    portal == "nsp"
-                    and _has_prefilled_value(data.get("name"))
-                    and _has_prefilled_value(data.get("dob"))
-                    and _has_prefilled_value(data.get("income"))
-                ):
-                    data = await _initialize_nsp_prefill_session(msg.phone, data)
-                    return (
-                        f"{summary}\n\n✅ Continuing with pre-filled data...\n\n"
-                        "Please send a clear photo of your Aadhaar card 📎",
-                        "awaiting_document",
-                        data,
-                    )
-                next_states = {
-                    "nsp": "collect_name",
-                    "pmss": "pmss_collect_name",
-                    "csss": "csss_collect_name",
-                    "minority": "minority_collect_name",
-                }
-                
+                review = get_latest_review_session_for_phone(msg.phone)
+                if review:
+                    data["review_session_id"] = review["review_session_id"]
+                    data["portal"] = str(review.get("portal") or data.get("portal") or "nsp")
+                    return (format_review_summary(review), "digilocker_review_pending", data)
                 return (
-                    f"{summary}\n\n"
-                    f"✅ Continuing with pre-filled data...",
-                    next_states.get(portal, "collect_name"),
-                    data
+                    "✅ DigiLocker is connected, but your review summary is not ready yet.\n\n"
+                    "Reply CHECK again in a moment or SKIP to enter manually.",
+                    "digilocker_awaiting_auth",
+                    data,
                 )
             else:
                 return (
@@ -667,6 +693,28 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 "digilocker_awaiting_auth",
                 data
             )
+
+    elif state == "digilocker_review_pending":
+        decision = body.strip().lower()
+        if decision not in {"use", "edit", "save"}:
+            return (
+                "Reply USE to continue, EDIT to review first, or SAVE to keep this for later.",
+                "digilocker_review_pending",
+                data,
+            )
+
+        review_session_id = str(data.get("review_session_id") or "").strip()
+        if not review_session_id:
+            return (
+                "⚠️ Your DigiLocker review has expired.\n\nReply HI to start again.",
+                "greeting",
+                {},
+            )
+
+        from gov_agent.digilocker_router import apply_review_decision_for_phone
+
+        review = apply_review_decision_for_phone(msg.phone, review_session_id, decision)
+        return await _continue_after_digilocker_review(msg.phone, data, review, decision)
 
     elif state == "profile_view":
         body_up = body.strip().upper()

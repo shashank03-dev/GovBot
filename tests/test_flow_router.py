@@ -352,36 +352,47 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "greeting")
         self.assertEqual(new_data, {})
 
-    async def test_digilocker_check_for_nsp_skips_prefilled_steps_and_requests_aadhaar_upload(self):
+    async def test_digilocker_check_for_nsp_moves_to_review_pending(self):
         flow_router = _load_flow_router()
         session = {"state": "digilocker_awaiting_auth", "collected_data": {"portal": "nsp"}}
         msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="CHECK")
 
         with patch("gov_agent.digilocker_agent.is_digilocker_connected", return_value=True), patch(
-            "gov_agent.digilocker_agent.format_digilocker_summary",
-            return_value="📋 DigiLocker Documents Fetched",
+            "gov_agent.digilocker_router.get_latest_review_session_for_phone",
+            return_value={
+                "review_session_id": "review-123",
+                "portal": "nsp",
+                "portal_label": "NSP",
+                "consent_id": "mock-consent-123",
+                "documents": [{"name": "Aadhaar Card"}, {"name": "Income Certificate"}],
+                "imported_fields": {"name": "Test User", "dob": "2006-10-30", "income": 25000},
+                "missing_fields": ["aadhaar_number"],
+            },
         ), patch(
-            "gov_agent.digilocker_agent.prefill_application_data",
-            return_value={"name": "Test User", "dob": "2006-10-30", "income": 25000},
+            "gov_agent.digilocker_router.format_review_summary",
+            return_value="📋 DigiLocker Review for NSP\n\nDocuments received: Aadhaar Card, Income Certificate\n\nReply *USE* to continue, *EDIT* to review first, or *SAVE* to keep this for later.",
         ):
             reply, new_state, new_data = await flow_router.route(session, msg)
 
-        self.assertIn("DigiLocker Documents Fetched", reply)
-        self.assertIn("Please send a clear photo of your Aadhaar card", reply)
-        self.assertEqual(new_state, "awaiting_document")
-        self.assertEqual(new_data["income"], 25000)
+        self.assertIn("DigiLocker Review for NSP", reply)
+        self.assertIn("Reply *USE* to continue", reply)
+        self.assertEqual(new_state, "digilocker_review_pending")
+        self.assertEqual(new_data["review_session_id"], "review-123")
 
-    async def test_digilocker_check_for_nsp_with_zero_income_initializes_profile_and_live_session(self):
+    async def test_digilocker_review_use_for_nsp_initializes_profile_and_moves_to_bank_step(self):
         flow_router = _load_flow_router()
-        session = {"state": "digilocker_awaiting_auth", "collected_data": {"portal": "nsp"}}
-        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="CHECK")
+        session = {"state": "digilocker_review_pending", "collected_data": {"portal": "nsp", "review_session_id": "review-123"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="USE")
 
-        with patch("gov_agent.digilocker_agent.is_digilocker_connected", return_value=True), patch(
-            "gov_agent.digilocker_agent.format_digilocker_summary",
-            return_value="📋 DigiLocker Documents Fetched",
-        ), patch(
-            "gov_agent.digilocker_agent.prefill_application_data",
-            return_value={"name": "Test User", "dob": "2006-10-30", "income": 0},
+        with patch(
+            "gov_agent.digilocker_router.apply_review_decision_for_phone",
+            return_value={
+                "portal": "nsp",
+                "consent_id": "mock-consent-123",
+                "imported_fields": {"name": "Test User", "dob": "2006-10-30", "income": 0, "aadhaar_number": "XXXX-XXXX-5424"},
+                "next_url": "/nsp/apply?review_session=review-123",
+                "status": "approved",
+            },
         ), patch.object(
             flow_router,
             "_save_profile_field",
@@ -403,9 +414,10 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         ):
             reply, new_state, new_data = await flow_router.route(session, msg)
 
-        self.assertIn("Please send a clear photo of your Aadhaar card", reply)
-        self.assertEqual(new_state, "awaiting_document")
+        self.assertIn("Bank Account Verification", reply)
+        self.assertEqual(new_state, "collect_bank_ifsc")
         self.assertEqual(new_data["income"], 0)
+        self.assertEqual(new_data["media_id"], "mock-consent-123")
         self.assertEqual(new_data["session_id"], "prefill-session-id")
         save_profile_mock.assert_has_awaits([
             unittest.mock.call("919999999999", "full_name", "Test User"),
@@ -419,6 +431,26 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
             3,
             {"name": "Test User", "dob": "2006-10-30", "income": 0},
         )
+
+    async def test_digilocker_review_save_returns_to_greeting(self):
+        flow_router = _load_flow_router()
+        session = {"state": "digilocker_review_pending", "collected_data": {"portal": "nsp", "review_session_id": "review-123"}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="SAVE")
+
+        with patch(
+            "gov_agent.digilocker_router.apply_review_decision_for_phone",
+            return_value={
+                "portal": "nsp",
+                "status": "saved",
+                "next_url": "/profile?review_session=review-123",
+            },
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("Saved to your GovBot profile", reply)
+        self.assertIn("/profile?review_session=review-123", reply)
+        self.assertEqual(new_state, "greeting")
+        self.assertEqual(new_data, {})
 
     async def test_passkey_verify_wrong_pin_stays_in_loop(self):
         flow_router = _load_flow_router()

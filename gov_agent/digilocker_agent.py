@@ -9,6 +9,7 @@ Processes documents fetched from DigiLocker (mock):
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from gov_agent.db import supabase
 from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
@@ -115,6 +116,107 @@ def extract_caste_certificate_data(doc_data: str) -> dict:
     }
 
 
+def extract_marksheet_data(doc_data: str) -> dict:
+    """Extract previous-year marksheet data."""
+
+    return {
+        "student_name": "SHASHANK GOWDA T",
+        "board": "Karnataka School Examination and Assessment Board",
+        "percentage": 95.5,
+        "year": "2025",
+    }
+
+
+def _derive_location_fields(address: str | None) -> dict[str, str]:
+    text = str(address or "").lower()
+    derived: dict[str, str] = {}
+
+    if "karnataka" in text:
+        derived["domicile"] = "Karnataka"
+        derived["instituteState"] = "Karnataka"
+    if "bangalore" in text or "bengaluru" in text:
+        derived["district"] = "Bengaluru North"
+
+    return derived
+
+
+def extract_prefill_data_from_documents(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    """Extract a normalized, non-mutating prefill payload from DigiLocker docs."""
+
+    prefill_data: dict[str, Any] = {}
+
+    for doc in documents:
+        doc_type = doc.get("doc_type")
+        raw_data = doc.get("raw_data", "")
+
+        if doc_type == "aadhaar":
+            aadhaar_data = extract_aadhaar_data(raw_data)
+            prefill_data.update({
+                "name": aadhaar_data.get("name"),
+                "dob": aadhaar_data.get("dob"),
+                "gender": aadhaar_data.get("gender"),
+                "aadhaar_number": aadhaar_data.get("aadhaar_number"),
+                "address": aadhaar_data.get("address"),
+            })
+
+        elif doc_type == "income_certificate":
+            income_data = extract_income_certificate_data(raw_data)
+            prefill_data.update({
+                "income": income_data.get("annual_income"),
+                "income_certificate_number": income_data.get("certificate_number"),
+            })
+
+        elif doc_type == "caste_certificate":
+            caste_data = extract_caste_certificate_data(raw_data)
+            prefill_data.update({
+                "caste": caste_data.get("caste"),
+                "category": caste_data.get("category"),
+            })
+
+        elif doc_type == "marksheet":
+            marksheet_data = extract_marksheet_data(raw_data)
+            prefill_data.update({
+                "marks_pct": marksheet_data.get("percentage"),
+                "board": marksheet_data.get("board"),
+                "year": marksheet_data.get("year"),
+            })
+
+    return prefill_data
+
+
+def build_portal_prefill(portal: str, imported: dict[str, Any], phone: str | None = None) -> dict[str, str]:
+    """Map normalized DigiLocker fields into the current portal mock form contract."""
+
+    dob_raw = str(imported.get("dob") or "").strip()
+    dob = dob_raw
+    if len(dob_raw) == 10 and dob_raw[4] == "-" and dob_raw[7] == "-":
+        dob = f"{dob_raw[8:10]}/{dob_raw[5:7]}/{dob_raw[0:4]}"
+
+    aadhaar = str(imported.get("aadhaar_number") or "").replace("-", " ").strip()
+    marks_pct = imported.get("marks_pct")
+    prefill: dict[str, str] = {
+        "name": str(imported.get("name") or ""),
+        "dob": dob,
+        "gender": str(imported.get("gender") or ""),
+        "aadhaar": aadhaar,
+        "income": str(imported.get("income") or ""),
+        "category": str(imported.get("caste") or imported.get("category") or "").lower().replace(" ", "_"),
+        "mobile": str(phone or ""),
+        "marks": "" if marks_pct in (None, "") else str(marks_pct),
+        "board": str(imported.get("board") or ""),
+        "year": str(imported.get("year") or ""),
+    }
+    prefill.update(_derive_location_fields(imported.get("address")))
+
+    if portal == "profile":
+        return {key: value for key, value in prefill.items() if value}
+
+    if prefill.get("name"):
+        prefill.setdefault("accountHolder", prefill["name"])
+
+    return {key: value for key, value in prefill.items() if value}
+
+
 def prefill_application_data(phone: str) -> dict:
     """Pre-fill scholarship application from DigiLocker documents."""
     
@@ -123,34 +225,7 @@ def prefill_application_data(phone: str) -> dict:
     if not documents:
         return {}
     
-    prefill_data = {}
-    
-    for doc in documents:
-        doc_type = doc.get("doc_type")
-        raw_data = doc.get("raw_data", "")
-        
-        if doc_type == "aadhaar":
-            aadhaar_data = extract_aadhaar_data(raw_data)
-            prefill_data.update({
-                "name": aadhaar_data.get("name"),
-                "dob": aadhaar_data.get("dob"),
-                "gender": aadhaar_data.get("gender"),
-                "aadhaar_number": aadhaar_data.get("aadhaar_number"),
-            })
-            
-        elif doc_type == "income_certificate":
-            income_data = extract_income_certificate_data(raw_data)
-            prefill_data.update({
-                "income": income_data.get("annual_income"),
-                "income_certificate_number": income_data.get("certificate_number"),
-            })
-            
-        elif doc_type == "caste_certificate":
-            caste_data = extract_caste_certificate_data(raw_data)
-            prefill_data.update({
-                "caste": caste_data.get("caste"),
-                "category": caste_data.get("category"),
-            })
+    prefill_data = extract_prefill_data_from_documents(documents)
     
     # Mark documents as used
     supabase.table("digilocker_docs").update({

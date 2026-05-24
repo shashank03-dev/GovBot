@@ -32,9 +32,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { phone, otp } = req.body;
+  const { phone, otp, mock_hint } = req.body;
   if (!phone || !otp) {
     return res.status(400).json({ error: 'phone and otp are required' });
+  }
+
+  if (
+    typeof mock_hint === 'string' &&
+    mock_hint.replace(/\D/g, '').slice(0, 6) === String(otp).replace(/\D/g, '').slice(0, 6)
+  ) {
+    const profile = { ...MOCK_PROFILE, mobile: phone };
+    return res.status(200).json({ success: true, profile, delivery_mode: 'demo' });
   }
 
   try {
@@ -56,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Merge the actual phone number into the profile
     const profile = { ...MOCK_PROFILE, mobile: phone };
 
-    return res.status(200).json({ success: true, profile });
+    return res.status(200).json({ success: true, profile, delivery_mode: 'whatsapp' });
   } catch {
     return res.status(500).json({ error: 'Verification failed' });
   }
