@@ -16,7 +16,7 @@ Use Cursor's project configuration file at `.cursor/mcp.json` and define a singl
 
 The server will use the official launch command:
 - `command`: `npx`
-- `args`: `["chrome-devtools-mcp@latest"]`
+- `args`: `["-y", "chrome-devtools-mcp@latest"]`
 
 No headless flag will be added. That keeps Chrome visible for interactive debugging, inspection, and demo use.
 
@@ -48,7 +48,7 @@ The config shape is:
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["chrome-devtools-mcp@latest"]
+      "args": ["-y", "chrome-devtools-mcp@latest"]
     }
   }
 }
@@ -97,7 +97,7 @@ The README should stay brief. The config file itself is the source of truth.
 ### Local prerequisites
 
 This setup depends on:
-- Node.js being installed,
+- Node.js v20.19 or newer being installed,
 - `npx` being available on the local machine,
 - Cursor supporting project-level MCP discovery from `.cursor/mcp.json`.
 
