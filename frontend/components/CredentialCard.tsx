@@ -149,7 +149,7 @@ export default function CredentialCard({ credential, onCopy }: CredentialCardPro
             <div className="space-y-4 flex-1">
               <div>
                 <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Network</p>
-                <p className="text-cyan-600 font-mono text-sm">Polygon Mumbai</p>
+                <p className="text-teal-600 font-mono text-sm">Polygon Mumbai</p>
               </div>
               
               {credential.blockchain_tx_hash && (

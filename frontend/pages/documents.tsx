@@ -404,7 +404,7 @@ export default function DocumentsPage() {
               <button
                 type="submit"
                 disabled={uploading || !selectedFile}
-                className="w-full rounded-2xl bg-[#1f2937] px-4 py-3 text-sm font-semibold text-white transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
+                className="w-full rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-orange-200/60 transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
               >
                 {uploading ? 'Saving to vault...' : `Upload ${prettyLabel(docType)}`}
               </button>
@@ -520,7 +520,7 @@ export default function DocumentsPage() {
                             type="button"
                             onClick={() => void saveEdit(doc.id)}
                             disabled={savingEdit}
-                            className="rounded-xl bg-[#1f2937] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                            className="rounded-xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-orange-200/50 disabled:opacity-50"
                           >
                             {savingEdit ? 'Saving...' : 'Save Changes'}
                           </button>

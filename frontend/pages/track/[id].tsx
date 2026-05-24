@@ -22,91 +22,97 @@ interface AppData {
 }
 
 const DEFAULT_STEPS: TimelineStep[] = [
-  { step: 'Applied',      icon: '📝', date: null, est_date: null, done: false },
-  { step: 'Under Review', icon: '🔍', date: null, est_date: null, done: false },
-  { step: 'Approved',     icon: '✅', date: null, est_date: null, done: false },
-  { step: 'Disbursed',    icon: '💰', date: null, est_date: null, done: false },
+  { step: 'Applied', icon: 'A', date: null, est_date: null, done: false },
+  { step: 'Under Review', icon: 'R', date: null, est_date: null, done: false },
+  { step: 'Approved', icon: 'V', date: null, est_date: null, done: false },
+  { step: 'Disbursed', icon: 'D', date: null, est_date: null, done: false },
 ];
 
-function formatDate(s: string | null): string {
-  if (!s) return '';
-  const d = new Date(s.includes('T') ? s + 'Z' : s);
-  const IST = new Date(d.getTime() + (s.includes('T') ? 5.5 * 3600000 : 0));
+const PORTAL_BADGES: Record<string, { bg: string; text: string }> = {
+  nsp: { bg: '#fff7ed', text: '#c2410c' },
+  pmss: { bg: '#fef2f2', text: '#b91c1c' },
+  csss: { bg: '#eff6ff', text: '#1d4ed8' },
+  minority: { bg: '#ecfdf5', text: '#047857' },
+};
+
+function formatDate(value: string | null): string {
+  if (!value) return '';
+  const date = new Date(value.includes('T') ? `${value}Z` : value);
+  const istDate = new Date(date.getTime() + (value.includes('T') ? 5.5 * 3600000 : 0));
   const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${pad(IST.getUTCDate())}/${pad(IST.getUTCMonth() + 1)}/${IST.getUTCFullYear()}`;
+  return `${pad(istDate.getUTCDate())}/${pad(istDate.getUTCMonth() + 1)}/${istDate.getUTCFullYear()}`;
 }
 
-function StepNode({ step, index, isCurrent, total }: { step: TimelineStep; index: number; isCurrent: boolean; total: number }) {
-  const isLast = index === total - 1;
-
+function StepNode({
+  step,
+  index,
+  isCurrent,
+}: {
+  step: TimelineStep;
+  index: number;
+  isCurrent: boolean;
+}) {
   const circleClass = step.done
-    ? 'bg-green-500 border-green-500'
+    ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-200'
     : isCurrent
-      ? 'bg-transparent border-blue-400 animate-pulse'
-      : 'bg-transparent border-gray-600 border-dashed';
-
-  const labelClass = step.done ? 'text-white font-semibold' : isCurrent ? 'text-blue-400 font-semibold' : 'text-gray-500';
+      ? 'border-[#ff9933] bg-orange-50 text-[#e67e00]'
+      : 'border-slate-200 bg-white text-slate-400';
+  const labelClass = step.done
+    ? 'text-slate-900 font-semibold'
+    : isCurrent
+      ? 'text-[#e67e00] font-semibold'
+      : 'text-slate-400';
+  const showConnector = index > 0;
 
   return (
-    <div className="flex flex-col items-center flex-1 relative">
-      {/* Connector line (left side, skip on first) */}
-      {index > 0 && (
+    <div className="relative flex flex-1 flex-col items-center">
+      {showConnector && (
         <div
-          className={`hidden md:block absolute top-6 right-1/2 w-full h-0.5 ${
-            step.done ? 'bg-green-500' : 'bg-gray-700'
+          className={`absolute right-1/2 top-6 hidden h-0.5 w-full md:block ${
+            step.done ? 'bg-emerald-300' : 'bg-slate-200'
           }`}
-          style={{ zIndex: 0 }}
         />
       )}
 
-      {/* Circle */}
-      <div
-        className={`relative z-10 w-12 h-12 rounded-full border-2 flex items-center justify-center text-xl ${circleClass}`}
-        style={{ minWidth: '3rem' }}
-      >
-        {step.done ? '✓' : step.icon}
-        {isCurrent && (
-          <span className="absolute inset-0 rounded-full border-2 border-blue-400 animate-ping opacity-60" />
-        )}
+      <div className={`relative z-10 flex h-12 w-12 items-center justify-center rounded-full border-2 text-sm font-bold ${circleClass}`}>
+        {step.done ? 'OK' : step.icon}
+        {isCurrent && <span className="absolute inset-0 rounded-full border-2 border-orange-300 animate-ping opacity-70" />}
       </div>
 
-      {/* Label */}
-      <span className={`mt-2 text-xs text-center ${labelClass}`}>{step.step}</span>
-
-      {/* Date */}
+      <span className={`mt-3 text-center text-xs ${labelClass}`}>{step.step}</span>
       {step.date ? (
-        <span className="text-xs text-green-400 mt-1">{formatDate(step.date)}</span>
+        <span className="mt-1 text-xs text-emerald-600">{formatDate(step.date)}</span>
       ) : step.est_date ? (
-        <span className="text-xs text-gray-500 mt-1 italic">~{formatDate(step.est_date)}</span>
+        <span className="mt-1 text-xs italic text-slate-400">~{formatDate(step.est_date)}</span>
       ) : null}
     </div>
   );
 }
 
-function VerticalStepNode({ step, isCurrent }: { step: TimelineStep; isCurrent: boolean }) {
+function VerticalStepNode({ step, isCurrent, isLast }: { step: TimelineStep; isCurrent: boolean; isLast: boolean }) {
   const circleClass = step.done
-    ? 'bg-green-500 border-green-500 text-white'
+    ? 'border-emerald-500 bg-emerald-500 text-white'
     : isCurrent
-      ? 'bg-transparent border-blue-400 text-blue-400 animate-pulse'
-      : 'bg-transparent border-gray-600 border-dashed text-gray-500';
+      ? 'border-[#ff9933] bg-orange-50 text-[#e67e00]'
+      : 'border-slate-200 bg-white text-slate-400';
 
   return (
     <div className="flex items-start gap-4">
       <div className="flex flex-col items-center">
-        <div className={`relative w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg flex-shrink-0 ${circleClass}`}>
-          {step.done ? '✓' : step.icon}
-          {isCurrent && <span className="absolute inset-0 rounded-full border-2 border-blue-400 animate-ping opacity-60" />}
+        <div className={`relative flex h-10 w-10 items-center justify-center rounded-full border-2 text-xs font-bold ${circleClass}`}>
+          {step.done ? 'OK' : step.icon}
+          {isCurrent && <span className="absolute inset-0 rounded-full border-2 border-orange-300 animate-ping opacity-70" />}
         </div>
-        <div className="w-0.5 h-8 bg-gray-700 mt-1 last:hidden" />
+        {!isLast && <div className="mt-1 h-8 w-0.5 bg-slate-200" />}
       </div>
-      <div className="pb-8">
-        <p className={`font-semibold text-sm ${step.done ? 'text-white' : isCurrent ? 'text-blue-400' : 'text-gray-500'}`}>
+      <div className="pb-7">
+        <p className={`text-sm ${step.done ? 'font-semibold text-slate-900' : isCurrent ? 'font-semibold text-[#e67e00]' : 'text-slate-400'}`}>
           {step.step}
         </p>
         {step.date ? (
-          <p className="text-xs text-green-400">{formatDate(step.date)}</p>
+          <p className="text-xs text-emerald-600">{formatDate(step.date)}</p>
         ) : step.est_date ? (
-          <p className="text-xs text-gray-500 italic">Est. {formatDate(step.est_date)}</p>
+          <p className="text-xs italic text-slate-400">Est. {formatDate(step.est_date)}</p>
         ) : null}
       </div>
     </div>
@@ -119,6 +125,53 @@ const PORTAL_LABELS: Record<string, string> = {
   csss: 'CSSS',
   minority: 'Minority',
 };
+
+function CenterState({
+  title,
+  body,
+  actionLabel,
+  actionHref,
+  retry,
+}: {
+  title: string;
+  body: string;
+  actionLabel: string;
+  actionHref: string;
+  retry?: () => void;
+}) {
+  return (
+    <div className="min-h-screen gradient-hero px-4 py-10">
+      <div className="mx-auto flex max-w-xl items-center justify-center">
+        <div className="w-full rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-[0_30px_80px_-50px_rgba(15,23,42,0.35)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-50 text-2xl text-[#e67e00]">
+            !
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+            {title}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500">{body}</p>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            {retry && (
+              <button
+                type="button"
+                onClick={retry}
+                className="rounded-2xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:text-[#e67e00]"
+              >
+                Try again
+              </button>
+            )}
+            <Link
+              href={actionHref}
+              className="rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-200/60 transition-transform hover:-translate-y-0.5"
+            >
+              {actionLabel}
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TrackApplication() {
   const router = useRouter();
@@ -138,7 +191,9 @@ export default function TrackApplication() {
           setLoadError('not_found');
           return;
         }
-        if (!res.ok) throw new Error(`Timeline request failed with ${res.status}`);
+        if (!res.ok) {
+          throw new Error(`Timeline request failed with ${res.status}`);
+        }
         const data: AppData = await res.json();
         setApp(data);
         setLoadError(null);
@@ -149,19 +204,21 @@ export default function TrackApplication() {
       }
     };
 
-    fetchApplication();
+    void fetchApplication();
     const timer = setInterval(fetchApplication, 30000);
     return () => clearInterval(timer);
   }, [router.isReady, id]);
 
   if (!router.isReady || loading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl animate-pulse space-y-6">
-          <div className="h-4 bg-gray-800 w-40 mx-auto rounded" />
-          <div className="h-8 bg-gray-800 w-64 mx-auto rounded" />
-          <div className="flex justify-around mt-10">
-            {[0,1,2,3].map(i => <div key={i} className="h-20 w-20 bg-gray-800 rounded-full" />)}
+      <div className="min-h-screen gradient-hero px-4 py-10">
+        <div className="mx-auto max-w-4xl animate-pulse space-y-6 rounded-[28px] border border-slate-200 bg-white p-8 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.35)]">
+          <div className="h-4 w-40 rounded bg-slate-100" />
+          <div className="h-8 w-72 rounded bg-slate-100" />
+          <div className="grid gap-4 md:grid-cols-4">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-28 rounded-3xl bg-slate-100" />
+            ))}
           </div>
         </div>
       </div>
@@ -170,126 +227,123 @@ export default function TrackApplication() {
 
   if (!app && loadError === 'unavailable') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
-        <div className="text-center space-y-4 max-w-md">
-          <div className="text-6xl mb-6">⚠️</div>
-          <h1 className="text-2xl text-amber-300 font-bold">Tracking temporarily unavailable</h1>
-          <p className="text-gray-400">
-            GovBot could not reach the live tracking service just now. Your confirmation number may still be valid.
-          </p>
-          <div className="pt-6 flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.reload()}
-              className="border border-amber-400 px-6 py-2 rounded text-amber-200 hover:bg-amber-500/10 transition-colors"
-            >
-              Try Again
-            </button>
-            <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300 border border-blue-500 px-6 py-2 rounded transition-colors">
-              Search Another
-            </Link>
-          </div>
-        </div>
-      </div>
+      <CenterState
+        title="Tracking temporarily unavailable"
+        body="GovBot could not reach the live tracking service right now. Your confirmation number may still be valid."
+        actionLabel="Search another application"
+        actionHref={TRACK_SEARCH_HREF}
+        retry={() => router.reload()}
+      />
     );
   }
 
   if (!app) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-4">
-        <div className="text-center space-y-4">
-          <div className="text-6xl mb-6">❌</div>
-          <h1 className="text-2xl text-red-400 font-bold">Application Not Found</h1>
-          <p className="text-gray-400">Check your confirmation number and try again.</p>
-          <div className="pt-6">
-            <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300 border border-blue-500 px-6 py-2 rounded transition-colors">
-              ← Search Again
-            </Link>
-          </div>
-        </div>
-      </div>
+      <CenterState
+        title="Application not found"
+        body="Check the confirmation number and try again."
+        actionLabel="Search again"
+        actionHref={TRACK_SEARCH_HREF}
+      />
     );
   }
 
   const steps: TimelineStep[] = app.timeline_steps?.length ? app.timeline_steps : DEFAULT_STEPS;
-  const currentIndex = steps.reduce((acc, s, i) => (s.done ? i : acc), -1) + 1;
-  const isCurrent = (i: number) => i === currentIndex && currentIndex < steps.length;
-
+  const currentIndex = steps.reduce((acc, step, index) => (step.done ? index : acc), -1) + 1;
+  const isCurrent = (index: number) => index === currentIndex && currentIndex < steps.length;
   const portalLabel = PORTAL_LABELS[app.portal] ?? app.portal?.toUpperCase() ?? 'NSP';
+  const portalBadge = PORTAL_BADGES[app.portal] ?? { bg: '#fff7ed', text: '#c2410c' };
   const whatsappLink = `https://wa.me/919999999999?text=Status+of+${app.confirmation_number}`;
   const showWaitingBanner = app.status === 'submitted' || app.status === 'processing';
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <div className="max-w-3xl mx-auto px-4 py-10">
-
-        {/* Header */}
-        <div className="mb-2">
-          <Link href="/" className="text-blue-400 text-sm hover:text-blue-300">⚡ GovBot</Link>
+    <div className="min-h-screen gradient-hero">
+      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+          <Link href="/" className="hover:text-[#ff9933] transition-colors">GovBot</Link>
+          <span>/</span>
+          <Link href={TRACK_SEARCH_HREF} className="hover:text-[#ff9933] transition-colors">Track</Link>
+          <span>/</span>
+          <span className="text-slate-600">{app.confirmation_number}</span>
         </div>
 
-        {/* Top meta */}
-        <div className="bg-gray-900 rounded-xl p-6 mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Confirmation Number</p>
-            <p className="text-lg font-mono font-bold text-white break-all">{app.confirmation_number}</p>
-            <p className="text-sm text-gray-400 mt-1">{app.service}</p>
+        <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.35)] sm:p-8">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Confirmation number
+              </p>
+              <p className="mt-2 break-all text-lg font-bold text-slate-900 sm:text-xl">
+                {app.confirmation_number}
+              </p>
+              <p className="mt-2 text-sm text-slate-500">{app.service}</p>
+            </div>
+
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <span
+                className="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.16em]"
+                style={{ backgroundColor: portalBadge.bg, color: portalBadge.text }}
+              >
+                {portalLabel}
+              </span>
+              {app.submitted_at && (
+                <span className="text-xs text-slate-400">Submitted {formatDate(app.submitted_at)}</span>
+              )}
+            </div>
           </div>
-          <div className="flex flex-col items-start sm:items-end gap-2">
-            <span className="text-xs font-semibold bg-indigo-700 text-white px-3 py-1 rounded-full">{portalLabel}</span>
-            {app.submitted_at && (
-              <span className="text-xs text-gray-400">Submitted {formatDate(app.submitted_at)}</span>
-            )}
+
+          {showWaitingBanner && (
+            <div className="mt-6 rounded-3xl border border-amber-100 bg-amber-50 px-5 py-4">
+              <p className="text-sm font-semibold text-amber-700">Application received</p>
+              <p className="mt-1 text-sm leading-6 text-amber-900/70">
+                GovBot has submitted your application. It may take some time before the next review or approval step appears.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-8 hidden rounded-[28px] border border-slate-200 bg-slate-50/75 p-8 md:flex md:items-start md:justify-between">
+            {steps.map((step, index) => (
+              <StepNode key={`${step.step}-${index}`} step={step} index={index} isCurrent={isCurrent(index)} />
+            ))}
+          </div>
+
+          <div className="mt-8 rounded-[28px] border border-slate-200 bg-slate-50/75 p-6 md:hidden">
+            {steps.map((step, index) => (
+              <VerticalStepNode
+                key={`${step.step}-${index}`}
+                step={step}
+                isCurrent={isCurrent(index)}
+                isLast={index === steps.length - 1}
+              />
+            ))}
+          </div>
+
+          {loadError === 'unavailable' && (
+            <div className="mt-6 rounded-3xl border border-amber-100 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+              Live refresh is temporarily unavailable. The latest saved timeline is still shown here.
+            </div>
+          )}
+
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <a
+              href={whatsappLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#25D366] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#1ebe57]"
+            >
+              Need help on WhatsApp
+            </a>
+
+            <div className="flex flex-wrap gap-3 text-sm">
+              <Link href={TRACK_SEARCH_HREF} className="rounded-2xl border border-slate-200 px-4 py-2.5 font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:text-[#e67e00]">
+                Check another
+              </Link>
+              <Link href={buildDashboardLoginHref()} className="rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-2.5 font-semibold text-white shadow-md shadow-orange-200/60 transition-transform hover:-translate-y-0.5">
+                My applications
+              </Link>
+            </div>
           </div>
         </div>
-
-        {showWaitingBanner && (
-          <div className="mb-8 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-            <p className="text-sm font-semibold text-amber-200">Application received</p>
-            <p className="mt-1 text-sm text-gray-300">
-              GovBot has submitted your application. It may take some time before the portal reflects the next step for review or approval.
-            </p>
-          </div>
-        )}
-
-        {/* Desktop horizontal timeline */}
-        <div className="hidden md:flex items-start justify-between bg-gray-900 rounded-xl p-8 mb-8 relative">
-          {steps.map((step, i) => (
-            <StepNode key={i} step={step} index={i} isCurrent={isCurrent(i)} total={steps.length} />
-          ))}
-        </div>
-
-        {/* Mobile vertical timeline */}
-        <div className="md:hidden bg-gray-900 rounded-xl p-6 mb-8">
-          {steps.map((step, i) => (
-            <VerticalStepNode key={i} step={step} isCurrent={isCurrent(i)} />
-          ))}
-        </div>
-
-        {/* Need help */}
-        <div className="text-center mt-8">
-          <a
-            href={whatsappLink}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white font-semibold px-6 py-3 rounded-full transition-colors"
-          >
-            💬 Need help? Chat on WhatsApp
-          </a>
-        </div>
-
-        {loadError === 'unavailable' && (
-          <div className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-            Live refresh is temporarily unavailable. The latest saved timeline is still shown below.
-          </div>
-        )}
-
-        {/* Footer links */}
-        <div className="mt-8 flex justify-between text-sm">
-          <Link href={TRACK_SEARCH_HREF} className="text-blue-400 hover:text-blue-300">← Check another</Link>
-          <Link href={buildDashboardLoginHref()} className="text-blue-400 hover:text-blue-300">My Applications →</Link>
-        </div>
-
       </div>
     </div>
   );
