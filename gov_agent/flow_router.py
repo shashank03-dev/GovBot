@@ -9,7 +9,6 @@ from gov_agent import rag_engine
 from gov_agent import graph
 from gov_agent import renewal_intelligence
 from gov_agent.config import FRONTEND_URL
-from gov_agent.gemini_client import generate_text, has_gemini_client
 from gov_agent.document_vault import (
     create_signed_document_url,
     format_sensitive_document_reply,
@@ -20,6 +19,7 @@ from gov_agent.document_vault import (
     log_document_access,
     verify_passkey,
 )
+from gov_agent.llm_text_router import generate_text_reply
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,20 @@ _LANG_NAMES = {
 async def translate_reply(text: str, lang: str) -> str:
     if lang == "en" or lang not in _LANG_NAMES:
         return text
-    if not has_gemini_client():
-        return text
     try:
         prompt = (
             f"Translate this government service message to {_LANG_NAMES[lang]}, "
             f"keeping numbers, codes and URLs in original:\n{text}"
         )
-        translated = generate_text(prompt)
-        return translated or text
+        return await generate_text_reply(
+            prompt,
+            task="interactive",
+            temperature=0.2,
+            max_output_tokens=512,
+        )
     except Exception:
         return text
+
 
 async def _load_profile(phone: str) -> dict:
     """Load citizen profile for a phone number, returns empty dict if not found."""

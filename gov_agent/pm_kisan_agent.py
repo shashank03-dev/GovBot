@@ -1,4 +1,4 @@
-from gov_agent.gemini_client import generate_text
+from gov_agent.llm_text_router import generate_text_reply
 
 PM_KISAN_STATUS_URL = "https://pmkisan.gov.in/BeneficiaryStatus_New.aspx"
 PM_KISAN_REG_LOOKUP_URL = "https://pmkisan.gov.in/KnowYour_Registration.aspx"
@@ -18,7 +18,7 @@ _SYSTEM_PROMPT = (
 
 async def check_pm_kisan_status(identifier: str) -> dict:
     """
-    Provide PM-KISAN status info using Gemini.
+    Provide PM-KISAN status info using the shared text router.
     The official portal now requires Registration No + CAPTCHA + OTP,
     so direct scraping is no longer possible.
     """
@@ -29,8 +29,9 @@ async def check_pm_kisan_status(identifier: str) -> dict:
             f"Registration lookup link: {PM_KISAN_REG_LOOKUP_URL}\n\n"
             f"Generate a helpful WhatsApp reply for this farmer."
         )
-        reply_text = generate_text(
+        reply_text = await generate_text_reply(
             prompt,
+            task="interactive",
             system_instruction=_SYSTEM_PROMPT,
             temperature=0.3,
             max_output_tokens=512,
@@ -41,8 +42,8 @@ async def check_pm_kisan_status(identifier: str) -> dict:
             "portal_url": PM_KISAN_STATUS_URL,
             "reg_lookup_url": PM_KISAN_REG_LOOKUP_URL,
         }
+
     except Exception:
-        # Fallback static response if Gemini fails
         return {
             "status": "info",
             "message": (

@@ -223,6 +223,7 @@ cp frontend/.env.local.example frontend/.env.local
 
 | Variable | Purpose |
 | --- | --- |
+| `TEXT_LLM_PROVIDERS_JSON` | Optional test-only text/chat pool configuration for Groq, Gemini, and Mistral routing |
 | `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template for OTP delivery |
 | `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code, default `en_US` |
 | `FRONTEND_URL` | Public frontend URL used for redirects and profile links |
@@ -232,6 +233,25 @@ cp frontend/.env.local.example frontend/.env.local
 | `TWILIO_ACCOUNT_SID` | Twilio account SID for SMS fallback |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token |
 | `TWILIO_FROM_NUMBER` | Twilio sender number |
+
+#### Test-only text provider pool
+
+`TEXT_LLM_PROVIDERS_JSON` is used only for the shared text/chat router. It does not change OCR, document/image analysis, or embedding paths, which still use their existing provider-specific code.
+
+Example:
+
+```env
+TEXT_LLM_PROVIDERS_JSON=[{"name":"groq-1","provider":"groq","model":"llama-3.1-8b-instant","api_key_env":"GROQ_API_KEY_1","enabled":true,"weight":3},{"name":"gemini-1","provider":"gemini","model":"gemini-2.0-flash","api_key_env":"GEMINI_API_KEY_1","enabled":true,"weight":2},{"name":"mistral-1","provider":"mistral","model":"mistral-small-latest","api_key_env":"MISTRAL_API_KEY_1","enabled":true,"weight":1}]
+GROQ_API_KEY_1=your_groq_key
+GEMINI_API_KEY_1=your_gemini_key
+MISTRAL_API_KEY_1=your_mistral_key
+```
+
+The router is tuned for testing rather than guaranteed production capacity:
+
+- it prefers the lowest-latency healthy provider
+- it does one fast failover for interactive requests
+- it uses a small exact-match in-memory cache to absorb repeated test prompts
 
 #### Optional integration variables
 

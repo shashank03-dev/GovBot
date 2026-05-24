@@ -1,7 +1,10 @@
 import asyncio
+import types
 import unittest
+from unittest.mock import patch
 
 from gov_agent.llm_text_router import LLMTextRouter
+from gov_agent.providers.gemini_provider import GeminiTextProvider
 from gov_agent.providers.base import ProviderCallError, ProviderConfig
 
 
@@ -116,3 +119,36 @@ class LLMTextRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((first, second), ("cached", "cached"))
         self.assertEqual(client.calls, 1)
+
+
+class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_passes_system_instruction_to_model_constructor(self):
+        recorded = {}
+
+        class _FakeModel:
+            def __init__(self, model_name, system_instruction=None):
+                recorded["model_name"] = model_name
+                recorded["system_instruction"] = system_instruction
+
+            def generate_content(self, prompt, generation_config=None):
+                recorded["prompt"] = prompt
+                recorded["generation_config"] = generation_config
+                return types.SimpleNamespace(text="translated")
+
+        with patch(
+            "gov_agent.providers.gemini_provider.genai.GenerativeModel",
+            new=_FakeModel,
+        ):
+            provider = GeminiTextProvider(api_key="gemini-key", model="gemini-2.0-flash")
+            text = await provider.generate_text(
+                "Hello",
+                system_instruction="Translate politely",
+                temperature=0.2,
+                max_output_tokens=64,
+            )
+
+        self.assertEqual(text, "translated")
+        self.assertEqual(recorded["model_name"], "gemini-2.0-flash")
+        self.assertEqual(recorded["system_instruction"], "Translate politely")
+        self.assertEqual(recorded["prompt"], "Hello")
+        self.assertEqual(recorded["generation_config"]["temperature"], 0.2)

@@ -15,8 +15,10 @@ as configurable constants for the application.
 Call ``validate_config()`` at application startup to assert all required vars
 are present. Importing this module never raises, making test/CI imports safe.
 """
+import json
 import logging
 import os
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -56,6 +58,37 @@ def validate_config() -> None:
     missing = [k for k in _REQUIRED if not os.getenv(k)]
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+
+@dataclass(frozen=True)
+class TextProviderEnvConfig:
+    name: str
+    provider: str
+    model: str
+    api_key_env: str
+    enabled: bool = True
+    weight: int = 1
+
+
+def load_text_provider_env_configs() -> list[TextProviderEnvConfig]:
+    raw = os.getenv("TEXT_LLM_PROVIDERS_JSON", "").strip()
+    if not raw:
+        return []
+
+    payload = json.loads(raw)
+    configs: list[TextProviderEnvConfig] = []
+    for item in payload:
+        configs.append(
+            TextProviderEnvConfig(
+                name=str(item["name"]),
+                provider=str(item["provider"]).lower(),
+                model=str(item["model"]),
+                api_key_env=str(item["api_key_env"]),
+                enabled=bool(item.get("enabled", True)),
+                weight=max(1, int(item.get("weight", 1))),
+            )
+        )
+    return configs
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
