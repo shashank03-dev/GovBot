@@ -240,13 +240,22 @@ export default function Dashboard() {
             </h1>
             <p className="text-sm text-slate-500 mt-1">Track and manage your scholarship applications</p>
           </div>
-          <Link
-            href="/services"
-            className="hidden sm:inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white text-sm font-semibold rounded-xl shadow-md shadow-orange-200/50 hover:shadow-orange-300/60 hover:-translate-y-0.5 transition-all"
-          >
-            Browse Services
-            <ArrowRight className="w-4 h-4" />
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Link
+              href="/documents"
+              className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-[#e67e00] transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-100/70"
+            >
+              <FileText className="w-4 h-4" />
+              Document Vault
+            </Link>
+            <Link
+              href="/services"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-[#ff9933] to-[#e67e00] text-white text-sm font-semibold rounded-xl shadow-md shadow-orange-200/50 hover:shadow-orange-300/60 hover:-translate-y-0.5 transition-all"
+            >
+              Browse Services
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
         </div>
 
         {/* Profile completeness widget */}

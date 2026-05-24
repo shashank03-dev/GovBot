@@ -451,13 +451,19 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             return ("🔐 Enter your 4-digit passkey:", "passkey_verify", next_data)
         if choice in {"vault", "web", "website", "open vault"}:
             document_id = str(data.get("_requested_document_id") or "")
+            from gov_agent.qr_login import get_login_url
+
+            vault_path = "/documents"
+            if document_id:
+                vault_path = f"/documents?document={quote(document_id, safe='')}"
+
             clean_data = dict(data)
             clean_data.pop("_requested_doc_type", None)
             clean_data.pop("_requested_document_id", None)
             clean_data.pop("_document_delivery_mode", None)
             clean_data.pop("_after_passkey", None)
             return (
-                f"🌐 Open your document vault:\n{FRONTEND_URL}/documents?document={quote(document_id, safe='')}",
+                f"🌐 Open your document vault:\n{get_login_url(msg.phone, vault_path)}",
                 "greeting",
                 clean_data,
             )

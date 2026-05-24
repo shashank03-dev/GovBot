@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
+import { AlertTriangle, CheckCircle2, Lock, X } from 'lucide-react';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
-import { getFocusedDocumentId, orderDocumentsWithFocusFirst } from '@/lib/documentVault.mjs';
+import { describeVaultAction, getFocusedDocumentId, orderDocumentsWithFocusFirst } from '@/lib/documentVault.mjs';
 const ALLOWED_UPLOAD_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'] as const;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -27,6 +28,17 @@ type VaultDocument = {
 type ApiErrorPayload = {
   detail?: string;
   error?: string;
+};
+
+type VaultActionKind = 'preview' | 'download' | 'edit' | 'delete';
+
+type VaultActionState = {
+  action: VaultActionKind;
+  documentId: string;
+  documentLabel: string;
+  docType: DocType;
+  passkey: string;
+  error: string;
 };
 
 const DOC_TYPES: Array<{ value: DocType; label: string; icon: string; hint: string }> = [
@@ -113,8 +125,40 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function NoticeBanner({ tone, message }: { tone: 'success' | 'error'; message: string }) {
+  const isError = tone === 'error';
+
+  return (
+    <div
+      className={`rounded-[24px] border px-4 py-3.5 sm:px-5 ${
+        isError ? 'border-red-200 bg-red-50/80' : 'border-emerald-200 bg-emerald-50/80'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${
+            isError ? 'bg-white text-red-600' : 'bg-white text-emerald-600'
+          }`}
+        >
+          {isError ? <AlertTriangle className="h-4.5 w-4.5" /> : <CheckCircle2 className="h-4.5 w-4.5" />}
+        </div>
+        <div>
+          <div className={`text-sm font-semibold ${isError ? 'text-red-700' : 'text-emerald-700'}`}>
+            {isError ? 'Vault action blocked' : 'Vault updated'}
+          </div>
+          <p className={`mt-0.5 text-sm ${isError ? 'text-red-700/90' : 'text-emerald-700/90'}`}>{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DocumentsPage() {
   const router = useRouter();
+  const { asPath, isReady, replace } = router;
+  const initialVaultPathRef = useRef(
+    typeof window === 'undefined' ? '/documents' : `${window.location.pathname}${window.location.search}`,
+  );
   const [phone, setPhone] = useState('');
   const [token, setToken] = useState('');
   const [docType, setDocType] = useState<DocType>('pan');
@@ -133,6 +177,8 @@ export default function DocumentsPage() {
   const [editingPasskey, setEditingPasskey] = useState('');
   const [focusedDocumentId, setFocusedDocumentId] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [vaultAction, setVaultAction] = useState<VaultActionState | null>(null);
+  const [vaultActionBusy, setVaultActionBusy] = useState(false);
 
   const loadDocuments = useCallback(async (activePhone: string, authToken: string) => {
     setLoading(true);
@@ -143,7 +189,9 @@ export default function DocumentsPage() {
       }));
       const data = await res.json() as { documents?: VaultDocument[] } & ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to load documents.'));
-      const nextFocusedId = getFocusedDocumentId(router.asPath);
+      const nextFocusedId = getFocusedDocumentId(
+        typeof window === 'undefined' ? '' : `${window.location.pathname}${window.location.search}`,
+      );
       const loadedDocuments = orderDocumentsWithFocusFirst(data.documents || [], nextFocusedId);
       setDocuments(loadedDocuments);
       if (nextFocusedId && !loadedDocuments.some((doc: VaultDocument) => doc.id === nextFocusedId)) {
@@ -154,27 +202,34 @@ export default function DocumentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [router.asPath]);
+  }, []);
 
   useEffect(() => {
+    if (!isReady) return;
     const savedToken = localStorage.getItem('govbot_token') || '';
     const savedPhone = localStorage.getItem('govbot_phone') || '';
     if (!savedToken || !savedPhone) {
-      router.push('/login');
+      const requestedPath = initialVaultPathRef.current.startsWith('/documents')
+        ? initialVaultPathRef.current
+        : '/documents';
+      void replace({
+        pathname: '/login',
+        query: { next: requestedPath },
+      });
       return;
     }
     setToken(savedToken);
     setPhone(savedPhone);
     void loadDocuments(savedPhone, savedToken);
-  }, [loadDocuments, router]);
+  }, [isReady, loadDocuments, replace]);
 
   useEffect(() => {
-    if (!router.isReady) return;
-    const nextFocusedId = getFocusedDocumentId(router.asPath);
+    if (!isReady) return;
+    const nextFocusedId = getFocusedDocumentId(asPath);
     setFocusedDocumentId(nextFocusedId);
     if (!nextFocusedId) return;
     setDocuments((prev) => orderDocumentsWithFocusFirst(prev, nextFocusedId));
-  }, [router.asPath, router.isReady]);
+  }, [asPath, isReady]);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -243,74 +298,135 @@ export default function DocumentsPage() {
     }
   }
 
-  async function openPreview(documentId: string) {
-    if (!token) return;
-    const passkey = window.prompt('Enter your 4-digit passkey to preview this document:')?.trim() || '';
-    if (!passkey) return;
-    try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/view-url`), buildBackendRequestInit({
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Document-Passkey': passkey,
-        },
-      }));
-      const data = await res.json() as { view_url?: string } & ApiErrorPayload;
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Preview unavailable.'));
-      window.open(data.view_url, '_blank', 'noopener,noreferrer');
-    } catch (error: unknown) {
-      setError(getErrorMessage(error, 'Preview unavailable'));
-    }
-  }
-
-  async function downloadDocument(documentId: string) {
-    if (!token) return;
-    const passkey = window.prompt('Enter your 4-digit passkey to download this document:')?.trim() || '';
-    if (!passkey) return;
-    setDownloadingId(documentId);
-    setError('');
-    try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/download-url`), buildBackendRequestInit({
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Document-Passkey': passkey,
-        },
-      }));
-      const data = await res.json() as { download_url?: string } & ApiErrorPayload;
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Download unavailable.'));
-      window.open(data.download_url, '_blank', 'noopener,noreferrer');
-    } catch (error: unknown) {
-      setError(getErrorMessage(error, 'Download unavailable'));
-    } finally {
-      setDownloadingId(null);
-    }
-  }
-
-  async function startEditing(doc: VaultDocument) {
-    if (!token) return;
-    const passkey = window.prompt('Enter your 4-digit passkey to edit this document:')?.trim() || '';
-    if (!passkey) return;
-    setLoadingEditId(doc.id);
+  function requestVaultAction(action: VaultActionKind, doc: VaultDocument) {
+    setVaultAction({
+      action,
+      documentId: doc.id,
+      documentLabel: prettyLabel(doc.doc_type),
+      docType: doc.doc_type,
+      passkey: '',
+      error: '',
+    });
     setError('');
     setNotice('');
+  }
+
+  function closeVaultAction() {
+    if (vaultActionBusy) return;
+    setVaultAction(null);
+  }
+
+  function updateVaultPasskey(value: string) {
+    setVaultAction((current) => (
+      current
+        ? {
+          ...current,
+          passkey: value.replace(/\D/g, '').slice(0, 4),
+          error: '',
+        }
+        : current
+    ));
+  }
+
+  async function submitVaultAction(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!token || !vaultAction) return;
+
+    const passkey = vaultAction.passkey.trim();
+    if (!/^\d{4}$/.test(passkey)) {
+      setVaultAction((current) => (current ? {
+        ...current,
+        error: 'Enter the same 4-digit passkey you set in WhatsApp.',
+      } : current));
+      return;
+    }
+
+    const { action, documentId, docType } = vaultAction;
+    setVaultActionBusy(true);
+    setError('');
+    setNotice('');
+
     try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${doc.id}`), buildBackendRequestInit({
+      if (action === 'preview') {
+        const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/view-url`), buildBackendRequestInit({
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Document-Passkey': passkey,
+          },
+        }));
+        const data = await res.json() as { view_url?: string } & ApiErrorPayload;
+        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Preview unavailable.'));
+        setVaultAction(null);
+        window.open(data.view_url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      if (action === 'download') {
+        setDownloadingId(documentId);
+        const res = await fetch(buildProxyApiPath(`documents/item/${documentId}/download-url`), buildBackendRequestInit({
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Document-Passkey': passkey,
+          },
+        }));
+        const data = await res.json() as { download_url?: string } & ApiErrorPayload;
+        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Download unavailable.'));
+        setVaultAction(null);
+        window.open(data.download_url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      if (action === 'edit') {
+        setLoadingEditId(documentId);
+        const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), buildBackendRequestInit({
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'X-Document-Passkey': passkey,
+          },
+        }));
+        const data = await res.json() as { extracted_data?: Record<string, string | number | null> } & ApiErrorPayload;
+        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
+        const current = data.extracted_data || {};
+        setEditingId(documentId);
+        setEditingPasskey(passkey);
+        setEditValues(buildEditValues(docType, current));
+        setVaultAction(null);
+        return;
+      }
+
+      setDeletingId(documentId);
+      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), buildBackendRequestInit({
+        method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': passkey,
         },
       }));
-      const data = await res.json() as { extracted_data?: Record<string, string | number | null> } & ApiErrorPayload;
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
-      const current = data.extracted_data || {};
-      setEditingId(doc.id);
-      setEditingPasskey(passkey);
-      setEditValues(buildEditValues(doc.doc_type, current));
+      const data = await res.json() as ApiErrorPayload;
+      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to delete document.'));
+      setVaultAction(null);
+      setNotice('Document deleted.');
+      if (editingId === documentId) cancelEditing();
+      await loadDocuments(phone, token);
     } catch (error: unknown) {
-      setError(getErrorMessage(error, 'Failed to open document details.'));
+      const message = getErrorMessage(
+        error,
+        action === 'preview'
+          ? 'Preview unavailable'
+          : action === 'download'
+            ? 'Download unavailable'
+            : action === 'edit'
+              ? 'Failed to open document details.'
+              : 'Failed to delete document',
+      );
+      setVaultAction((current) => (current ? { ...current, error: message } : current));
     } finally {
+      setVaultActionBusy(false);
+      setDownloadingId(null);
       setLoadingEditId(null);
+      setDeletingId(null);
     }
   }
 
@@ -346,33 +462,18 @@ export default function DocumentsPage() {
     }
   }
 
-  async function deleteDocument(documentId: string) {
-    if (!token) return;
-    const confirmed = window.confirm('Delete this document from the vault?');
-    if (!confirmed) return;
-    const passkey = window.prompt('Enter your 4-digit passkey to delete this document:')?.trim() || '';
-    if (!passkey) return;
-    setDeletingId(documentId);
-    setError('');
-    try {
-      const res = await fetch(buildProxyApiPath(`documents/item/${documentId}`), buildBackendRequestInit({
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Document-Passkey': passkey,
-        },
-      }));
-      const data = await res.json() as ApiErrorPayload;
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to delete document.'));
-      setNotice('Document deleted.');
-      if (editingId === documentId) cancelEditing();
-      await loadDocuments(phone, token);
-    } catch (error: unknown) {
-      setError(getErrorMessage(error, 'Failed to delete document'));
-    } finally {
-      setDeletingId(null);
-    }
-  }
+  const activeVaultAction = vaultAction
+    ? describeVaultAction(vaultAction.action, vaultAction.documentLabel)
+    : null;
+
+  const vaultActionBusyLabel = vaultAction
+    ? {
+      preview: 'Opening preview...',
+      download: 'Preparing download...',
+      edit: 'Unlocking fields...',
+      delete: 'Deleting document...',
+    }[vaultAction.action]
+    : 'Working...';
 
   return (
     <>
@@ -399,6 +500,13 @@ export default function DocumentsPage() {
             <div className="text-sm font-semibold text-slate-800">{phone || 'Loading...'}</div>
           </div>
         </div>
+
+        {(notice || error) && (
+          <div className="mb-6 space-y-3">
+            {notice && <NoticeBanner tone="success" message={notice} />}
+            {error && <NoticeBanner tone="error" message={error} />}
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-[1.2fr,1.8fr] gap-6">
           <motion.section
@@ -446,9 +554,6 @@ export default function DocumentsPage() {
               <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
                 PAN and Aadhaar numbers stay masked in the list view. Use Preview or Edit when you need the full document details.
               </div>
-
-              {notice && <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</p>}
-              {error && <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
 
               <button
                 type="submit"
@@ -526,14 +631,14 @@ export default function DocumentsPage() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => void openPreview(doc.id)}
+                          onClick={() => requestVaultAction('preview', doc)}
                           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
                         >
                           View
                         </button>
                         <button
                           type="button"
-                          onClick={() => void downloadDocument(doc.id)}
+                          onClick={() => requestVaultAction('download', doc)}
                           disabled={downloadingId === doc.id}
                           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50"
                         >
@@ -541,7 +646,7 @@ export default function DocumentsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => void startEditing(doc)}
+                          onClick={() => requestVaultAction('edit', doc)}
                           disabled={loadingEditId === doc.id}
                           className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
                         >
@@ -549,7 +654,7 @@ export default function DocumentsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => void deleteDocument(doc.id)}
+                          onClick={() => requestVaultAction('delete', doc)}
                           disabled={deletingId === doc.id}
                           className="rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
                         >
@@ -619,6 +724,111 @@ export default function DocumentsPage() {
             )}
           </motion.section>
         </div>
+
+        <AnimatePresence>
+          {vaultAction && activeVaultAction && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full max-w-md rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.5)]"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+                        activeVaultAction.tone === 'danger' ? 'bg-red-50 text-red-600' : 'bg-orange-50 text-[#ff9933]'
+                      }`}
+                    >
+                      {activeVaultAction.tone === 'danger' ? (
+                        <AlertTriangle className="h-5 w-5" />
+                      ) : (
+                        <Lock className="h-5 w-5" />
+                      )}
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                        {activeVaultAction.title}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">{activeVaultAction.description}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeVaultAction}
+                    disabled={vaultActionBusy}
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 disabled:opacity-50"
+                    aria-label="Close vault action"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={submitVaultAction} className="mt-6 space-y-4">
+                  {activeVaultAction.tone === 'danger' && (
+                    <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      This action removes the stored file and extracted fields for this document.
+                    </div>
+                  )}
+
+                  <label className="block">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      4-digit passkey
+                    </div>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      autoFocus
+                      maxLength={4}
+                      value={vaultAction.passkey}
+                      onChange={(e) => updateVaultPasskey(e.target.value)}
+                      placeholder="Enter passkey"
+                      className={`w-full rounded-2xl border px-4 py-3 text-base text-slate-900 outline-none transition-colors ${
+                        vaultAction.error
+                          ? 'border-red-200 bg-red-50/40 focus:border-red-300'
+                          : 'border-slate-200 bg-slate-50 focus:border-[#ff9933] focus:bg-white'
+                      }`}
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Use the same passkey you set in WhatsApp for quick document access.
+                    </p>
+                  </label>
+
+                  {vaultAction.error && <NoticeBanner tone="error" message={vaultAction.error} />}
+
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeVaultAction}
+                      disabled={vaultActionBusy}
+                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={vaultActionBusy}
+                      className={`rounded-2xl px-4 py-3 text-sm font-semibold text-white transition-transform disabled:opacity-50 disabled:hover:translate-y-0 ${
+                        activeVaultAction.tone === 'danger'
+                          ? 'bg-red-600 hover:-translate-y-0.5 hover:bg-red-700'
+                          : 'bg-gradient-to-r from-[#ff9933] to-[#e67e00] hover:-translate-y-0.5'
+                      }`}
+                    >
+                      {vaultActionBusy ? vaultActionBusyLabel : activeVaultAction.confirmLabel}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </>
   );

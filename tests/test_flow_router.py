@@ -294,7 +294,7 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "passkey_verify")
         self.assertEqual(new_data["_document_delivery_mode"], "chat")
 
-    async def test_document_request_vault_mode_returns_focused_link(self):
+    async def test_document_request_vault_mode_returns_login_handoff_for_focused_link(self):
         flow_router = _load_flow_router()
         session = {
             "state": "document_retrieval_mode",
@@ -302,9 +302,14 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         }
         msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="vault")
 
-        reply, new_state, new_data = await flow_router.route(session, msg)
+        with patch(
+            "gov_agent.qr_login.get_login_url",
+            return_value="https://app.example/login?token=abc&phone=919999999999&next=%2Fdocuments%3Fdocument%3Ddoc-pan-1",
+        ) as get_login_url_mock:
+            reply, new_state, new_data = await flow_router.route(session, msg)
 
-        self.assertIn("/documents?document=doc-pan-1", reply)
+        get_login_url_mock.assert_called_once_with("919999999999", "/documents?document=doc-pan-1")
+        self.assertIn("https://app.example/login?token=abc&phone=919999999999&next=%2Fdocuments%3Fdocument%3Ddoc-pan-1", reply)
         self.assertEqual(new_state, "greeting")
         self.assertNotIn("_requested_doc_type", new_data)
 
