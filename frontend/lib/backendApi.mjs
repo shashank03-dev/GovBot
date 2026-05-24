@@ -1,5 +1,7 @@
 export const LOCAL_BACKEND_FALLBACK = 'http://localhost:8000';
 export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning';
+const BUNDLED_NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const BUNDLED_NEXT_PUBLIC_RAILWAY_URL = process.env.NEXT_PUBLIC_RAILWAY_URL || '';
 
 export function resolveBackendBaseUrl(env = process.env) {
   const candidates = [
@@ -7,6 +9,8 @@ export function resolveBackendBaseUrl(env = process.env) {
     env.API_URL,
     env.NEXT_PUBLIC_API_URL,
     env.NEXT_PUBLIC_RAILWAY_URL,
+    BUNDLED_NEXT_PUBLIC_API_URL,
+    BUNDLED_NEXT_PUBLIC_RAILWAY_URL,
   ];
 
   for (const value of candidates) {

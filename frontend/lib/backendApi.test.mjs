@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 
 import {
   LOCAL_BACKEND_FALLBACK,
@@ -73,4 +74,48 @@ test('buildBackendUrl joins normalized paths onto the resolved backend URL', () 
   const env = { NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/' };
   assert.equal(buildBackendUrl('/live/demo', env), 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/live/demo');
   assert.equal(buildBackendUrl('auth/send-otp', env), 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/auth/send-otp');
+});
+
+test('default helper detects bundled NEXT_PUBLIC_API_URL in browser-like builds', () => {
+  const moduleUrl = new URL('./backendApi.mjs', import.meta.url).href;
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { shouldUseNgrokBypassHeader } from ${JSON.stringify(moduleUrl)}; console.log(shouldUseNgrokBypassHeader());`,
+    ],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev',
+      },
+      encoding: 'utf8',
+    },
+  ).trim();
+
+  assert.equal(output, 'true');
+});
+
+test('resolveBackendBaseUrl falls back to bundled public backend URLs when runtime env is empty', () => {
+  const moduleUrl = new URL('./backendApi.mjs', import.meta.url).href;
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { resolveBackendBaseUrl } from ${JSON.stringify(moduleUrl)}; console.log(resolveBackendBaseUrl({}));`,
+    ],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NEXT_PUBLIC_API_URL: 'https://sun-nonlicentious-buzzingly.ngrok-free.dev',
+      },
+      encoding: 'utf8',
+    },
+  ).trim();
+
+  assert.equal(output, 'https://sun-nonlicentious-buzzingly.ngrok-free.dev');
 });
