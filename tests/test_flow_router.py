@@ -3,6 +3,7 @@ import pathlib
 import sys
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -10,6 +11,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from gov_agent.models import WhatsAppIncoming
+
+
+def _unlock_payload(*, minutes_ago: int = 0) -> dict[str, str]:
+    now = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    stamp = now.isoformat()
+    return {
+        "verified_at": stamp,
+        "last_activity_at": stamp,
+    }
 
 
 def _load_flow_router():
@@ -261,6 +271,53 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "kyc_document_upload")
         self.assertEqual(new_data["_pending_doc_type"], "aadhaar")
 
+    async def test_typo_documents_command_opens_document_hub(self):
+        flow_router = _load_flow_router()
+        session = {"state": "greeting", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="documnts")
+
+        reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("Document Manager", reply)
+        self.assertIn("VIEW", reply.upper())
+        self.assertIn("DELETE", reply.upper())
+        self.assertEqual(new_state, "document_hub")
+        self.assertEqual(new_data, {})
+
+    async def test_my_docs_lists_saved_documents(self):
+        flow_router = _load_flow_router()
+        session = {"state": "greeting", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="my docs")
+
+        with patch(
+            "gov_agent.flow_router.list_user_documents",
+            return_value=[
+                {
+                    "id": "doc-pan-1",
+                    "doc_type": "pan",
+                    "custom_label": None,
+                    "source": "whatsapp",
+                    "status": "ready",
+                    "extracted_data": {"pan_number": "ABXXXXXX4F"},
+                },
+                {
+                    "id": "doc-custom-1",
+                    "doc_type": "custom",
+                    "custom_label": "Domicile Certificate",
+                    "source": "web",
+                    "status": "ready",
+                    "extracted_data": {"summary": "Residence proof for Bengaluru."},
+                },
+            ],
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("1.", reply)
+        self.assertIn("PAN card", reply)
+        self.assertIn("Domicile Certificate", reply)
+        self.assertEqual(new_state, "document_hub")
+        self.assertEqual(new_data, {})
+
     async def test_document_request_prompts_for_retrieval_mode(self):
         flow_router = _load_flow_router()
         session = {"state": "greeting", "collected_data": {}}
@@ -375,7 +432,7 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("XXXX", reply["text"])
         self.assertNotIn("1234 5678 9012", reply["text"])
         self.assertEqual(new_state, "greeting")
-        self.assertEqual(new_data, {})
+        self.assertIn("document_access_unlock", new_data)
 
     async def test_passkey_verify_returns_custom_document_summary_response(self):
         flow_router = _load_flow_router()
@@ -417,7 +474,194 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Domicile Certificate", reply["text"])
         self.assertIn("Confirms residence in Bengaluru Urban district.", reply["text"])
         self.assertEqual(new_state, "greeting")
-        self.assertEqual(new_data, {})
+        self.assertIn("document_access_unlock", new_data)
+
+    async def test_send_document_with_active_unlock_skips_passkey_prompt(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "greeting",
+            "collected_data": {"document_access_unlock": _unlock_payload()},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="send pan")
+
+        with patch.object(
+            flow_router,
+            "get_latest_user_document",
+            return_value={
+                "id": "doc-pan-1",
+                "phone": "919999999999",
+                "doc_type": "pan",
+                "mime_type": "application/pdf",
+                "original_filename": "pan.pdf",
+                "storage_path": "919999999999/pan/current.pdf",
+                "extracted_data": {"pan_number": "ABCDE1234F", "full_name": "Asha Singh"},
+            },
+        ), patch(
+            "gov_agent.flow_router.create_signed_document_url",
+            return_value="https://signed.example/pan.pdf",
+        ), patch.object(flow_router, "_emit_activity", new=AsyncMock()):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertEqual(reply["kind"], "document_media_with_details")
+        self.assertIn("PAN Number", reply["text"])
+        self.assertEqual(new_state, "greeting")
+        self.assertIn("document_access_unlock", new_data)
+
+    async def test_send_document_with_expired_unlock_requests_passkey_again(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "greeting",
+            "collected_data": {"document_access_unlock": _unlock_payload(minutes_ago=11)},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="send pan")
+
+        with patch.object(flow_router, "_load_profile", new=AsyncMock(return_value={"passkey_hash": "hash"})), patch.object(
+            flow_router,
+            "get_latest_user_document",
+            return_value={"id": "doc-pan-1", "doc_type": "pan", "storage_path": "9199/pan/file.pdf"},
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("passkey", reply.lower())
+        self.assertEqual(new_state, "passkey_verify")
+        self.assertEqual(new_data["_document_manager_action"], "send")
+
+    async def test_upload_custom_collects_label_then_media(self):
+        flow_router = _load_flow_router()
+        start_session = {"state": "greeting", "collected_data": {}}
+
+        start_reply, start_state, start_data = await flow_router.route(
+            start_session,
+            WhatsAppIncoming(phone="919999999999", message_type="text", body="upload custom"),
+        )
+        self.assertIn("document name", start_reply.lower())
+        self.assertEqual(start_state, "document_custom_upload_label")
+
+        label_reply, label_state, label_data = await flow_router.route(
+            {"state": start_state, "collected_data": start_data},
+            WhatsAppIncoming(phone="919999999999", message_type="text", body="Domicile Certificate"),
+        )
+        self.assertIn("send your", label_reply.lower())
+        self.assertEqual(label_state, "kyc_document_upload")
+        self.assertEqual(label_data["_pending_doc_type"], "custom")
+        self.assertEqual(label_data["_pending_custom_label"], "Domicile Certificate")
+
+        with patch.object(
+            flow_router,
+            "ingest_document",
+            new=AsyncMock(return_value={"status": "ready", "extracted_data": {"summary": "Residence proof"}}),
+        ) as ingest_mock, patch.object(flow_router, "_emit_activity", new=AsyncMock()):
+            final_reply, final_state, final_data = await flow_router.route(
+                {"state": label_state, "collected_data": label_data},
+                WhatsAppIncoming(
+                    phone="919999999999",
+                    message_type="document",
+                    body="",
+                    media_id="media-custom-1",
+                    mime_type="application/pdf",
+                    file_name="domicile.pdf",
+                ),
+            )
+
+        ingest_mock.assert_awaited_once()
+        self.assertEqual(ingest_mock.await_args.kwargs["doc_type"], "custom")
+        self.assertEqual(ingest_mock.await_args.kwargs["custom_label"], "Domicile Certificate")
+        self.assertIn("saved", final_reply.lower())
+        self.assertEqual(final_state, "greeting")
+        self.assertNotIn("_pending_custom_label", final_data)
+
+    async def test_edit_custom_document_updates_summary(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "greeting",
+            "collected_data": {"document_access_unlock": _unlock_payload()},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="edit domicile certificate")
+
+        document = {
+            "id": "doc-custom-1",
+            "phone": "919999999999",
+            "doc_type": "custom",
+            "custom_label": "Domicile Certificate",
+            "extracted_data": {"summary": "Old summary", "document_type_hint": "Residence proof"},
+        }
+        with patch(
+            "gov_agent.flow_router.list_user_documents",
+            return_value=[document],
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("DETAILS", reply.upper())
+        self.assertIn("REPLACE", reply.upper())
+        self.assertEqual(new_state, "document_edit_mode")
+
+        with patch.object(flow_router, "get_user_document", return_value=document):
+            details_reply, details_state, details_data = await flow_router.route(
+                {"state": new_state, "collected_data": new_data},
+                WhatsAppIncoming(phone="919999999999", message_type="text", body="details"),
+            )
+        self.assertIn("SUMMARY", details_reply.upper())
+        self.assertEqual(details_state, "document_edit_field")
+
+        with patch.object(flow_router, "get_user_document", return_value=document):
+            field_reply, field_state, field_data = await flow_router.route(
+                {"state": details_state, "collected_data": details_data},
+                WhatsAppIncoming(phone="919999999999", message_type="text", body="summary"),
+            )
+        self.assertIn("new value", field_reply.lower())
+        self.assertEqual(field_state, "document_edit_value")
+
+        with patch.object(
+            flow_router,
+            "update_user_document",
+            return_value={"id": "doc-custom-1", "doc_type": "custom", "custom_label": "Domicile Certificate"},
+        ) as update_mock:
+            final_reply, final_state, _ = await flow_router.route(
+                {"state": field_state, "collected_data": field_data},
+                WhatsAppIncoming(phone="919999999999", message_type="text", body="Updated summary"),
+            )
+
+        update_mock.assert_called_once_with("doc-custom-1", {"summary": "Updated summary"}, custom_label=None)
+        self.assertIn("updated", final_reply.lower())
+        self.assertEqual(final_state, "document_hub")
+
+    async def test_delete_document_requires_confirmation_before_delete(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "greeting",
+            "collected_data": {"document_access_unlock": _unlock_payload()},
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="delete pan")
+
+        with patch.object(
+            flow_router,
+            "get_latest_user_document",
+            return_value={
+                "id": "doc-pan-1",
+                "phone": "919999999999",
+                "doc_type": "pan",
+                "storage_path": "919999999999/pan/current.pdf",
+                "custom_label": None,
+            },
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("confirm", reply.lower())
+        self.assertEqual(new_state, "document_delete_confirm")
+
+        with patch.object(flow_router, "delete_user_document", return_value=True) as delete_mock, patch.object(
+            flow_router,
+            "_emit_activity",
+            new=AsyncMock(),
+        ):
+            confirm_reply, confirm_state, _ = await flow_router.route(
+                {"state": new_state, "collected_data": new_data},
+                WhatsAppIncoming(phone="919999999999", message_type="text", body="yes"),
+            )
+
+        delete_mock.assert_called_once_with("doc-pan-1")
+        self.assertIn("deleted", confirm_reply.lower())
+        self.assertEqual(confirm_state, "document_hub")
 
     async def test_digilocker_check_for_nsp_moves_to_review_pending(self):
         flow_router = _load_flow_router()

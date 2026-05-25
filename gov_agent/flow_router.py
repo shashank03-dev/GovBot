@@ -8,9 +8,11 @@ from gov_agent.db import supabase
 from gov_agent import rag_engine
 from gov_agent import graph
 from gov_agent import renewal_intelligence
+from gov_agent import whatsapp_document_manager as wdm
 from gov_agent.config import FRONTEND_URL
 from gov_agent.document_vault import (
     create_signed_document_url,
+    delete_user_document,
     format_sensitive_document_reply,
     get_latest_user_document,
     get_user_document,
@@ -18,6 +20,7 @@ from gov_agent.document_vault import (
     ingest_document,
     list_user_documents,
     log_document_access,
+    update_user_document,
     verify_passkey,
 )
 from gov_agent.llm_text_router import generate_text_reply
@@ -126,6 +129,7 @@ _DOCUMENT_UPLOAD_LABELS = {
     "income_cert": "income certificate",
     "caste_cert": "caste certificate",
     "marksheet": "marksheet",
+    "custom": "custom document",
 }
 
 _UPLOAD_COMMAND_HELP = (
@@ -435,6 +439,129 @@ def _format_submission_success_reply(phone: str, confirmation_number: str) -> st
     )
 
 
+def _document_manager_action_data(data: dict[str, Any], **updates: Any) -> dict[str, Any]:
+    next_data = dict(data)
+    next_data.update(updates)
+    return next_data
+
+
+def _clear_document_manager_state(data: dict[str, Any]) -> dict[str, Any]:
+    next_data = dict(data)
+    for key in (
+        "_document_manager_action",
+        "_document_target_id",
+        "_document_candidate_ids",
+        "_pending_custom_label",
+        "_document_edit_field",
+        "_document_edit_field_name",
+        "_document_pending_action",
+    ):
+        next_data.pop(key, None)
+    return next_data
+
+
+def _render_document_list_reply(phone: str, *, heading: str = "📄 *Your Documents*") -> str:
+    return wdm.render_document_list(list_user_documents(phone), heading=heading)
+
+
+def _resolve_document_target(phone: str, target_text: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    requested_type = wdm.match_document_type(target_text)
+    if requested_type and requested_type != "custom":
+        return get_latest_user_document(phone, requested_type), []
+
+    documents = [
+        document
+        for document in list_user_documents(phone, masked=False)
+        if document.get("doc_type") == "custom"
+    ]
+    return wdm.pick_custom_document(target_text, documents)
+
+
+def _resolve_document_from_candidates(phone: str, selector: str, candidate_ids: list[str]) -> dict[str, Any] | None:
+    normalized = wdm.normalize_text(selector)
+    if normalized.isdigit():
+        index = int(normalized)
+        if 1 <= index <= len(candidate_ids):
+            return get_user_document(candidate_ids[index - 1])
+    for document_id in candidate_ids:
+        document = get_user_document(document_id)
+        if document and document.get("doc_type") == "custom":
+            if wdm.normalize_text(document.get("custom_label", "")) == normalized:
+                return document
+    return None
+
+
+def _build_document_media_reply(phone: str, document: dict[str, Any]) -> dict[str, Any]:
+    signed_url = create_signed_document_url(document["storage_path"])
+    try:
+        log_document_access(
+            phone=phone,
+            document_id=document.get("id"),
+            action="reveal",
+            metadata={"doc_type": document.get("doc_type"), "channel": "whatsapp"},
+        )
+    except Exception as exc:
+        logger.warning("Document access log failed for reveal %s/%s: %s", phone, document.get("doc_type"), exc)
+    return {
+        "kind": "document_media_with_details",
+        "media": {
+            "link": signed_url,
+            "mime_type": document.get("mime_type") or "application/pdf",
+            "filename": document.get("original_filename") or f"{document['doc_type']}.pdf",
+        },
+        "text": format_sensitive_document_reply(document["doc_type"], document, signed_url=None),
+    }
+
+
+async def _continue_document_manager_action(phone: str, action: str, document: dict[str, Any], data: dict[str, Any]) -> tuple[dict[str, Any] | str, str, dict]:
+    next_data = wdm.touch_unlock(_clear_document_manager_state(data))
+    if action in {"view", "send"}:
+        await _emit_activity(phone, f"🔓 Sensitive document accessed: {document.get('doc_type')}")
+        return (_build_document_media_reply(phone, document), "greeting", next_data)
+    if action == "edit":
+        edit_data = _document_manager_action_data(next_data, _document_target_id=document["id"])
+        return (
+            f"✏️ *Edit {wdm.document_label(document)}*\n\nReply *DETAILS* to edit saved fields, or *REPLACE* to upload a new file.",
+            wdm.DOCUMENT_EDIT_MODE_STATE,
+            edit_data,
+        )
+    if action == "delete":
+        delete_data = _document_manager_action_data(next_data, _document_target_id=document["id"])
+        return (
+            f"⚠️ Please confirm deletion of *{wdm.document_label(document)}*.\n\nReply *YES* to delete or *NO* to cancel.",
+            wdm.DOCUMENT_DELETE_CONFIRM_STATE,
+            delete_data,
+        )
+    return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
+
+
+async def _start_document_manager_action(phone: str, action: str, document: dict[str, Any], data: dict[str, Any]) -> tuple[dict[str, Any] | str, str, dict]:
+    next_data = dict(data)
+    if not wdm.is_unlock_active(next_data):
+        next_data = wdm.clear_unlock(next_data)
+        profile = await _load_profile(phone)
+        pending = _document_manager_action_data(next_data, _document_manager_action=action, _document_target_id=document["id"])
+        if not (profile.get("passkey_hash") or profile.get("passkey")):
+            pending["_after_passkey"] = "document_manager"
+            return (
+                "🔐 First, set a 4-digit security passkey to protect your documents:",
+                "set_passkey",
+                pending,
+            )
+        return ("🔐 Enter your 4-digit passkey:", "passkey_verify", pending)
+    return await _continue_document_manager_action(phone, action, document, next_data)
+
+
+async def _resume_document_manager_action(phone: str, data: dict[str, Any]) -> tuple[dict[str, Any] | str, str, dict]:
+    action = str(data.get("_document_manager_action") or "").strip()
+    document_id = str(data.get("_document_target_id") or "").strip()
+    document = get_user_document(document_id) if document_id else None
+    if not action or not document:
+        return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+    unlocked = wdm.activate_unlock(data)
+    return await _continue_document_manager_action(phone, action, document, unlocked)
+
+
 async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | str, str, dict]:
     body = msg.body or ""
     data = session.get("collected_data", {})
@@ -443,10 +570,55 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     _RESTART_KEYWORDS = {"restart", "reset", "start over", "/start"}
     _EXIT_KEYWORDS = {"exit", "close", "cancel"}
     body_lower = body.strip().lower()
+    normalized_body = wdm.normalize_text(body)
 
     # ── Global keyword: set passkey ────────────────────────────────────────
     if body_lower in {"set pin", "set passkey", "change pin", "change passkey"}:
         return ("🔐 Enter a 4-digit security PIN:", "set_passkey", data)
+
+    document_command = wdm.parse_document_command(body)
+    if document_command:
+        kind = document_command["kind"]
+        if kind == "hub":
+            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        if kind == "list":
+            return (_render_document_list_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        if kind == "upload":
+            doc_type = str(document_command["doc_type"])
+            if doc_type == "custom":
+                return (
+                    "📝 What is the document name?\n\nExample: Domicile Certificate",
+                    wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE,
+                    _clear_document_manager_state(data),
+                )
+            label = _DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type.replace("_", " "))
+            return (
+                f"📎 Please send your {label} as a clear photo or document file.",
+                "kyc_document_upload",
+                _document_manager_action_data(_clear_document_manager_state(data), _pending_doc_type=doc_type),
+            )
+        if kind == "upload_unknown":
+            return (_UPLOAD_COMMAND_HELP, "greeting", data)
+        if kind in {"send", "edit", "delete"}:
+            document, candidates = _resolve_document_target(msg.phone, str(document_command.get("target") or ""))
+            if document:
+                return await _start_document_manager_action(msg.phone, kind, document, data)
+            if candidates:
+                candidate_ids = [str(candidate["id"]) for candidate in candidates]
+                return (
+                    wdm.render_document_list(candidates, heading="📄 *Matching Documents*"),
+                    wdm.DOCUMENT_SELECT_STATE,
+                    _document_manager_action_data(
+                        _clear_document_manager_state(data),
+                        _document_manager_action=kind,
+                        _document_candidate_ids=candidate_ids,
+                    ),
+                )
+            return (
+                "❌ I couldn't find that document.\n\nReply *MY DOCS* to view saved files or *UPLOAD* to add one.",
+                wdm.DOCUMENT_HUB_STATE,
+                _clear_document_manager_state(data),
+            )
 
     if body_lower in _DOCUMENT_UPLOAD_COMMANDS:
         doc_type = _DOCUMENT_UPLOAD_COMMANDS[body_lower]
@@ -590,6 +762,198 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             "document_retrieval_mode",
             data,
         )
+
+    elif state == wdm.DOCUMENT_HUB_STATE:
+        action = wdm.match_document_menu_action(body)
+        if action == "list":
+            return (_render_document_list_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        if action == "view":
+            documents = list_user_documents(msg.phone)
+            candidate_ids = [str(document["id"]) for document in documents]
+            return (
+                wdm.render_document_list(documents, heading="📄 *Choose a document to open*"),
+                wdm.DOCUMENT_SELECT_STATE,
+                _document_manager_action_data(_clear_document_manager_state(data), _document_manager_action="view", _document_candidate_ids=candidate_ids),
+            )
+        if action == "send":
+            documents = list_user_documents(msg.phone)
+            candidate_ids = [str(document["id"]) for document in documents]
+            return (
+                wdm.render_document_list(documents, heading="📤 *Choose a document to send*"),
+                wdm.DOCUMENT_SELECT_STATE,
+                _document_manager_action_data(_clear_document_manager_state(data), _document_manager_action="send", _document_candidate_ids=candidate_ids),
+            )
+        if action == "edit":
+            documents = list_user_documents(msg.phone)
+            candidate_ids = [str(document["id"]) for document in documents]
+            return (
+                wdm.render_document_list(documents, heading="✏️ *Choose a document to edit*"),
+                wdm.DOCUMENT_SELECT_STATE,
+                _document_manager_action_data(_clear_document_manager_state(data), _document_manager_action="edit", _document_candidate_ids=candidate_ids),
+            )
+        if action == "delete":
+            documents = list_user_documents(msg.phone)
+            candidate_ids = [str(document["id"]) for document in documents]
+            return (
+                wdm.render_document_list(documents, heading="🗑️ *Choose a document to delete*"),
+                wdm.DOCUMENT_SELECT_STATE,
+                _document_manager_action_data(_clear_document_manager_state(data), _document_manager_action="delete", _document_candidate_ids=candidate_ids),
+            )
+        if action == "upload":
+            return (
+                "📎 Reply with the document type:\n- PAN\n- AADHAAR\n- INCOME\n- CASTE\n- MARKSHEET\n- CUSTOM",
+                wdm.DOCUMENT_UPLOAD_CHOOSE_STATE,
+                _clear_document_manager_state(data),
+            )
+        if action == "open_vault":
+            from gov_agent.qr_login import get_login_url
+            return (
+                f"🌐 Open your document vault:\n{get_login_url(msg.phone, '/documents')}",
+                "greeting",
+                _clear_document_manager_state(data),
+            )
+        return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+
+    elif state == wdm.DOCUMENT_UPLOAD_CHOOSE_STATE:
+        if normalized_body == "back":
+            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        doc_type = wdm.match_document_type(body)
+        if not doc_type:
+            return (
+                "Reply with PAN, AADHAAR, INCOME, CASTE, MARKSHEET, or CUSTOM.",
+                wdm.DOCUMENT_UPLOAD_CHOOSE_STATE,
+                data,
+            )
+        if doc_type == "custom":
+            return (
+                "📝 What is the document name?\n\nExample: Domicile Certificate",
+                wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE,
+                _clear_document_manager_state(data),
+            )
+        label = _DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type.replace("_", " "))
+        return (
+            f"📎 Please send your {label} as a clear photo or document file.",
+            "kyc_document_upload",
+            _document_manager_action_data(_clear_document_manager_state(data), _pending_doc_type=doc_type),
+        )
+
+    elif state == wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE:
+        label = " ".join(body.strip().split())
+        if not label:
+            return ("📝 Please send a document name first.", wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE, data)
+        return (
+            f"📎 Send your {label} as a clear photo or document file.",
+            "kyc_document_upload",
+            _document_manager_action_data(_clear_document_manager_state(data), _pending_doc_type="custom", _pending_custom_label=label),
+        )
+
+    elif state == wdm.DOCUMENT_SELECT_STATE:
+        if normalized_body == "back":
+            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        action = str(data.get("_document_manager_action") or "").strip()
+        candidate_ids = [str(value) for value in (data.get("_document_candidate_ids") or [])]
+        document = _resolve_document_from_candidates(msg.phone, body, candidate_ids)
+        if not document:
+            return ("❌ Reply with a valid number or document name.", wdm.DOCUMENT_SELECT_STATE, data)
+        return await _start_document_manager_action(msg.phone, action, document, data)
+
+    elif state == wdm.DOCUMENT_EDIT_MODE_STATE:
+        if normalized_body in {"details", "detail"}:
+            document = get_user_document(str(data.get("_document_target_id") or ""))
+            if not document:
+                return ("❌ That document is no longer available.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (
+                wdm.render_edit_field_prompt(document),
+                wdm.DOCUMENT_EDIT_FIELD_STATE,
+                data,
+            )
+        if normalized_body in {"replace", "file", "replace file"}:
+            return (
+                "📎 Send the new file to replace this document.",
+                wdm.DOCUMENT_REPLACE_FILE_STATE,
+                data,
+            )
+        if normalized_body == "back":
+            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        return (
+            "Reply *DETAILS* to edit saved fields, *REPLACE* to upload a new file, or *BACK* to cancel.",
+            wdm.DOCUMENT_EDIT_MODE_STATE,
+            data,
+        )
+
+    elif state == wdm.DOCUMENT_EDIT_FIELD_STATE:
+        if normalized_body == "back":
+            document = get_user_document(str(data.get("_document_target_id") or ""))
+            if not document:
+                return ("❌ That document is no longer available.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (
+                f"✏️ *Edit {wdm.document_label(document)}*\n\nReply *DETAILS* to edit saved fields, or *REPLACE* to upload a new file.",
+                wdm.DOCUMENT_EDIT_MODE_STATE,
+                data,
+            )
+        document = get_user_document(str(data.get("_document_target_id") or ""))
+        if not document:
+            return ("❌ That document is no longer available.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        field_key, field_name = wdm.match_edit_field(document, body)
+        if not field_key:
+            return ("❌ Reply with a valid field name from the list.", wdm.DOCUMENT_EDIT_FIELD_STATE, data)
+        return (
+            f"✏️ Send the new value for *{field_name or field_key}*.",
+            wdm.DOCUMENT_EDIT_VALUE_STATE,
+            _document_manager_action_data(data, _document_edit_field=field_key, _document_edit_field_name=field_name or field_key),
+        )
+
+    elif state == wdm.DOCUMENT_EDIT_VALUE_STATE:
+        document_id = str(data.get("_document_target_id") or "")
+        field_key = str(data.get("_document_edit_field") or "")
+        value = body.strip()
+        if not document_id or not field_key or not value:
+            return ("❌ Edit details were incomplete. Please start again.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        custom_label = value if field_key == "__custom_label__" else None
+        extracted_updates = {} if field_key == "__custom_label__" else {field_key: value}
+        update_user_document(document_id, extracted_updates, custom_label=custom_label)
+        next_data = wdm.touch_unlock(_clear_document_manager_state(data))
+        return ("✅ Document details updated.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
+
+    elif state == wdm.DOCUMENT_REPLACE_FILE_STATE:
+        document = get_user_document(str(data.get("_document_target_id") or ""))
+        if not document:
+            return ("❌ That document is no longer available.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        if msg.message_type not in {"image", "document"} or not msg.media_id:
+            return ("📎 Please send the replacement file as an image or document.", wdm.DOCUMENT_REPLACE_FILE_STATE, data)
+        try:
+            result = await ingest_document(
+                phone=msg.phone,
+                doc_type=str(document.get("doc_type") or ""),
+                source="whatsapp",
+                media_id=msg.media_id,
+                file_name=msg.file_name,
+                mime_type=msg.mime_type,
+                custom_label=document.get("custom_label"),
+            )
+            if document.get("doc_type") == "custom":
+                delete_user_document(str(document.get("id")))
+            await _emit_activity(msg.phone, f"📄 {document.get('doc_type')} replaced in vault")
+            next_data = wdm.touch_unlock(_clear_document_manager_state(data))
+            return (
+                _format_upload_result(str(document.get("doc_type") or ""), result) + "\n\n" + wdm.render_document_hub(),
+                wdm.DOCUMENT_HUB_STATE,
+                next_data,
+            )
+        except Exception as exc:
+            logger.error("WhatsApp document replace failed for %s/%s: %s", msg.phone, document.get("doc_type"), exc)
+            return ("❌ Could not replace that document. Please try a clearer file.", wdm.DOCUMENT_REPLACE_FILE_STATE, data)
+
+    elif state == wdm.DOCUMENT_DELETE_CONFIRM_STATE:
+        if normalized_body in {"no", "n", "cancel", "back"}:
+            return ("Deletion cancelled.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        if normalized_body not in {"yes", "y", "confirm"}:
+            return ("Reply *YES* to delete or *NO* to cancel.", wdm.DOCUMENT_DELETE_CONFIRM_STATE, data)
+        document_id = str(data.get("_document_target_id") or "")
+        delete_user_document(document_id)
+        await _emit_activity(msg.phone, f"🗑️ Document deleted: {document_id}")
+        next_data = wdm.touch_unlock(_clear_document_manager_state(data))
+        return ("✅ Document deleted.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
 
     if _is_renewal_question(body_lower):
         return (
@@ -821,7 +1185,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             return ("❌ Enter a 4-digit PIN only.", "set_passkey", data)
         await _save_profile_field(msg.phone, "passkey_hash", hash_passkey(pin))
         await _emit_activity(msg.phone, "🔐 Security passkey set")
-        if data.get("_after_passkey") == "reveal":
+        if data.get("_after_passkey") in {"reveal", "document_manager"}:
             data.pop("_after_passkey", None)
             return ("✅ Passkey set! Now enter it to view your data:", "passkey_verify", data)
         return (
@@ -839,6 +1203,8 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         verified = verify_passkey(pin, stored_digest) or (legacy_pin and pin == legacy_pin)
         if not verified:
             return ("❌ Wrong passkey. Try again:", "passkey_verify", data)
+        if data.get("_document_manager_action") and data.get("_document_target_id"):
+            return await _resume_document_manager_action(msg.phone, data)
         document_id = data.get("_requested_document_id")
         if data.get("_document_delivery_mode") == "chat" and document_id:
             document = get_user_document(str(document_id))
@@ -848,29 +1214,12 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                     "greeting",
                     {},
                 )
-            signed_url = create_signed_document_url(document["storage_path"])
-            try:
-                log_document_access(
-                    phone=msg.phone,
-                    document_id=document.get("id"),
-                    action="reveal",
-                    metadata={"doc_type": document.get("doc_type"), "channel": "whatsapp"},
-                )
-            except Exception as exc:
-                logger.warning("Document access log failed for reveal %s/%s: %s", msg.phone, document.get("doc_type"), exc)
             await _emit_activity(msg.phone, f"🔓 Sensitive document accessed: {document.get('doc_type')}")
+            next_data = wdm.activate_unlock(_clear_document_manager_state(data))
             return (
-                {
-                    "kind": "document_media_with_details",
-                    "media": {
-                        "link": signed_url,
-                        "mime_type": document.get("mime_type") or "application/pdf",
-                        "filename": document.get("original_filename") or f"{document['doc_type']}.pdf",
-                    },
-                    "text": format_sensitive_document_reply(document["doc_type"], document, signed_url=None),
-                },
+                _build_document_media_reply(msg.phone, document),
                 "greeting",
-                {},
+                next_data,
             )
         doc_type = data.get("_reveal_doc_type")
         if doc_type:
@@ -919,7 +1268,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             return (MENU, "greeting", data)
         if msg.message_type not in {"image", "document"} or not msg.media_id:
             return (
-                f"📎 Please send your {_DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)} as an image or document file.",
+                f"📎 Please send your {data.get('_pending_custom_label') or _DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)} as an image or document file.",
                 "kyc_document_upload",
                 data,
             )
@@ -931,14 +1280,16 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 media_id=msg.media_id,
                 file_name=msg.file_name,
                 mime_type=msg.mime_type,
+                custom_label=data.get("_pending_custom_label"),
             )
             await _emit_activity(msg.phone, f"📄 {doc_type} uploaded to vault")
             data.pop("_pending_doc_type", None)
+            data.pop("_pending_custom_label", None)
             return (_format_upload_result(doc_type, result), "greeting", data)
         except Exception as exc:
             logger.error("WhatsApp document upload failed for %s/%s: %s", msg.phone, doc_type, exc)
             return (
-                f"❌ Could not save your {_DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)}. Please try a clearer file.",
+                f"❌ Could not save your {data.get('_pending_custom_label') or _DOCUMENT_UPLOAD_LABELS.get(doc_type, doc_type)}. Please try a clearer file.",
                 "kyc_document_upload",
                 data,
             )
