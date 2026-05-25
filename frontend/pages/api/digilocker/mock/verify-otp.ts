@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 
 const MOCK_PROFILE = {
   name: 'SHASHANK GOWDA T',
@@ -41,8 +42,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     typeof mock_hint === 'string' &&
     mock_hint.replace(/\D/g, '').slice(0, 6) === String(otp).replace(/\D/g, '').slice(0, 6)
   ) {
-    const profile = { ...MOCK_PROFILE, mobile: phone };
-    return res.status(200).json({ success: true, profile, delivery_mode: 'demo' });
+    const canonicalPhone = normalizeIndianPhone(phone);
+    const profile = { ...MOCK_PROFILE, mobile: canonicalPhone };
+    return res.status(200).json({ success: true, profile, delivery_mode: 'demo', phone: canonicalPhone });
   }
 
   try {
@@ -62,9 +64,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Merge the actual phone number into the profile
-    const profile = { ...MOCK_PROFILE, mobile: phone };
+    const canonicalPhone = normalizeIndianPhone(data.phone || phone);
+    const profile = { ...MOCK_PROFILE, mobile: canonicalPhone };
 
-    return res.status(200).json({ success: true, profile, delivery_mode: 'whatsapp' });
+    return res.status(200).json({ success: true, profile, delivery_mode: 'whatsapp', phone: canonicalPhone });
   } catch {
     return res.status(500).json({ error: 'Verification failed' });
   }

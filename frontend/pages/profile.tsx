@@ -8,6 +8,11 @@ import {
   ScanLine, Link2, CheckCircle, AlertCircle, ChevronRight, Save, ArrowLeft
 } from 'lucide-react';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildPhoneLookupCandidates, normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
+import {
+  hasProfileContent,
+  mergeReviewIntoProfile,
+} from '@/lib/profileSync.mjs';
 
 type Profile = {
   full_name?: string;
@@ -159,6 +164,7 @@ export default function ProfilePage() {
   const [vaultLoading, setVaultLoading] = useState(false);
   const [sspLoading, setSspLoading] = useState(false);
   const [vaultAlert, setVaultAlert] = useState<string[]>([]);
+  const [profileNotice, setProfileNotice] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
@@ -168,7 +174,18 @@ export default function ProfilePage() {
 
   const getStoredPhone = () => {
     if (typeof window === 'undefined') return '';
-    return localStorage.getItem('govbot_phone') || '';
+    const storedPhone = localStorage.getItem('govbot_phone') || '';
+    const canonicalPhone = normalizeIndianPhone(storedPhone) || storedPhone;
+    if (canonicalPhone && canonicalPhone !== storedPhone) {
+      localStorage.setItem('govbot_phone', canonicalPhone);
+    }
+    return canonicalPhone;
+  };
+
+  const getStoredPhoneCandidates = () => {
+    if (typeof window === 'undefined') return [];
+    const storedPhone = localStorage.getItem('govbot_phone') || '';
+    return buildPhoneLookupCandidates(storedPhone);
   };
 
   const applyProfileData = (data: ProfileApiResponse) => {
@@ -181,13 +198,76 @@ export default function ProfilePage() {
 
   const fetchProfile = useEffectEvent(async (p: string) => {
     setLoading(true);
+    setProfileNotice(null);
     try {
       const token = localStorage.getItem('govbot_token');
       const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(p)}`), buildBackendRequestInit({
         headers: { Authorization: `Bearer ${token}` },
       }));
-      if (res.ok) applyProfileData(await res.json());
-    } catch { /* profile may not exist yet */ }
+      const data: ProfileApiResponse = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        applyProfileData(data);
+        const reviewSessionId = typeof router.query.review_session === 'string' ? router.query.review_session : '';
+        if (reviewSessionId && !hasProfileContent(data.profile || {})) {
+          for (const candidate of getStoredPhoneCandidates()) {
+            const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(candidate)}`);
+            if (!reviewRes.ok) {
+              continue;
+            }
+
+            const reviewData = await reviewRes.json();
+            const merged = mergeReviewIntoProfile(data.profile || {}, reviewData.imported_fields || {});
+            setProfile(merged.profile);
+            setFormData(merged.profile);
+            setCompleteness(merged.completeness_pct);
+            setMissingFields(merged.missing_fields);
+            setProfileNotice({
+              msg: 'Loaded your DigiLocker review into the profile form. Save any edits to keep them on your account.',
+              type: 'success',
+            });
+            break;
+          }
+        }
+      } else {
+        const reviewSessionId = typeof router.query.review_session === 'string' ? router.query.review_session : '';
+        let reviewLoaded = false;
+
+        if (reviewSessionId) {
+          for (const candidate of getStoredPhoneCandidates()) {
+            const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(candidate)}`);
+            if (!reviewRes.ok) {
+              continue;
+            }
+
+            const reviewData = await reviewRes.json();
+            const merged = mergeReviewIntoProfile({}, reviewData.imported_fields || {});
+            setProfile(merged.profile);
+            setFormData(merged.profile);
+            setCompleteness(merged.completeness_pct);
+            setMissingFields(merged.missing_fields);
+            setProfileNotice({
+              msg: 'Loaded your DigiLocker review into the profile form. Save any edits to keep them on your account.',
+              type: 'success',
+            });
+            reviewLoaded = true;
+            break;
+          }
+        }
+
+        if (!reviewLoaded) {
+          setProfileNotice({
+            msg: data.detail || 'Could not load your saved profile right now.',
+            type: 'error',
+          });
+        }
+      }
+    } catch {
+      setProfileNotice({
+        msg: 'Could not load your saved profile right now.',
+        type: 'error',
+      });
+    }
     setLoading(false);
   });
 
@@ -467,6 +547,11 @@ export default function ProfilePage() {
                     </span>
                   )}
                 </div>
+              </div>
+            )}
+            {profileNotice && (
+              <div className={`mt-4 rounded-2xl px-4 py-3 border ${profileNotice.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                <p className="text-sm font-medium">{profileNotice.msg}</p>
               </div>
             )}
           </div>

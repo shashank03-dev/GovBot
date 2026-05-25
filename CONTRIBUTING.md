@@ -18,12 +18,31 @@ This repo now has one enforced workflow surface. Use the root `Makefile` instead
 - `make dev-backend` runs the FastAPI app on `http://127.0.0.1:8000`.
 - `make dev-frontend` runs Next.js on `http://127.0.0.1:3000`.
 - Override local ports when needed with `make dev BACKEND_PORT=8001 FRONTEND_PORT=3001`.
+- Rehearse against a public backend tunnel with `make dev-frontend FRONTEND_BACKEND_URL=https://<your-ngrok-host>`.
 - `make test-backend` runs `pytest -q` from the repo root.
 - `make test-frontend` runs the frontend Node test suite.
 - `make lint` runs the frontend ESLint gate.
 - `make typecheck` runs `tsc --noEmit`.
 - `make build` runs the production Next.js build.
 - `make check` runs the full repo gate: backend tests, frontend tests, lint, typecheck, and build.
+
+## Vercel Demo Setup
+
+The tracked frontend is already linked to the `govbot` Vercel project under `frontend/.vercel/project.json`.
+
+For demo deployments where Vercel serves the frontend and ngrok exposes the backend:
+
+1. In the Vercel frontend project, set:
+   `BACKEND_URL=https://<your-ngrok-host>`
+   `NEXT_PUBLIC_API_URL=https://<your-ngrok-host>`
+   `NEXT_PUBLIC_FRONTEND_URL=https://<your-project>.vercel.app`
+   `NEXT_PUBLIC_SUPABASE_URL=...`
+   `NEXT_PUBLIC_SUPABASE_KEY=...`
+2. In the backend `.env`, set:
+   `FRONTEND_URL=https://<your-project>.vercel.app`
+   `BASE_URL=https://<your-project>.vercel.app`
+   `CORS_ORIGINS=http://localhost:3000,https://<your-project>.vercel.app`
+3. Keep browser-visible calls on the frontend origin by using the `/api/*` proxy routes instead of hard-coding the backend host in pages or components.
 
 ## Quality Bar
 
@@ -46,11 +65,14 @@ After workflow or user-facing changes, verify the app from the browser, not just
 3. Walk the main demo routes from the frontend:
    `/`
    `/services`
+   `/official-login`
    `/documents`
    `/form-fill`
    `/renewals`
    `/bank-verify`
    `/track-search`
+   `/gov-dashboard`
+   `/admin`
 4. Record any flow that depends on real third-party credentials or seeded Supabase data.
 
 ## Agent Tooling

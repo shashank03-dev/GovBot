@@ -7,6 +7,7 @@ import { Smartphone, ArrowRight, ShieldCheck, GraduationCap } from 'lucide-react
 
 import { LOGIN_HIGHLIGHTS } from '@/lib/siteFeatureContent.mjs';
 import { DEFAULT_POST_LOGIN_PATH, sanitizePostLoginPath } from '@/lib/navigationLinks.mjs';
+import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 
 export default function Login() {
   const prefersReducedMotion = useReducedMotion();
@@ -37,15 +38,20 @@ export default function Login() {
     setRedirectPath(nextPath);
 
     if (token && ph) {
+      const canonicalPhone = normalizeIndianPhone(ph) || ph;
       localStorage.setItem('govbot_token', token);
-      localStorage.setItem('govbot_phone', ph);
+      localStorage.setItem('govbot_phone', canonicalPhone);
       router.replace(nextPath);
       return;
     }
 
     const storedToken = localStorage.getItem('govbot_token');
-    const storedPhone = localStorage.getItem('govbot_phone');
-    if (storedToken && storedPhone) {
+    const storedPhone = localStorage.getItem('govbot_phone') || '';
+    const canonicalStoredPhone = normalizeIndianPhone(storedPhone);
+    if (storedPhone && canonicalStoredPhone && canonicalStoredPhone !== storedPhone) {
+      localStorage.setItem('govbot_phone', canonicalStoredPhone);
+    }
+    if (storedToken && (canonicalStoredPhone || storedPhone)) {
       router.replace(nextPath);
     }
   }, [router]);
@@ -97,8 +103,9 @@ export default function Login() {
         throw new Error('Authentication failed. Please try again.');
       }
 
+      const canonicalPhone = normalizeIndianPhone(data.phone || phone);
       localStorage.setItem('govbot_token', data.token);
-      localStorage.setItem('govbot_phone', phone);
+      localStorage.setItem('govbot_phone', canonicalPhone);
 
       router.push(redirectPath);
     } catch (err: unknown) {

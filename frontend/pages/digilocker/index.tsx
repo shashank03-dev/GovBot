@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Smartphone,
 } from 'lucide-react';
+import { normalizeIndianPhone, toLocalTenDigitPhone } from '@/lib/phoneStorage.mjs';
 
 type Step = 'credentials' | 'otp' | 'success';
 
@@ -60,7 +61,7 @@ export default function DigiLockerInitPage() {
   useEffect(() => {
     const storedPhone = typeof window !== 'undefined' ? localStorage.getItem('govbot_phone') || '' : '';
     if (storedPhone) {
-      setPhone(storedPhone.replace(/\D/g, '').slice(0, 10));
+      setPhone(toLocalTenDigitPhone(storedPhone));
     }
   }, []);
 
@@ -124,10 +125,11 @@ export default function DigiLockerInitPage() {
     setOtpDeliveryMode('');
     setLoading(true);
     try {
+      const canonicalPhone = normalizeIndianPhone(phone);
       const res = await fetch('/api/digilocker/mock/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.replace(/\D/g, '') }),
+        body: JSON.stringify({ phone: canonicalPhone }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
@@ -149,12 +151,14 @@ export default function DigiLockerInitPage() {
     setError('');
     setLoading(true);
     try {
-      const normalizedPhone = phone.replace(/\D/g, '');
+      const canonicalPhone = normalizeIndianPhone(
+        (typeof window !== 'undefined' ? localStorage.getItem('govbot_phone') || '' : '') || phone,
+      );
       const verifyRes = await fetch('/api/digilocker/mock/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: normalizedPhone,
+          phone: canonicalPhone,
           otp: otp.replace(/\D/g, ''),
           mock_hint: otpHint || undefined,
         }),
@@ -162,14 +166,15 @@ export default function DigiLockerInitPage() {
       const verifyData = await verifyRes.json();
       if (!verifyRes.ok || !verifyData.success) throw new Error(verifyData.error || 'Invalid or expired OTP');
 
-      localStorage.setItem('govbot_phone', normalizedPhone);
+      const verifiedPhone = normalizeIndianPhone(verifyData.phone || canonicalPhone);
+      localStorage.setItem('govbot_phone', verifiedPhone);
       setStep('success');
 
       const consentRes = await fetch('/api/digilocker/mock/consent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: normalizedPhone,
+          phone: verifiedPhone,
           portal: config.portal,
           channel: 'web',
           return_to: config.next_url,

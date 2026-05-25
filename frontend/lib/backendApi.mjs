@@ -76,3 +76,67 @@ export function buildProxyApiPath(path = '') {
 export function buildApplicationTimelineApiPath(confirmationNumber) {
   return buildProxyApiPath(`applications/${encodeURIComponent(String(confirmationNumber))}/timeline`);
 }
+
+export function buildFormScannerScreenshotApiPath(screenshotPath = '') {
+  const normalized = String(screenshotPath || '').replace(/^\/+/, '');
+  return buildProxyApiPath(`form-scanner/screenshot/${normalized}`);
+}
+
+export function resolveBackendProxyPath(path = '') {
+  const normalized = String(path || '').replace(/^\/+/, '');
+  if (!normalized) {
+    return null;
+  }
+
+  const exactMatchMap = new Map([
+    ['send-otp', '/auth/send-otp'],
+    ['verify-otp', '/auth/verify-otp'],
+    ['pm-kisan', '/pm-kisan/status'],
+  ]);
+
+  if (exactMatchMap.has(normalized)) {
+    return exactMatchMap.get(normalized);
+  }
+
+  if (normalized === 'auth/official/login' || normalized.startsWith('auth/official/login/')) {
+    return `/${normalized}`;
+  }
+
+  const prefixMap = [
+    ['ocr/', '/ocr/'],
+    ['documents/', '/documents/'],
+    ['bank/', '/api/bank/'],
+    ['digilocker/', '/api/digilocker/'],
+    ['credentials/', '/api/credentials/'],
+    ['analytics/', '/api/analytics/'],
+    ['admin/', '/api/admin/'],
+    ['live/', '/live/'],
+    ['applications/', '/applications/'],
+    ['profile/', '/profile/'],
+    ['form-scanner/', '/form-scanner/'],
+    ['eligibility/', '/eligibility/'],
+    ['renewals/', '/renewals/'],
+    ['portals/', '/portals/'],
+    ['ssp/', '/api/ssp/'],
+  ];
+
+  for (const [prefix, destinationPrefix] of prefixMap) {
+    if (normalized.startsWith(prefix)) {
+      return `${destinationPrefix}${normalized.slice(prefix.length)}`;
+    }
+  }
+
+  if (normalized === 'portals') {
+    return '/portals';
+  }
+
+  return null;
+}
+
+export function buildBackendProxyUrl(path = '', env = process.env) {
+  const backendPath = resolveBackendProxyPath(path);
+  if (!backendPath) {
+    return null;
+  }
+  return buildBackendUrl(backendPath, env);
+}

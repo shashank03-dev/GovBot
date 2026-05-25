@@ -8,7 +8,11 @@ import {
   Search, Zap, CheckCircle, AlertCircle, ArrowLeft, ExternalLink,
   RefreshCw, ChevronRight, Globe, User
 } from 'lucide-react';
-import { buildBackendRequestInit, buildBackendUrl, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import {
+  buildBackendRequestInit,
+  buildFormScannerScreenshotApiPath,
+  buildProxyApiPath,
+} from '@/lib/backendApi.mjs';
 import { buildDemoAliasAnalysis, findFormFillTarget, FORM_FILL_SAMPLE_TARGETS } from '@/lib/formFillTargets.mjs';
 import { NSP_DEMO_SESSION_STORAGE_KEY } from '@/lib/nspDemoAutofill.mjs';
 import { getErrorMessage } from '@/lib/errorMessage';
@@ -475,7 +479,7 @@ export default function FormFillPage() {
                       📸 Form Screenshot
                     </p>
                     <Image
-                      src={buildBackendUrl(`/form-scanner/screenshot/${fillResult.screenshot_path}`)}
+                      src={buildFormScannerScreenshotApiPath(fillResult.screenshot_path)}
                       alt="Filled form screenshot"
                       width={1200}
                       height={900}

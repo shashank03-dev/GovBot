@@ -116,17 +116,17 @@ flowchart TD
 
 ## Main Capabilities
 
-| Area | What is in the repo |
-| --- | --- |
-| Authentication | WhatsApp OTP flow, JWT sessions, QR login handoff to the web app |
-| Citizen profile | Persistent profile storage, completeness scoring, profile sync from OCR and document vault data |
-| Documents | OCR extraction, validation, vault storage, signed access links, audit logging, passkey protection |
-| Form automation | URL-based field analysis, Gemini field mapping, Playwright-backed form filling |
-| Schemes and tracking | Eligibility screeners, PM-KISAN flow, application timelines, live dashboard updates |
-| Renewals and reminders | Renewal registration, deadline summaries, document-expiry reminders, WhatsApp-friendly reminder text |
-| Bank verification | Demo NPCI/Sandbox-style account verification flow with hashed account storage and payout-readiness checks |
-| Operations | Admin analytics, fraud views, disbursement and regional dashboards |
-| Credentials | Wallet pages, issuance endpoints, verification pages, blockchain/IPFS integration hooks |
+| Area                   | What is in the repo                                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Authentication         | WhatsApp OTP flow for citizens, shared officials username/password login, JWT sessions, QR login handoff to the web app |
+| Citizen profile        | Persistent profile storage, completeness scoring, profile sync from OCR and document vault data                         |
+| Documents              | OCR extraction, validation, vault storage, signed access links, audit logging, passkey protection                       |
+| Form automation        | URL-based field analysis, Gemini field mapping, Playwright-backed form filling                                          |
+| Schemes and tracking   | Eligibility screeners, PM-KISAN flow, application timelines, live dashboard updates                                     |
+| Renewals and reminders | Renewal registration, deadline summaries, document-expiry reminders, WhatsApp-friendly reminder text                    |
+| Bank verification      | Demo NPCI/Sandbox-style account verification flow with hashed account storage and payout-readiness checks               |
+| Operations             | Admin analytics, fraud views, disbursement and regional dashboards                                                      |
+| Credentials            | Wallet pages, issuance endpoints, verification pages, blockchain/IPFS integration hooks                                 |
 
 ## Demo-Ready Flows
 
@@ -148,17 +148,17 @@ Show upcoming renewal deadlines, expiring citizen documents, and bank-account ve
 
 ## Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| Backend API | FastAPI, Pydantic, Uvicorn |
-| Workflow orchestration | LangGraph |
-| AI services | Google Gemini |
-| Web frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
-| Data and storage | Supabase Postgres, Supabase Storage |
-| Automation | Playwright |
-| Messaging | WhatsApp Cloud API, Twilio fallback for SMS OTP delivery |
-| Live updates | Supabase realtime and SSE endpoints |
-| Credentials | Solidity contract, Polygon/IPFS integration hooks |
+| Layer                  | Technology                                               |
+| ---------------------- | -------------------------------------------------------- |
+| Backend API            | FastAPI, Pydantic, Uvicorn                               |
+| Workflow orchestration | LangGraph                                                |
+| AI services            | Google Gemini                                            |
+| Web frontend           | Next.js 16, React 19, TypeScript, Tailwind CSS 4         |
+| Data and storage       | Supabase Postgres, Supabase Storage                      |
+| Automation             | Playwright                                               |
+| Messaging              | WhatsApp Cloud API, Twilio fallback for SMS OTP delivery |
+| Live updates           | Supabase realtime and SSE endpoints                      |
+| Credentials            | Solidity contract, Polygon/IPFS integration hooks        |
 
 ## Repository Map
 
@@ -209,30 +209,30 @@ cp frontend/.env.local.example frontend/.env.local
 
 #### Required core variables
 
-| Variable | Purpose |
-| --- | --- |
-| `WHATSAPP_TOKEN` | WhatsApp Cloud API access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID |
-| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_KEY` | Supabase service-role key |
-| `GEMINI_API_KEY` | Gemini API key |
-| `SECRET_KEY` | JWT signing key |
+| Variable                   | Purpose                         |
+| -------------------------- | ------------------------------- |
+| `WHATSAPP_TOKEN`           | WhatsApp Cloud API access token |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID        |
+| `WHATSAPP_VERIFY_TOKEN`    | Webhook verification token      |
+| `SUPABASE_URL`             | Supabase project URL            |
+| `SUPABASE_KEY`             | Supabase service-role key       |
+| `GEMINI_API_KEY`           | Gemini API key                  |
+| `SECRET_KEY`               | JWT signing key                 |
 
 #### Recommended application variables
 
-| Variable | Purpose |
-| --- | --- |
-| `TEXT_LLM_PROVIDERS_JSON` | Optional test-only text/chat pool configuration for Groq, Gemini, and Mistral routing |
-| `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template for OTP delivery |
-| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code, default `en_US` |
-| `FRONTEND_URL` | Public frontend URL used for redirects and profile links |
-| `BASE_URL` | Public backend or base application URL used in generated links |
-| `CORS_ORIGINS` | Comma-separated list of allowed frontend origins |
-| `SUPABASE_DOCUMENTS_BUCKET` | Storage bucket for uploaded documents |
-| `TWILIO_ACCOUNT_SID` | Twilio account SID for SMS fallback |
-| `TWILIO_AUTH_TOKEN` | Twilio auth token |
-| `TWILIO_FROM_NUMBER` | Twilio sender number |
+| Variable                         | Purpose                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------- |
+| `TEXT_LLM_PROVIDERS_JSON`        | Optional test-only text/chat pool configuration for Groq, Gemini, and Mistral routing |
+| `WHATSAPP_OTP_TEMPLATE_NAME`     | Approved WhatsApp template for OTP delivery                                           |
+| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code, default `en_US`                                               |
+| `FRONTEND_URL`                   | Public frontend URL used for redirects and profile links                              |
+| `BASE_URL`                       | Public backend or base application URL used in generated links                        |
+| `CORS_ORIGINS`                   | Comma-separated list of allowed frontend origins                                      |
+| `SUPABASE_DOCUMENTS_BUCKET`      | Storage bucket for uploaded documents                                                 |
+| `TWILIO_ACCOUNT_SID`             | Twilio account SID for SMS fallback                                                   |
+| `TWILIO_AUTH_TOKEN`              | Twilio auth token                                                                     |
+| `TWILIO_FROM_NUMBER`             | Twilio sender number                                                                  |
 
 #### Test-only text provider pool
 
@@ -255,28 +255,35 @@ The router is tuned for testing rather than guaranteed production capacity:
 
 #### Optional integration variables
 
-| Variable | Purpose |
-| --- | --- |
-| `SETU_CLIENT_ID` | DigiLocker provider client ID |
-| `SETU_CLIENT_SECRET` | DigiLocker provider client secret |
-| `SETU_API_KEY` | DigiLocker provider API key |
-| `SETU_PRODUCT_ID` | DigiLocker provider product ID |
-| `SANDBOX_API_KEY` | Bank verification provider API key |
-| `SANDBOX_API_SECRET` | Bank verification provider API secret |
-| `SANDBOX_ACCESS_TOKEN` | Bank verification provider access token |
-| `ALCHEMY_API_KEY` | Blockchain RPC provider key |
-| `POLYGON_PRIVATE_KEY` | Wallet private key for credential issuance |
-| `POLYGON_RPC_URL` | Polygon RPC URL |
-| `CONTRACT_ADDRESS` | Deployed credential contract address |
-| `PINATA_API_KEY` | Pinata API key |
-| `PINATA_SECRET_KEY` | Pinata secret key |
+| Variable               | Purpose                                    |
+| ---------------------- | ------------------------------------------ |
+| `SETU_CLIENT_ID`       | DigiLocker provider client ID              |
+| `SETU_CLIENT_SECRET`   | DigiLocker provider client secret          |
+| `SETU_API_KEY`         | DigiLocker provider API key                |
+| `SETU_PRODUCT_ID`      | DigiLocker provider product ID             |
+| `SANDBOX_API_KEY`      | Bank verification provider API key         |
+| `SANDBOX_API_SECRET`   | Bank verification provider API secret      |
+| `SANDBOX_ACCESS_TOKEN` | Bank verification provider access token    |
+| `ALCHEMY_API_KEY`      | Blockchain RPC provider key                |
+| `POLYGON_PRIVATE_KEY`  | Wallet private key for credential issuance |
+| `POLYGON_RPC_URL`      | Polygon RPC URL                            |
+| `CONTRACT_ADDRESS`     | Deployed credential contract address       |
+| `PINATA_API_KEY`       | Pinata API key                             |
+| `PINATA_SECRET_KEY`    | Pinata secret key                          |
+
+Official dashboards require a separate shared credential:
+
+```bash
+OFFICIAL_USERNAME=shared-official-username(add it yourself)
+OFFICIAL_PASSWORD=shared-official-password(add it yourself)
+```
 
 ### Frontend environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `NEXT_PUBLIC_API_URL` | Backend base URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| Variable                   | Purpose                                             |
+| -------------------------- | --------------------------------------------------- |
+| `NEXT_PUBLIC_API_URL`      | Backend base URL                                    |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL                                |
 | `NEXT_PUBLIC_SUPABASE_KEY` | Supabase client-side key used by the frontend pages |
 
 ### 3. Install project dependencies
@@ -336,17 +343,18 @@ make check
 
 ## Demo Routes Worth Showing
 
-| Route | Why it matters |
-| --- | --- |
-| `/` | Landing page with cross-channel positioning and service discovery |
-| `/services` | Central hub for scholarships, tools, and official dashboards |
-| `/documents` | Passkey-protected vault for PAN, Aadhaar, certificates, and marksheets |
-| `/form-fill` | Generic form auto-fill surface driven by saved citizen data |
-| `/renewals` | Combined document expiry and scholarship reminder experience |
-| `/bank-verify` | Demo-ready payout verification flow |
-| `/track-search` | Confirmation-based application search and tracking entry point |
-| `/gov-dashboard` | Officer-side analytics, disbursement, and fraud visibility |
-| `/wallet` and `/verify/[id]` | Credential display and QR-style proof verification |
+| Route                        | Why it matters                                                         |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| `/`                          | Landing page with cross-channel positioning and service discovery      |
+| `/services`                  | Central hub for scholarships, tools, and official dashboards           |
+| `/official-login`            | Shared government-official sign-in before analytics or admin access    |
+| `/documents`                 | Passkey-protected vault for PAN, Aadhaar, certificates, and marksheets |
+| `/form-fill`                 | Generic form auto-fill surface driven by saved citizen data            |
+| `/renewals`                  | Combined document expiry and scholarship reminder experience           |
+| `/bank-verify`               | Demo-ready payout verification flow                                    |
+| `/track-search`              | Confirmation-based application search and tracking entry point         |
+| `/gov-dashboard`             | Officer-side analytics, disbursement, and fraud visibility             |
+| `/wallet` and `/verify/[id]` | Credential display and QR-style proof verification                     |
 
 ## Notable Backend Areas
 
@@ -365,6 +373,7 @@ make check
 - [`frontend/pages/documents.tsx`](frontend/pages/documents.tsx) is the document vault UI.
 - [`frontend/pages/form-fill.tsx`](frontend/pages/form-fill.tsx) is the generic form auto-fill surface.
 - [`frontend/pages/services.tsx`](frontend/pages/services.tsx) acts as the cross-service navigation layer for citizens and officials.
+- [`frontend/pages/official-login.tsx`](frontend/pages/official-login.tsx) handles the shared official username/password sign-in flow.
 - [`frontend/pages/renewals.tsx`](frontend/pages/renewals.tsx) shows renewal reminders and document expiry summaries.
 - [`frontend/pages/bank-verify.tsx`](frontend/pages/bank-verify.tsx) presents the guided bank verification flow.
 - [`frontend/pages/gov-dashboard/index.tsx`](frontend/pages/gov-dashboard/index.tsx) starts the officer dashboard flow.
