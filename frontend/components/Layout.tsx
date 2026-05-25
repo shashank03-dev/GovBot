@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, GraduationCap, LayoutDashboard, CheckCircle, Briefcase, LogIn, LogOut, ChevronRight } from 'lucide-react';
+import { resolveLoggedInState } from '@/lib/layoutAuth.mjs';
 
 interface LayoutProps {
   children: ReactNode;
@@ -15,12 +16,15 @@ const NAV_LINKS = [
   { href: '/eligibility', label: 'Eligibility', icon: CheckCircle },
 ];
 
-const NO_LAYOUT_PAGES = ['/nsp', '/nsp/apply', '/pmss', '/csss', '/minority', '/digilocker', '/digilocker/callback'];
+const NO_LAYOUT_PAGES = ['/nsp', '/nsp/apply', '/ssp', '/ssp/dashboard', '/ssp/step-1', '/ssp/step-2', '/ssp/step-3', '/ssp/step-4', '/ssp/step-5', '/csss', '/minority', '/digilocker', '/digilocker/callback'];
 
 export default function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() =>
+    resolveLoggedInState({ hasMounted: false, storage: null }),
+  );
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10);
@@ -28,15 +32,29 @@ export default function Layout({ children }: LayoutProps) {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  useEffect(() => {
+    const syncLoggedInState = () => {
+      setIsLoggedIn(
+        resolveLoggedInState({
+          hasMounted: true,
+          storage: window.localStorage,
+        }),
+      );
+    };
+
+    syncLoggedInState();
+    window.addEventListener('storage', syncLoggedInState);
+    return () => window.removeEventListener('storage', syncLoggedInState);
+  }, [router.asPath]);
+
   if (NO_LAYOUT_PAGES.includes(router.pathname)) {
     return <>{children}</>;
   }
 
-  const isLoggedIn = typeof window !== 'undefined' && !!localStorage.getItem('govbot_token');
-
   const handleLogout = () => {
     localStorage.removeItem('govbot_token');
     localStorage.removeItem('govbot_phone');
+    setIsLoggedIn(false);
     setMobileOpen(false);
     router.push('/');
   };
@@ -219,7 +237,7 @@ export default function Layout({ children }: LayoutProps) {
               <ul className="space-y-2">
                 {[
                   { href: '/nsp', label: 'NSP - National Scholarship' },
-                  { href: '/pmss', label: 'PMSS - Post Matric' },
+                  { href: '/ssp', label: 'SSP - State Scholarship Portal' },
                   { href: '/csss', label: 'CSSS - Central Sector' },
                   { href: '/minority', label: 'Minority Scholarship' },
                 ].map((link) => (

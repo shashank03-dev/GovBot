@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getDocumentLabel,
+  getDocumentUploadPrompt,
   describeVaultAction,
   getFocusedDocumentId,
   orderDocumentsWithFocusFirst,
@@ -34,4 +36,23 @@ test('describeVaultAction returns themed copy for safe and destructive actions',
     confirmLabel: 'Delete Document',
     tone: 'danger',
   });
+});
+
+test('getDocumentLabel prefers saved custom labels for custom documents', () => {
+  assert.equal(
+    getDocumentLabel({ doc_type: 'custom', custom_label: 'Domicile Certificate' }),
+    'Domicile Certificate',
+  );
+  assert.equal(getDocumentLabel({ doc_type: 'custom' }), 'Custom Document');
+});
+
+test('getDocumentUploadPrompt uses the custom label when present', () => {
+  assert.equal(
+    getDocumentUploadPrompt('custom', 'Residence Proof'),
+    'Choose Residence Proof',
+  );
+  assert.equal(
+    getDocumentUploadPrompt('pan'),
+    'Choose your PAN Card',
+  );
 });

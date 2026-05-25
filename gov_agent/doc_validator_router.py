@@ -81,6 +81,7 @@ async def upload_document(
             session_id=req.session_id,
             file_name=req.file_name,
             mime_type=req.mime_type,
+            custom_label=req.custom_label,
         )
     except DocumentVaultError as exc:
         raise _vault_http_exception(exc) from exc
@@ -199,7 +200,7 @@ async def update_document_item(
     if token_phone and token_phone != document.get("phone"):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
-    updated = update_user_document(document_id, req.extracted_data)
+    updated = update_user_document(document_id, req.extracted_data, custom_label=req.custom_label)
     if not updated:
         raise HTTPException(status_code=404, detail="Document not found")
     try:

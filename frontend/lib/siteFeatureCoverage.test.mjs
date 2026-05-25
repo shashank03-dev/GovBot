@@ -67,6 +67,12 @@ test('services hub lists product entry points beyond scholarship apply', () => {
   }
 });
 
+test('tools and utilities cards remain auth-gated entry points', () => {
+  for (const card of TOOL_CARDS) {
+    assert.equal(card.requiresAuth, true, `tool card should require login: ${card.id}`);
+  }
+});
+
 test('login highlights surface QR and WhatsApp handoff', () => {
   const highlightIds = ids(LOGIN_HIGHLIGHTS);
 

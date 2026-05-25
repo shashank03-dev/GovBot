@@ -30,7 +30,7 @@ const DEFAULT_STEPS: TimelineStep[] = [
 
 const PORTAL_BADGES: Record<string, { bg: string; text: string }> = {
   nsp: { bg: '#fff7ed', text: '#c2410c' },
-  pmss: { bg: '#fef2f2', text: '#b91c1c' },
+  ssp: { bg: '#eef7fb', text: '#1f5f79' },
   csss: { bg: '#eff6ff', text: '#1d4ed8' },
   minority: { bg: '#ecfdf5', text: '#047857' },
 };
@@ -121,7 +121,7 @@ function VerticalStepNode({ step, isCurrent, isLast }: { step: TimelineStep; isC
 
 const PORTAL_LABELS: Record<string, string> = {
   nsp: 'NSP',
-  pmss: 'PMSS',
+  ssp: 'SSP',
   csss: 'CSSS',
   minority: 'Minority',
 };

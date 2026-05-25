@@ -43,7 +43,7 @@ import {
 
 const PORTALS = [
   { id: 'nsp', name: 'NSP', full: 'National Scholarship Portal', href: '/nsp', color: '#ff9933', bg: '#fff7ed' },
-  { id: 'pmss', name: 'PMSS', full: 'Post Matric Scholarship', href: '/pmss', color: '#3b82f6', bg: '#eff6ff' },
+  { id: 'ssp', name: 'SSP', full: 'State Scholarship Portal', href: '/ssp', color: '#2b6f89', bg: '#eef7fb' },
   { id: 'csss', name: 'CSSS', full: 'Central Sector Scholarship', href: '/csss', color: '#0d9488', bg: '#f0fdfa' },
   { id: 'minority', name: 'Minority', full: 'Minority Scholarship', href: '/minority', color: '#8b5cf6', bg: '#f5f3ff' },
 ];

@@ -10,12 +10,13 @@ Provides aggregated data for government officials:
 
 import logging
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from gov_agent.db import supabase
+from gov_agent.official_auth import require_official_auth
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_official_auth)])
 
 
 class DateRangeRequest(BaseModel):
@@ -247,7 +248,7 @@ async def get_regional_analytics():
         
         # Group by portal as proxy for region/type
         portal_counts = {}
-        for portal in ["nsp", "pmss", "csss", "minority"]:
+        for portal in ["nsp", "ssp", "csss", "minority"]:
             result = (
                 supabase.table("applications")
                 .select("*", count="exact")
@@ -258,7 +259,7 @@ async def get_regional_analytics():
                 "count": result.count or 0,
                 "name": {
                     "nsp": "National Scholarship",
-                    "pmss": "Post Matric (SC/ST)",
+                    "ssp": "State Scholarship Portal",
                     "csss": "Central Sector",
                     "minority": "Minority Scholarship",
                 }.get(portal, portal.upper()),

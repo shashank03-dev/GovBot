@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Literal, Optional
 import importlib
-from gov_agent import pmss_agent, csss_agent, minority_agent
+from gov_agent import ssp_agent, csss_agent, minority_agent
 from gov_agent.db import supabase
 from datetime import datetime, timezone
 
@@ -39,13 +39,13 @@ PORTALS = [
         "eligibility": "Income < ₹2.5L, Age 17-25"
     },
     {
-        "portal_id": "pmss",
-        "name": "Post Matric Scholarship Scheme",
-        "description": "Post-matric scholarships for SC/ST/OBC students",
+        "portal_id": "ssp",
+        "name": "State Scholarship Portal",
+        "description": "State-run post-matric scholarships for Karnataka students",
         "icon": "📚",
-        "color": "#4A0E0E",
-        "ministry": "Ministry of Social Justice & Empowerment",
-        "eligibility": "SC/ST/OBC, Income < ₹2.5L, Post-matric"
+        "color": "#2B6F89",
+        "ministry": "Government of Karnataka",
+        "eligibility": "Post-matric, state portal flow, income and category rules vary by scheme"
     },
     {
         "portal_id": "csss",
@@ -77,14 +77,14 @@ async def list_portals():
 @router.post("/{portal_id}/apply", response_model=PortalApplyResponse)
 async def apply_portal(portal_id: str, body: PortalApplyRequest):
     """Submit application to a specific portal."""
-    if portal_id not in ["nsp", "pmss", "csss", "minority"]:
+    if portal_id not in ["nsp", "ssp", "csss", "minority"]:
         raise HTTPException(status_code=400, detail={"error": "Invalid portal_id"})
 
     try:
         data = body.model_dump()
 
-        if portal_id == "pmss":
-            result = await pmss_agent.run_pmss_application(data)
+        if portal_id == "ssp":
+            result = await ssp_agent.run_ssp_application(data)
         elif portal_id == "csss":
             result = await csss_agent.run_csss_application(data)
         elif portal_id == "minority":

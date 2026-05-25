@@ -18,6 +18,7 @@ from jose import jwt
 from gov_agent.config import SECRET_KEY
 from gov_agent.db import supabase
 from gov_agent import whatsapp_sender
+from gov_agent.official_auth import issue_official_token, validate_official_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,11 @@ class VerifyOTPRequest(BaseModel):
     code: str | None = None
 
 
+class OfficialLoginRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+
+
 # ── POST /send-otp ───────────────────────────────────────────────────────────
 
 @router.post("/send-otp")
@@ -183,3 +189,15 @@ async def verify_otp(body: VerifyOTPRequest):
 
     logger.info("JWT issued for %s", phone)
     return {"valid": True, "token": token, "phone": phone}
+
+
+@router.post("/official/login")
+async def official_login(body: OfficialLoginRequest):
+    if not body.username or not body.password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+
+    validate_official_credentials(body.username, body.password)
+    token = issue_official_token(body.username)
+
+    logger.info("Official JWT issued for %s", body.username)
+    return {"token": token, "username": body.username.strip(), "role": "official"}

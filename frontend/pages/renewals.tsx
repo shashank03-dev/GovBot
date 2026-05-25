@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 import { getErrorMessage } from '@/lib/errorMessage';
+import { resolveProtectedRouteRedirect } from '@/lib/layoutAuth.mjs';
 
 interface Reminder {
   id: string;
@@ -30,7 +31,7 @@ interface RenewalSummary {
 
 const PORTAL_LABELS: Record<string, string> = {
   nsp: 'NSP',
-  pmss: 'PMSS',
+  ssp: 'SSP',
   csss: 'CSSS',
   minority: 'Minority',
 };
@@ -86,9 +87,17 @@ export default function RenewalsPage() {
 
   useEffect(() => {
     if (!mounted) return;
-    const token = localStorage.getItem('govbot_token');
+    const redirectTarget = resolveProtectedRouteRedirect({
+      hasMounted: true,
+      storage: localStorage,
+      nextPath: '/renewals',
+      requiredKeys: ['govbot_token', 'govbot_phone'],
+    });
     const storedPhone = localStorage.getItem('govbot_phone');
-    if (!token || !storedPhone) { router.push('/'); return; }
+    if (redirectTarget || !storedPhone) {
+      void router.replace(redirectTarget || '/login?next=%2Frenewals');
+      return;
+    }
     setPhone(storedPhone);
     fetchReminders(storedPhone);
     fetchSummary(storedPhone);
@@ -273,7 +282,7 @@ export default function RenewalsPage() {
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff9933]/20 focus:border-[#ff9933] transition-all"
               >
                 <option value="nsp">NSP</option>
-                <option value="pmss">PMSS</option>
+                <option value="ssp">SSP</option>
                 <option value="csss">CSSS</option>
                 <option value="minority">Minority</option>
               </select>

@@ -13,7 +13,7 @@ class LiveDashboardSnapshotTests(unittest.IsolatedAsyncioTestCase):
         applications_query.eq.return_value.order.return_value.execute.return_value.data = [
             {
                 "id": "app-2",
-                "service": "PMSS",
+                "service": "SSP Scholarship",
                 "status": "pending",
                 "confirmation_number": None,
                 "submitted_at": "2026-05-21T13:30:00+00:00",

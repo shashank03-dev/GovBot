@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildDashboardLoginHref,
+  resolveProtectedHref,
   buildTrackHref,
   sanitizePostLoginPath,
   TRACK_SEARCH_HREF,
@@ -20,6 +21,21 @@ test('dashboard login href preserves a safe next path', () => {
 test('dashboard login href drops unsafe next paths', () => {
   assert.equal(buildDashboardLoginHref('https://evil.example/steal'), '/login?next=%2Fdashboard');
   assert.equal(buildDashboardLoginHref('//evil.example/steal'), '/login?next=%2Fdashboard');
+});
+
+test('protected hrefs send logged-out users through login and keep logged-in users on the target path', () => {
+  assert.equal(
+    resolveProtectedHref('/renewals', { isLoggedIn: false, requiresAuth: true }),
+    '/login?next=%2Frenewals',
+  );
+  assert.equal(
+    resolveProtectedHref('/renewals', { isLoggedIn: true, requiresAuth: true }),
+    '/renewals',
+  );
+  assert.equal(
+    resolveProtectedHref('/services', { isLoggedIn: false, requiresAuth: false }),
+    '/services',
+  );
 });
 
 test('track links encode confirmation numbers and search path is stable', () => {

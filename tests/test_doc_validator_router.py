@@ -46,6 +46,30 @@ class DocValidatorRouterTests(unittest.TestCase):
         self.assertEqual(view_res.json()["view_url"], "https://signed.example/view")
         self.assertEqual(download_res.json()["download_url"], "https://signed.example/download")
 
+    def test_upload_route_accepts_custom_label_payload(self):
+        client = _build_client()
+
+        with patch(
+            "gov_agent.doc_validator_router.ingest_document",
+            return_value={"id": "doc-custom-1", "doc_type": "custom", "custom_label": "Domicile Certificate"},
+        ) as ingest_mock:
+            response = client.post(
+                "/documents/upload",
+                json={
+                    "phone": "919999999999",
+                    "doc_type": "custom",
+                    "custom_label": "Domicile Certificate",
+                    "source": "web",
+                    "image_b64": "ZGVtbw==",
+                    "file_name": "domicile.pdf",
+                    "mime_type": "application/pdf",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        ingest_mock.assert_called_once()
+        self.assertEqual(ingest_mock.call_args.kwargs["custom_label"], "Domicile Certificate")
+
 
 if __name__ == "__main__":
     unittest.main()

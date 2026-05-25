@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import {
   BarChart3,
   CheckCircle2,
@@ -8,6 +9,8 @@ import {
   Map,
 } from 'lucide-react';
 import AnimatedCounter from '@/components/AnimatedCounter';
+import { fetchOfficialJson, logoutOfficialSession } from '@/lib/officialApi';
+import { useOfficialRouteGuard } from '@/lib/useOfficialRouteGuard';
 import {
   AnalyticsLoadingState,
   AnalyticsPageShell,
@@ -30,20 +33,43 @@ interface RegionalData {
 }
 
 export default function RegionalDashboard() {
+  const router = useRouter();
+  const { isAuthorized, isChecking } = useOfficialRouteGuard();
   const [data, setData] = useState<RegionalData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchRegionalData();
-  }, []);
+    if (!isAuthorized) {
+      return;
+    }
 
-  const fetchRegionalData = async () => {
-    try {
-      const res = await fetch('/api/analytics/regional');
-      if (res.ok) {
-        const regionalData = await res.json();
-        setData(regionalData);
+    let active = true;
+
+    const loadRegionalData = async () => {
+      try {
+        const regionalData = await fetchOfficialJson<RegionalData>(router, '/api/analytics/regional');
+        if (active) {
+          setData(regionalData);
+        }
+      } catch (err) {
+        console.error('Regional data error:', err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
+    };
+
+    void loadRegionalData();
+    return () => {
+      active = false;
+    };
+  }, [isAuthorized, router]);
+
+  const handleRefresh = async () => {
+    try {
+      const regionalData = await fetchOfficialJson<RegionalData>(router, '/api/analytics/regional');
+      setData(regionalData);
     } catch (err) {
       console.error('Regional data error:', err);
     } finally {
@@ -51,12 +77,16 @@ export default function RegionalDashboard() {
     }
   };
 
+  const handleOfficialLogout = () => {
+    logoutOfficialSession(router);
+  };
+
   const portals = Object.entries(data?.by_portal || {});
   const totalApps = portals.reduce((sum, [, portal]) => sum + portal.count, 0);
   const totalApproved = portals.reduce((sum, [, portal]) => sum + (portal.approved || 0), 0);
   const totalPending = portals.reduce((sum, [, portal]) => sum + (portal.submitted || 0), 0);
 
-  if (loading) {
+  if (isChecking || !isAuthorized || loading) {
     return (
       <AnalyticsLoadingState
         title="Loading regional analytics"
@@ -78,7 +108,10 @@ export default function RegionalDashboard() {
         summaryLabel="Active portals"
         summaryValue={<AnimatedCounter end={portals.length} />}
         summaryText="Schemes currently represented in the scholarship analytics dataset."
-        onRefresh={fetchRegionalData}
+        onRefresh={handleRefresh}
+        onLogout={handleOfficialLogout}
+        backHref="/gov-dashboard"
+        backLabel="Back to Dashboard"
       >
         <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <AnalyticsStatCard
@@ -195,7 +228,7 @@ export default function RegionalDashboard() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {[
               { short: 'NSP', label: 'National Scholarship Portal' },
-              { short: 'PMSS', label: 'Post Matric (SC/ST)' },
+              { short: 'SSP', label: 'State Scholarship Portal' },
               { short: 'CSSS', label: 'Central Sector Scholarship' },
               { short: 'Minority', label: 'Minority Scholarship' },
             ].map((portal) => (

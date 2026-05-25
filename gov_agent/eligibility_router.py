@@ -12,7 +12,7 @@ router = APIRouter()
 
 _SCHEME_RULES = {
     "NSP": {"max_income": 250000},
-    "PMSS": {"max_income": 250000, "castes": ["SC", "ST", "OBC"], "course_levels": ["post_matric"]},
+    "SSP": {"max_income": 250000, "castes": ["SC", "ST", "OBC"], "course_levels": ["post_matric"]},
     "CSSS": {"max_income": 450000, "min_marks": 80.0, "course_levels": ["degree"]},
     "Minority": {"max_income": 200000},
 }
@@ -34,10 +34,10 @@ def _evaluate_rules(req: EligibilityRequest) -> EligibilityResult:
         reasons.append("NSP: income ≥ ₹2.5L ✗")
 
     if income < 250000 and caste in ("SC", "ST", "OBC") and course == "post_matric":
-        schemes.append("PMSS")
-        reasons.append("PMSS: SC/ST/OBC + post-matric + income < ₹2.5L ✓")
+        schemes.append("SSP")
+        reasons.append("SSP: SC/ST/OBC + post-matric + income < ₹2.5L ✓")
     else:
-        reasons.append("PMSS: requires SC/ST/OBC, post-matric, income < ₹2.5L")
+        reasons.append("SSP: requires SC/ST/OBC, post-matric, income < ₹2.5L")
 
     if income < 450000 and marks >= 80.0 and course == "degree":
         schemes.append("CSSS")

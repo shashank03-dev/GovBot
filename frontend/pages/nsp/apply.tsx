@@ -3,63 +3,19 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
+import {
+  NSP_DEMO_DATA as DEMO_DATA,
+  NSP_DEMO_SESSION_STORAGE_KEY,
+  NSP_DEMO_STEPS as RAW_NSP_DEMO_STEPS,
+  buildNspDemoDataFromFillValues,
+} from '@/lib/nspDemoAutofill.mjs';
 
-// ─── Demo data that GovBot "types" ───────────────────────────────────────────
-export const DEMO_DATA = {
-  name: 'SHASHANK GOWDA T',
-  dob: '30/10/2006',
-  gender: 'Male',
-  category: 'general',
-  religion: 'hindu',
-  mobile: '919632363213',
-  email: 'frshashank7447@gmail.com',
-  aadhaar: '6634 0835 5424',
-  income: '25000',
-  domicile: 'Karnataka',
-  instituteState: 'Karnataka',
-  district: 'Bengaluru North',
-  institute: 'Sir M Vishveswraya Institute of Technology',
-  course: 'Information Science',
-  year: '2025',
-  board: 'Karnataka School Examination and Assessment Board',
-  marks: '95.5',
-  admissionDate: '03/09/2025',
-  accountHolder: 'SHASHANK GOWDA T',
-  bankName: 'State Bank of India',
-  accountNo: '325671904812',
-  confirmAccountNo: '325671904812',
-  ifsc: 'SBIN0012345',
-  branch: 'HMT Layout',
-};
-
-// ─── Step definitions for the demo log ───────────────────────────────────────
-type DemoStep = {
+type FormFields = Partial<typeof DEMO_DATA>;
+const DEMO_STEPS = RAW_NSP_DEMO_STEPS as Array<{
   field: keyof typeof DEMO_DATA;
   label: string;
   tab: number;
-};
-
-const DEMO_STEPS: DemoStep[] = [
-  { field: 'name', label: 'Full Name entered', tab: 0 },
-  { field: 'dob', label: 'Date of Birth filled', tab: 0 },
-  { field: 'gender', label: 'Gender selected', tab: 0 },
-  { field: 'category', label: 'Category selected', tab: 0 },
-  { field: 'mobile', label: 'Mobile Number entered', tab: 0 },
-  { field: 'aadhaar', label: 'Aadhaar Number entered', tab: 0 },
-  { field: 'income', label: 'Annual Income entered', tab: 0 },
-  { field: 'domicile', label: 'State of Domicile selected', tab: 0 },
-  { field: 'instituteState', label: 'Institute State selected', tab: 1 },
-  { field: 'institute', label: 'Institute Name filled', tab: 1 },
-  { field: 'course', label: 'Course selected', tab: 1 },
-  { field: 'year', label: 'Year of Study selected', tab: 1 },
-  { field: 'marks', label: 'Previous Year Marks entered', tab: 1 },
-  { field: 'accountHolder', label: 'Account Holder Name entered', tab: 2 },
-  { field: 'bankName', label: 'Bank Name selected', tab: 2 },
-  { field: 'accountNo', label: 'Account Number entered', tab: 2 },
-  { field: 'ifsc', label: 'IFSC Code entered', tab: 2 },
-];
-
-type FormFields = Partial<typeof DEMO_DATA>;
+}>;
 type ReviewSessionPayload = {
   portal_label?: string;
   documents?: Array<{ name: string }>;
@@ -220,6 +176,7 @@ export default function NSPApply() {
     if (!router.isReady) return;
 
     const reviewSessionId = typeof router.query.review_session === 'string' ? router.query.review_session : '';
+    const launchedFromFormFill = router.query.source === 'form-fill';
     const storedPhone = typeof window !== 'undefined' ? (localStorage.getItem('govbot_phone') || '') : '';
 
     const applyProfile = (profile: Partial<typeof DEMO_DATA>, reviewMeta: ReviewSessionPayload | null = null) => {
@@ -227,6 +184,22 @@ export default function NSPApply() {
       setDigilockerProfile(merged);
       activeDataRef.current = merged;
       setDigilockerReview(reviewMeta);
+    };
+
+    const loadFromFormFill = () => {
+      if (!launchedFromFormFill || typeof window === 'undefined') return false;
+      const stored = window.sessionStorage.getItem(NSP_DEMO_SESSION_STORAGE_KEY);
+      if (!stored) return false;
+
+      try {
+        const fillValues = JSON.parse(stored);
+        applyProfile(buildNspDemoDataFromFillValues(fillValues), null);
+        return true;
+      } catch (_) {
+        return false;
+      } finally {
+        window.sessionStorage.removeItem(NSP_DEMO_SESSION_STORAGE_KEY);
+      }
     };
 
     const loadFromReview = async () => {
@@ -252,13 +225,15 @@ export default function NSPApply() {
     };
 
     void (async () => {
+      if (loadFromFormFill()) return;
       const loadedReview = await loadFromReview();
       if (!loadedReview) loadFromLocalStorage();
     })();
-  }, [router.isReady, router.query.review_session]);
+  }, [router.isReady, router.query.review_session, router.query.source]);
 
   const stepIndexRef = useRef(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autostartedRef = useRef(false);
 
   const clearTimeouts = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -376,6 +351,13 @@ export default function NSPApply() {
       setCurrentTypeTarget(activeDataRef.current[firstStep.field]);
     }, 600);
   }, [clearTimeouts]);
+
+  useEffect(() => {
+    if (!router.isReady || isSpectator || demoState !== 'idle' || autostartedRef.current) return;
+    if (router.query.autostart !== '1' || router.query.source !== 'form-fill') return;
+    autostartedRef.current = true;
+    startDemo();
+  }, [demoState, isSpectator, router.isReady, router.query.autostart, router.query.source, startDemo]);
 
   // ── spectator polling ──
   useEffect(() => {
@@ -562,6 +544,13 @@ export default function NSPApply() {
               <h2 className="font-bold text-[15px]">Fresh Scholarship Application Form AY 2025-26</h2>
               <p className="text-[11px] text-pink-100 mt-0.5">All fields marked with <span className="text-yellow-300 font-bold">*</span> are mandatory</p>
             </div>
+
+            {router.query.source === 'form-fill' && (
+              <div className="px-5 pt-4 pb-3 border-b border-[#E0E0E0] bg-[#E3F2FD]">
+                <div className="text-[13px] font-bold text-[#0D47A1]">Opened from GovBot form-fill proof flow</div>
+                <div className="text-[11px] text-sky-700 mt-0.5">GovBot mapped the official NSP sample to this local showcase and started the fast-fill demo.</div>
+              </div>
+            )}
 
             {/* DigiLocker Auto-fill Banner */}
             {!isSpectator && digilockerProfile && demoState === 'idle' && (

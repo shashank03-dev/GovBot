@@ -7,7 +7,7 @@ from gov_agent.db import supabase
 
 PORTAL_LABELS = {
     "nsp": "NSP",
-    "pmss": "PMSS",
+    "ssp": "SSP",
     "csss": "CSSS",
     "minority": "Minority",
 }

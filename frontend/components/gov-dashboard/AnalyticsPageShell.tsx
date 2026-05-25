@@ -1,7 +1,7 @@
 import { type ComponentType, type ReactNode } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, LogOut, RefreshCw } from 'lucide-react';
 import AnimatedCounter from '@/components/AnimatedCounter';
 
 export type AnalyticsTone = 'saffron' | 'teal' | 'blue' | 'red';
@@ -77,6 +77,9 @@ export function AnalyticsPageShell({
   summaryValue,
   summaryText,
   onRefresh,
+  onLogout,
+  backHref = '/services',
+  backLabel = 'Back to Services',
   children,
 }: {
   title: string;
@@ -86,6 +89,9 @@ export function AnalyticsPageShell({
   summaryValue: ReactNode;
   summaryText: string;
   onRefresh: () => void;
+  onLogout?: () => void;
+  backHref?: string;
+  backLabel?: string;
   children: ReactNode;
 }) {
   return (
@@ -102,10 +108,21 @@ export function AnalyticsPageShell({
             transition={{ duration: 0.5 }}
             className="overflow-hidden rounded-3xl border border-white/70 bg-white/90 p-7 shadow-lg shadow-slate-200/60"
           >
-            <Link href="/gov-dashboard" className="inline-flex items-center gap-2 text-sm font-medium text-[#e67e00] transition-colors hover:text-slate-900">
-              <ArrowLeft className="h-4 w-4" />
-              Back to Dashboard
-            </Link>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-medium text-[#e67e00] transition-colors hover:text-slate-900">
+                <ArrowLeft className="h-4 w-4" />
+                {backLabel}
+              </Link>
+              {onLogout ? (
+                <button
+                  onClick={onLogout}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
+              ) : null}
+            </div>
 
             <div className="mt-5 flex items-start gap-4">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#e67e00]">

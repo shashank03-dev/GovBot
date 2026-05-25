@@ -49,7 +49,7 @@ def _record_activity(phone: str, event: str):
 def _demo_amount_for_portal(portal: str | None) -> float:
     return {
         "nsp": 25000.0,
-        "pmss": 18000.0,
+        "ssp": 18000.0,
         "csss": 20000.0,
         "minority": 15000.0,
     }.get((portal or "").lower(), 10000.0)

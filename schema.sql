@@ -97,6 +97,7 @@ create table if not exists user_documents (
     id                  uuid        primary key default gen_random_uuid(),
     phone               text        not null,
     doc_type            text        not null,
+    custom_label        text,
     source              text        not null,
     storage_path        text        not null,
     mime_type           text,
@@ -123,6 +124,7 @@ alter table if exists user_documents add column if not exists source_confidence 
 alter table if exists user_documents add column if not exists status_reason text;
 alter table if exists user_documents add column if not exists edited_by_user boolean not null default false;
 alter table if exists user_documents add column if not exists edited_at timestamptz;
+alter table if exists user_documents add column if not exists custom_label text;
 
 update user_documents
 set
@@ -145,6 +147,7 @@ with ranked_user_documents as (
             order by created_at desc, id desc
         ) as rn
     from user_documents
+    where doc_type <> 'custom'
 )
 delete from user_documents
 where id in (
@@ -153,9 +156,12 @@ where id in (
 
 create index if not exists user_documents_phone_idx on user_documents(phone);
 create index if not exists user_documents_phone_type_idx on user_documents(phone, doc_type);
+create index if not exists user_documents_phone_custom_label_idx on user_documents(phone, custom_label);
 create index if not exists user_documents_created_idx on user_documents(created_at desc);
-create unique index if not exists user_documents_phone_doc_type_unique_idx
-    on user_documents(phone, doc_type);
+drop index if exists user_documents_phone_doc_type_unique_idx;
+create unique index if not exists user_documents_phone_builtin_doc_type_unique_idx
+    on user_documents(phone, doc_type)
+    where doc_type <> 'custom';
 
 -- ------------------------------------------------------------
 -- 7b. document_access_logs — audit trail for preview/edit/delete/reveal

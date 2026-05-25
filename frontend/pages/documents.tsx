@@ -5,16 +5,26 @@ import { useRouter } from 'next/router';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, Lock, X } from 'lucide-react';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
-import { describeVaultAction, getFocusedDocumentId, orderDocumentsWithFocusFirst } from '@/lib/documentVault.mjs';
+import {
+  DOCUMENT_TYPE_OPTIONS,
+  describeVaultAction,
+  getDocumentLabel,
+  getDocumentTypeMeta,
+  getDocumentUploadPrompt,
+  getFocusedDocumentId,
+  isCustomDocumentType,
+  orderDocumentsWithFocusFirst,
+} from '@/lib/documentVault.mjs';
 const ALLOWED_UPLOAD_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'] as const;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-type DocType = 'pan' | 'aadhaar' | 'income_cert' | 'caste_cert' | 'marksheet';
+type DocType = 'pan' | 'aadhaar' | 'income_cert' | 'caste_cert' | 'marksheet' | 'custom';
 
 type VaultDocument = {
   id: string;
   phone: string;
   doc_type: DocType;
+  custom_label?: string | null;
   source: string;
   status: string;
   verification_status: string;
@@ -26,7 +36,7 @@ type VaultDocument = {
 };
 
 type ApiErrorPayload = {
-  detail?: string;
+  detail?: string | Array<{ msg?: string }>;
   error?: string;
 };
 
@@ -41,16 +51,8 @@ type VaultActionState = {
   error: string;
 };
 
-const DOC_TYPES: Array<{ value: DocType; label: string; icon: string; hint: string }> = [
-  { value: 'pan', label: 'PAN Card', icon: '🪪', hint: 'Number, name, father name, DOB' },
-  { value: 'aadhaar', label: 'Aadhaar Card', icon: '🆔', hint: 'Identity details + address' },
-  { value: 'income_cert', label: 'Income Certificate', icon: '💰', hint: 'Income proof for schemes' },
-  { value: 'caste_cert', label: 'Caste Certificate', icon: '📜', hint: 'Category verification' },
-  { value: 'marksheet', label: 'Marksheet', icon: '📘', hint: 'Academic history' },
-];
-
-function prettyLabel(docType: string) {
-  return DOC_TYPES.find(doc => doc.value === docType)?.label || docType.replace(/_/g, ' ');
+function prettyLabel(docType: string, customLabel?: string | null) {
+  return getDocumentLabel(docType, customLabel || '');
 }
 
 function prettyFieldName(key: string) {
@@ -67,8 +69,24 @@ function editableFieldsFor(docType: DocType) {
     income_cert: ['certificate_number', 'annual_income', 'issue_date', 'valid_until'],
     caste_cert: ['certificate_number', 'caste', 'category', 'issue_date'],
     marksheet: ['student_name', 'roll_number', 'year', 'percentage', 'issue_date'],
+    custom: ['summary', 'document_type_hint', 'reference_number', 'issue_date', 'valid_until', 'key_points'],
   };
   return defaults[docType];
+}
+
+function normalizeCustomLabel(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function validateCustomLabel(value: string) {
+  const normalized = normalizeCustomLabel(value);
+  if (!normalized) {
+    return 'Enter a document name before uploading a custom document.';
+  }
+  if (normalized.length > 80) {
+    return 'Document name must be 80 characters or fewer.';
+  }
+  return '';
 }
 
 function validateClientFile(file: File) {
@@ -88,7 +106,17 @@ function apiErrorMessage(status: number, payload: ApiErrorPayload | null | undef
   if (status === 403 && payload?.detail === 'Access denied') {
     return 'Your session expired. Please log in again and retry.';
   }
-  return payload?.detail || payload?.error || fallback;
+  if (Array.isArray(payload?.detail)) {
+    const message = payload.detail
+      .map((item) => item?.msg || '')
+      .filter(Boolean)
+      .join(' ');
+    if (message) return message;
+  }
+  if (typeof payload?.detail === 'string') {
+    return payload.detail;
+  }
+  return payload?.error || fallback;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -162,6 +190,7 @@ export default function DocumentsPage() {
   const [phone, setPhone] = useState('');
   const [token, setToken] = useState('');
   const [docType, setDocType] = useState<DocType>('pan');
+  const [customLabel, setCustomLabel] = useState('');
   const [uploading, setUploading] = useState(false);
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -170,6 +199,7 @@ export default function DocumentsPage() {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingCustomLabel, setEditingCustomLabel] = useState('');
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -255,6 +285,15 @@ export default function DocumentsPage() {
       setError('Choose a file first');
       return;
     }
+    const normalizedCustomLabel = normalizeCustomLabel(customLabel);
+    if (isCustomDocumentType(docType)) {
+      const customLabelError = validateCustomLabel(customLabel);
+      if (customLabelError) {
+        setError(customLabelError);
+        setNotice('');
+        return;
+      }
+    }
     const validationError = validateClientFile(selectedFile);
     if (validationError) {
       setError(validationError);
@@ -277,6 +316,7 @@ export default function DocumentsPage() {
         body: JSON.stringify({
           phone,
           doc_type: docType,
+          custom_label: isCustomDocumentType(docType) ? normalizedCustomLabel : undefined,
           source: 'web',
           image_b64: imageB64,
           file_name: selectedFile.name,
@@ -289,7 +329,10 @@ export default function DocumentsPage() {
 
       setSelectedFile(null);
       setPreviewName('');
-      setNotice(`${prettyLabel(docType)} saved to your vault.`);
+      if (isCustomDocumentType(docType)) {
+        setCustomLabel('');
+      }
+      setNotice(`${prettyLabel(docType, normalizedCustomLabel)} saved to your vault.`);
       await loadDocuments(phone, token);
     } catch (error: unknown) {
       setError(getErrorMessage(error, 'Upload failed'));
@@ -302,7 +345,7 @@ export default function DocumentsPage() {
     setVaultAction({
       action,
       documentId: doc.id,
-      documentLabel: prettyLabel(doc.doc_type),
+      documentLabel: prettyLabel(doc.doc_type, doc.custom_label),
       docType: doc.doc_type,
       passkey: '',
       error: '',
@@ -386,11 +429,15 @@ export default function DocumentsPage() {
             'X-Document-Passkey': passkey,
           },
         }));
-        const data = await res.json() as { extracted_data?: Record<string, string | number | null> } & ApiErrorPayload;
+        const data = await res.json() as {
+          extracted_data?: Record<string, string | number | null>;
+          custom_label?: string | null;
+        } & ApiErrorPayload;
         if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
         const current = data.extracted_data || {};
         setEditingId(documentId);
         setEditingPasskey(passkey);
+        setEditingCustomLabel(isCustomDocumentType(docType) ? String(data.custom_label || '') : '');
         setEditValues(buildEditValues(docType, current));
         setVaultAction(null);
         return;
@@ -432,12 +479,21 @@ export default function DocumentsPage() {
 
   function cancelEditing() {
     setEditingId(null);
+    setEditingCustomLabel('');
     setEditingPasskey('');
     setEditValues({});
   }
 
   async function saveEdit(documentId: string) {
     if (!token) return;
+    const activeDocument = documents.find((item) => item.id === documentId);
+    if (activeDocument && isCustomDocumentType(activeDocument.doc_type)) {
+      const customLabelError = validateCustomLabel(editingCustomLabel);
+      if (customLabelError) {
+        setError(customLabelError);
+        return;
+      }
+    }
     setSavingEdit(true);
     setError('');
     try {
@@ -448,7 +504,12 @@ export default function DocumentsPage() {
           Authorization: `Bearer ${token}`,
           'X-Document-Passkey': editingPasskey,
         },
-        body: JSON.stringify({ extracted_data: editValues }),
+        body: JSON.stringify({
+          extracted_data: editValues,
+          custom_label: activeDocument && isCustomDocumentType(activeDocument.doc_type)
+            ? normalizeCustomLabel(editingCustomLabel)
+            : undefined,
+        }),
       }));
       const data = await res.json() as ApiErrorPayload;
       if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to save edits.'));
@@ -465,6 +526,7 @@ export default function DocumentsPage() {
   const activeVaultAction = vaultAction
     ? describeVaultAction(vaultAction.action, vaultAction.documentLabel)
     : null;
+  const selectedDocMeta = getDocumentTypeMeta(docType);
 
   const vaultActionBusyLabel = vaultAction
     ? {
@@ -479,7 +541,7 @@ export default function DocumentsPage() {
     <>
       <Head>
         <title>Document Vault | GovBot</title>
-        <meta name="description" content="Upload and manage PAN, Aadhaar, and scholarship documents in your GovBot KYC vault." />
+        <meta name="description" content="Upload and manage PAN, Aadhaar, scholarship records, and custom documents in your GovBot KYC vault." />
       </Head>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -523,11 +585,11 @@ export default function DocumentsPage() {
             </div>
 
             <div className="grid sm:grid-cols-2 gap-3 mb-5">
-              {DOC_TYPES.map(doc => (
+              {DOCUMENT_TYPE_OPTIONS.map(doc => (
                 <button
                   key={doc.value}
                   type="button"
-                  onClick={() => setDocType(doc.value)}
+                  onClick={() => setDocType(doc.value as DocType)}
                   className={`rounded-2xl border p-4 text-left transition-all ${
                     docType === doc.value
                       ? 'border-[#ff9933] bg-orange-50 shadow-sm'
@@ -542,17 +604,34 @@ export default function DocumentsPage() {
             </div>
 
             <form onSubmit={handleUpload} className="space-y-4">
+              {isCustomDocumentType(docType) && (
+                <label className="block">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    Document name
+                  </div>
+                  <input
+                    value={customLabel}
+                    onChange={(e) => setCustomLabel(e.target.value)}
+                    placeholder="e.g. Domicile Certificate"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition-colors focus:border-[#ff9933] focus:bg-white"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    Use the same name you would ask for on WhatsApp so GovBot can find this document later.
+                  </p>
+                </label>
+              )}
+
               <label className="block rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center hover:border-[#ff9933]/50 transition-colors cursor-pointer">
                 <input type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={handleFileChange} />
-                <div className="text-4xl mb-3">{DOC_TYPES.find(doc => doc.value === docType)?.icon}</div>
+                <div className="text-4xl mb-3">{selectedDocMeta.icon}</div>
                 <div className="text-sm font-semibold text-slate-700">
-                  {previewName ? previewName : `Choose your ${prettyLabel(docType)}`}
+                  {previewName ? previewName : getDocumentUploadPrompt(docType, customLabel)}
                 </div>
                 <div className="text-xs text-slate-400 mt-1">JPG, PNG, or PDF only. Max file size 8 MB.</div>
               </label>
 
               <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-                PAN and Aadhaar numbers stay masked in the list view. Use Preview or Edit when you need the full document details.
+                PAN and Aadhaar numbers stay masked in the list view. Custom documents keep a short summary ready for WhatsApp and web lookup.
               </div>
 
               <button
@@ -560,7 +639,7 @@ export default function DocumentsPage() {
                 disabled={uploading || !selectedFile}
                 className="w-full rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-orange-200/60 transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
               >
-                {uploading ? 'Saving to vault...' : `Upload ${prettyLabel(docType)}`}
+                {uploading ? 'Saving to vault...' : `Upload ${prettyLabel(docType, customLabel)}`}
               </button>
             </form>
           </motion.section>
@@ -595,7 +674,7 @@ export default function DocumentsPage() {
               <div className="rounded-3xl border border-slate-100 bg-slate-50 px-5 py-10 text-center">
                 <div className="text-3xl mb-3">📭</div>
                 <div className="text-sm font-semibold text-slate-700">No documents saved yet</div>
-                <div className="text-xs text-slate-500 mt-1">Upload PAN, Aadhaar, or scholarship records from the left panel to start your vault.</div>
+                <div className="text-xs text-slate-500 mt-1">Upload PAN, Aadhaar, scholarship records, or custom documents from the left panel to start your vault.</div>
               </div>
             ) : (
               <div className="space-y-4">
@@ -611,7 +690,7 @@ export default function DocumentsPage() {
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-slate-900">{prettyLabel(doc.doc_type)}</span>
+                          <span className="text-sm font-bold text-slate-900">{prettyLabel(doc.doc_type, doc.custom_label)}</span>
                           <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                             {doc.source}
                           </span>
@@ -671,7 +750,20 @@ export default function DocumentsPage() {
                     )}
 
                     {editingId === doc.id ? (
-                      <div className="grid sm:grid-cols-2 gap-3 mt-4">
+                      <div className="mt-4 space-y-3">
+                        {isCustomDocumentType(doc.doc_type) && (
+                          <label className="block rounded-2xl bg-white px-4 py-3 text-sm">
+                            <div className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-2">
+                              Document Name
+                            </div>
+                            <input
+                              value={editingCustomLabel}
+                              onChange={(e) => setEditingCustomLabel(e.target.value)}
+                              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-[#ff9933] focus:outline-none"
+                            />
+                          </label>
+                        )}
+                        <div className="grid sm:grid-cols-2 gap-3">
                         {Object.keys(editValues).map((key) => (
                           <label key={key} className="rounded-2xl bg-white px-4 py-3 text-sm">
                             <div className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-2">
@@ -684,7 +776,8 @@ export default function DocumentsPage() {
                             />
                           </label>
                         ))}
-                        <div className="sm:col-span-2 flex flex-wrap gap-2 pt-2">
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-2">
                           <button
                             type="button"
                             onClick={() => void saveEdit(doc.id)}

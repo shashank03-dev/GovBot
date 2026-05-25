@@ -16,7 +16,10 @@ except ImportError:
 
 _cors_origins = [
     o.strip()
-    for o in os.getenv("CORS_ORIGINS", "https://govbot.vercel.app,http://localhost:3000").split(",")
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "https://govbot.vercel.app,http://localhost:3000,https://web.whatsapp.com",
+    ).split(",")
     if o.strip()
 ]
 app.add_middleware(
@@ -125,6 +128,20 @@ app.include_router(
     tags=["Analytics"]
 )
 
+from gov_agent import ssp_router
+app.include_router(
+    ssp_router.router,
+    prefix="/api",
+    tags=["SSP"]
+)
+
+from gov_agent import admin_router
+app.include_router(
+    admin_router.router,
+    prefix="/api",
+    tags=["Admin"]
+)
+
 from gov_agent import profile_router
 app.include_router(
     profile_router.router,
@@ -139,35 +156,19 @@ app.include_router(
     tags=["Form Scanner"]
 )
 
+from gov_agent import whatsapp_bridge_router
+app.include_router(
+    whatsapp_bridge_router.router,
+    tags=["WhatsApp Bridge"]
+)
+
 
 @asynccontextmanager
 async def lifespan(app):
     from gov_agent.config import validate_config
-    from gov_agent.document_vault import cleanup_document_duplicates
     from gov_agent.llm_text_router import initialize_text_router
     validate_config()
     initialize_text_router()
-    try:
-        removed = cleanup_document_duplicates()
-        if removed:
-            print(f"Document vault: removed {removed} duplicate rows")
-    except Exception as exc:
-        print(f"Document vault cleanup skipped: {exc}")
-    # Check if RAG needs ingestion
-    import chromadb
-    client = chromadb.PersistentClient(
-        "./chroma_db")
-    try:
-        col = client.get_collection(
-            "scheme_rules")
-        if col.count() == 0:
-            raise ValueError("Empty")
-    except Exception:
-        from gov_agent import rag_engine
-        count = await rag_engine.ingest_document(
-            "gov_agent/docs/scholarship_rules.pdf"
-        )
-        print(f"RAG: ingested {count} chunks")
     yield
 
 app.router.lifespan_context = lifespan

@@ -18,6 +18,7 @@ import os
 import socket
 import uuid
 from datetime import datetime, timezone
+import glob
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -113,7 +114,7 @@ async def _extract_form_fields(url: str) -> List[Dict[str, str]]:
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await _launch_playwright_browser(p)
             page = await browser.new_page()
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
@@ -150,10 +151,115 @@ async def _extract_form_fields(url: str) -> List[Dict[str, str]]:
         return []
 
 
+def _heuristic_map_fields(form_fields: List[Dict[str, str]]) -> Dict[str, str]:
+    """Map common public-form labels to GovBot profile fields without AI help."""
+    mappings: Dict[str, str] = {}
+
+    for field in form_fields:
+        field_key = field.get("name") or field.get("id")
+        if not field_key:
+            continue
+
+        text = " ".join(
+            [
+                field.get("label", ""),
+                field.get("name", ""),
+                field.get("id", ""),
+                field.get("placeholder", ""),
+            ]
+        ).lower()
+
+        if "address" in text or "street" in text:
+            mappings[field_key] = "address"
+        elif "district" in text or "city" in text:
+            mappings[field_key] = "district"
+        elif "state" in text or "province" in text:
+            mappings[field_key] = "state"
+        elif "zip" in text or "postal" in text or "pin" in text:
+            mappings[field_key] = "pincode"
+        elif "email" in text:
+            mappings[field_key] = "email"
+        elif "income" in text:
+            mappings[field_key] = "income"
+        elif "religion" in text:
+            mappings[field_key] = "religion"
+        elif "caste" in text or "category" in text:
+            mappings[field_key] = "caste"
+        elif "aadhaar" in text:
+            mappings[field_key] = "aadhaar_last4"
+        elif "date of birth" in text or " dob " in f" {text} ":
+            mappings[field_key] = "dob"
+        elif "gender" in text or "sex" in text:
+            mappings[field_key] = "gender"
+        elif "bank name" in text:
+            mappings[field_key] = "bank_name"
+        elif "ifsc" in text:
+            mappings[field_key] = "bank_ifsc"
+        elif "account number" in text or ("bank" in text and "account" in text):
+            mappings[field_key] = "bank_account"
+        elif "father" in text:
+            mappings[field_key] = "father_name"
+        elif "mother" in text:
+            mappings[field_key] = "mother_name"
+        elif "institution" in text or "college" in text or "school" in text:
+            mappings[field_key] = "institution"
+        elif "course" in text or "class" in text or "programme" in text or "program" in text:
+            mappings[field_key] = "course_level"
+        elif "marks" in text or "percentage" in text:
+            mappings[field_key] = "marks_pct"
+        elif "full name" in text or ("applicant" in text and "name" in text):
+            mappings[field_key] = "full_name"
+
+    return mappings
+
+
+def _find_fallback_chromium_executable() -> Optional[str]:
+    explicit = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE", "").strip()
+    cached = sorted(
+        glob.glob(os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome")),
+        reverse=True,
+    )
+    candidates = [
+        explicit,
+        *cached,
+        "/opt/google/chrome/chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+    ]
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+async def _launch_playwright_browser(playwright) -> Any:
+    launch_attempts = [{"headless": True}]
+    fallback_executable = _find_fallback_chromium_executable()
+    if fallback_executable:
+        launch_attempts.append({"headless": True, "executable_path": fallback_executable})
+
+    last_error = None
+    for launch_kwargs in launch_attempts:
+        try:
+            return await playwright.chromium.launch(**launch_kwargs)
+        except Exception as exc:  # pragma: no cover - exercised in browser validation
+            last_error = exc
+            logger.warning("Playwright launch failed with %s: %s", launch_kwargs, exc)
+
+    raise last_error or RuntimeError("Unable to launch Playwright browser")
+
+
 async def _map_fields_with_gemini(form_fields: List[Dict[str, str]]) -> Dict[str, str]:
     """Use Gemini to map extracted form field labels to citizen profile fields."""
-    if not has_gemini_client() or not form_fields:
+    if not form_fields:
         return {}
+
+    heuristic_map = _heuristic_map_fields(form_fields)
+    if not has_gemini_client():
+        return heuristic_map
+
     try:
         field_list_text = "\n".join(
             f"- label='{f.get('label', '')}' name='{f.get('name', '')}' id='{f.get('id', '')}' placeholder='{f.get('placeholder', '')}'"
@@ -190,10 +296,13 @@ Return only valid JSON, no explanation."""
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        return json.loads(raw)
+        ai_map = json.loads(raw)
+        merged = dict(heuristic_map)
+        merged.update({k: v for k, v in ai_map.items() if v in PROFILE_FIELD_DESCRIPTIONS})
+        return merged
     except Exception as e:
         logger.warning(f"Gemini field mapping failed: {e}")
-        return {}
+        return heuristic_map
 
 
 def _build_fill_values(field_map: Dict[str, str], profile: dict) -> tuple[Dict[str, Any], List[str]]:
@@ -230,7 +339,7 @@ async def _playwright_fill(url: str, fill_values: Dict[str, Any], form_fields: L
                     seen_keys.add(fname)
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await _launch_playwright_browser(p)
             page = await browser.new_page()
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
             await page.wait_for_timeout(1500)

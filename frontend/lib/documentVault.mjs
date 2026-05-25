@@ -1,3 +1,55 @@
+export const DOCUMENT_TYPE_OPTIONS = [
+  { value: 'pan', label: 'PAN Card', icon: '🪪', hint: 'Number, name, father name, DOB' },
+  { value: 'aadhaar', label: 'Aadhaar Card', icon: '🆔', hint: 'Identity details + address' },
+  { value: 'income_cert', label: 'Income Certificate', icon: '💰', hint: 'Income proof for schemes' },
+  { value: 'caste_cert', label: 'Caste Certificate', icon: '📜', hint: 'Category verification' },
+  { value: 'marksheet', label: 'Marksheet', icon: '📘', hint: 'Academic history' },
+  { value: 'custom', label: 'Custom Document', icon: '🗂️', hint: 'Any other document with a custom name and summary' },
+];
+
+function prettifyDocumentType(value = '') {
+  return String(value || '')
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || 'Document';
+}
+
+export function isCustomDocumentType(docType = '') {
+  return String(docType || '') === 'custom';
+}
+
+export function getDocumentTypeMeta(docType = '') {
+  return DOCUMENT_TYPE_OPTIONS.find((doc) => doc.value === docType) || {
+    value: docType,
+    label: prettifyDocumentType(docType),
+    icon: '📄',
+    hint: 'Saved document',
+  };
+}
+
+export function getDocumentLabel(documentOrType = 'document', customLabel = '') {
+  const normalizedDocument = typeof documentOrType === 'object' && documentOrType !== null
+    ? documentOrType
+    : { doc_type: documentOrType, custom_label: customLabel };
+  const docType = String(normalizedDocument.doc_type || documentOrType || '');
+  if (isCustomDocumentType(docType)) {
+    const label = String(normalizedDocument.custom_label || customLabel || '').trim();
+    if (label) {
+      return label;
+    }
+  }
+  return getDocumentTypeMeta(docType).label;
+}
+
+export function getDocumentUploadPrompt(docType = '', customLabel = '') {
+  const label = String(customLabel || '').trim();
+  if (isCustomDocumentType(docType) && label) {
+    return `Choose ${label}`;
+  }
+  return `Choose your ${getDocumentLabel(docType, customLabel)}`;
+}
+
 export function getFocusedDocumentId(asPath = '') {
   const value = String(asPath || '');
   const query = value.includes('?') ? value.slice(value.indexOf('?')) : '';

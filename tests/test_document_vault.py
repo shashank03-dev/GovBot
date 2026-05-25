@@ -6,6 +6,7 @@ from gov_agent.document_vault import (
     _materialize_document,
     _record_status,
     build_profile_updates,
+    list_user_documents,
     mask_document_for_list,
     merge_extracted_data,
     format_sensitive_document_reply,
@@ -139,6 +140,25 @@ class SensitiveReplyTests(unittest.TestCase):
         self.assertIn("Student Name: Asha Singh", text)
         self.assertIn("Roll Number: 2024-7788", text)
 
+    def test_formats_custom_document_reply_from_saved_summary(self):
+        text = format_sensitive_document_reply(
+            "custom",
+            {
+                "doc_type": "custom",
+                "custom_label": "Domicile Certificate",
+                "extracted_data": {
+                    "summary": "Confirms residence in Bengaluru Urban district.",
+                    "document_type_hint": "Residence proof",
+                    "reference_number": "DOM-2025-44",
+                },
+            },
+            signed_url=None,
+        )
+
+        self.assertIn("Domicile Certificate", text)
+        self.assertIn("Confirms residence in Bengaluru Urban district.", text)
+        self.assertIn("Residence proof", text)
+
 
 class DownloadUrlHelperTests(unittest.TestCase):
     def test_create_signed_download_url_uses_storage_path(self):
@@ -217,6 +237,49 @@ class ListMaskingTests(unittest.TestCase):
 
         self.assertEqual(masked["extracted_data"]["aadhaar_number"], "XXXX XXXX 5424")
         self.assertEqual(masked["extracted_data"]["full_name"], "Asha Singh")
+
+    def test_list_user_documents_keeps_multiple_custom_documents(self):
+        fake_rows = [
+            {
+                "id": "doc-custom-2",
+                "phone": "919999999999",
+                "doc_type": "custom",
+                "custom_label": "Residence Proof",
+                "created_at": "2026-05-24T10:00:00Z",
+                "ocr_extracted_data": {"summary": "Residence proof"},
+                "user_corrected_data": {},
+                "extracted_data": {"summary": "Residence proof"},
+                "source_confidence": 0.82,
+            },
+            {
+                "id": "doc-custom-1",
+                "phone": "919999999999",
+                "doc_type": "custom",
+                "custom_label": "Domicile Certificate",
+                "created_at": "2026-05-24T09:00:00Z",
+                "ocr_extracted_data": {"summary": "Domicile"},
+                "user_corrected_data": {},
+                "extracted_data": {"summary": "Domicile"},
+                "source_confidence": 0.84,
+            },
+            {
+                "id": "doc-pan-1",
+                "phone": "919999999999",
+                "doc_type": "pan",
+                "created_at": "2026-05-24T08:00:00Z",
+                "ocr_extracted_data": {"pan_number": "ABCDE1234F"},
+                "user_corrected_data": {},
+                "extracted_data": {"pan_number": "ABCDE1234F"},
+                "source_confidence": 0.91,
+            },
+        ]
+
+        with patch("gov_agent.document_vault.supabase") as supabase_mock:
+            supabase_mock.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = fake_rows
+
+            documents = list_user_documents("919999999999", masked=False)
+
+        self.assertEqual([doc["id"] for doc in documents], ["doc-custom-2", "doc-custom-1", "doc-pan-1"])
 
 
 class UploadValidationTests(unittest.TestCase):

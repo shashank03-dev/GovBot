@@ -99,12 +99,12 @@ _PORTAL_RULES: dict[str, dict[str, Any]] = {
         "required_fields": ["name", "dob", "aadhaar_number", "income"],
         "next_url": "/nsp/apply",
     },
-    "pmss": {
-        "label": "PMSS",
+    "ssp": {
+        "label": "SSP",
         "required_docs": ["aadhaar"],
         "optional_docs": ["income_certificate", "caste_certificate", "marksheet"],
         "required_fields": ["name", "dob", "aadhaar_number"],
-        "next_url": "/nsp/apply?portal=pmss",
+        "next_url": "/ssp/dashboard",
     },
     "csss": {
         "label": "CSSS",

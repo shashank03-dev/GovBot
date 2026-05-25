@@ -279,6 +279,31 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_data["_requested_doc_type"], "pan")
         self.assertEqual(new_data["_requested_document_id"], "doc-pan-1")
 
+    async def test_document_request_matches_custom_label(self):
+        flow_router = _load_flow_router()
+        session = {"state": "greeting", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="show my domicile certificate")
+
+        with patch(
+            "gov_agent.flow_router.list_user_documents",
+            create=True,
+            return_value=[
+                {
+                    "id": "doc-custom-1",
+                    "doc_type": "custom",
+                    "custom_label": "Domicile Certificate",
+                    "storage_path": "9199/custom/domicile.pdf",
+                }
+            ],
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("QUICK", reply.upper())
+        self.assertIn("VAULT", reply.upper())
+        self.assertEqual(new_state, "document_retrieval_mode")
+        self.assertEqual(new_data["_requested_doc_type"], "custom")
+        self.assertEqual(new_data["_requested_document_id"], "doc-custom-1")
+
     async def test_document_request_quick_mode_asks_for_passkey(self):
         flow_router = _load_flow_router()
         session = {
@@ -349,6 +374,48 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply["media"]["link"], "https://signed.example/aadhaar.jpg")
         self.assertIn("XXXX", reply["text"])
         self.assertNotIn("1234 5678 9012", reply["text"])
+        self.assertEqual(new_state, "greeting")
+        self.assertEqual(new_data, {})
+
+    async def test_passkey_verify_returns_custom_document_summary_response(self):
+        flow_router = _load_flow_router()
+        session = {
+            "state": "passkey_verify",
+            "collected_data": {
+                "_requested_doc_type": "custom",
+                "_requested_document_id": "doc-custom-1",
+                "_document_delivery_mode": "chat",
+            },
+        }
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="1234")
+
+        with patch.object(flow_router, "_load_profile", new=AsyncMock(return_value={"passkey_hash": "digest"})), patch(
+            "gov_agent.flow_router.verify_passkey",
+            return_value=True,
+        ), patch(
+            "gov_agent.flow_router.get_user_document",
+            return_value={
+                "id": "doc-custom-1",
+                "phone": "919999999999",
+                "doc_type": "custom",
+                "custom_label": "Domicile Certificate",
+                "mime_type": "application/pdf",
+                "original_filename": "domicile.pdf",
+                "storage_path": "919999999999/custom/domicile.pdf",
+                "extracted_data": {
+                    "summary": "Confirms residence in Bengaluru Urban district.",
+                    "document_type_hint": "Residence proof",
+                },
+            },
+        ), patch(
+            "gov_agent.flow_router.create_signed_document_url",
+            return_value="https://signed.example/domicile.pdf",
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertEqual(reply["kind"], "document_media_with_details")
+        self.assertIn("Domicile Certificate", reply["text"])
+        self.assertIn("Confirms residence in Bengaluru Urban district.", reply["text"])
         self.assertEqual(new_state, "greeting")
         self.assertEqual(new_data, {})
 
@@ -492,9 +559,15 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "अनुवाद")
 
-    async def test_pmss_awaiting_document_submits_after_image_upload(self):
+    async def test_portal_menu_uses_ssp_label(self):
         flow_router = _load_flow_router()
-        session = {"state": "pmss_awaiting_document", "collected_data": {"portal": "pmss", "name": "Test User"}}
+
+        self.assertIn("SSP", flow_router.PORTAL_MENU)
+        self.assertNotIn("PMSS", flow_router.PORTAL_MENU)
+
+    async def test_ssp_awaiting_document_submits_after_image_upload(self):
+        flow_router = _load_flow_router()
+        session = {"state": "ssp_awaiting_document", "collected_data": {"portal": "ssp", "name": "Test User"}}
         msg = WhatsAppIncoming(
             phone="919999999999",
             message_type="image",
@@ -505,7 +578,7 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             flow_router,
             "_submit_application",
-            new=AsyncMock(return_value=("submitted", "completed", {"portal": "pmss", "media_id": "media-1"})),
+            new=AsyncMock(return_value=("submitted", "completed", {"portal": "ssp", "media_id": "media-1"})),
         ) as submit_mock:
             reply, new_state, new_data = await flow_router.route(session, msg)
 

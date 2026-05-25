@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { getErrorMessage } from '@/lib/errorMessage';
+import { resolveProtectedRouteRedirect } from '@/lib/layoutAuth.mjs';
 
 interface VerifyResult {
   success: boolean;
@@ -45,9 +46,17 @@ export default function BankVerifyPage() {
 
   useEffect(() => {
     if (!mounted) return;
-    const token = localStorage.getItem('govbot_token');
+    const redirectTarget = resolveProtectedRouteRedirect({
+      hasMounted: true,
+      storage: localStorage,
+      nextPath: '/bank-verify',
+      requiredKeys: ['govbot_token', 'govbot_phone'],
+    });
     const storedPhone = localStorage.getItem('govbot_phone');
-    if (!token || !storedPhone) { router.push('/'); return; }
+    if (redirectTarget || !storedPhone) {
+      void router.replace(redirectTarget || '/login?next=%2Fbank-verify');
+      return;
+    }
     setPhone(storedPhone);
   }, [mounted, router]);
 

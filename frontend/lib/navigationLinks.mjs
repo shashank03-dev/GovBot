@@ -18,6 +18,14 @@ export function buildDashboardLoginHref(nextPath = DEFAULT_POST_LOGIN_PATH) {
   return `/login?next=${encodeURIComponent(safeNextPath)}`;
 }
 
+export function resolveProtectedHref(href, { isLoggedIn = false, requiresAuth = false } = {}) {
+  if (!requiresAuth || isLoggedIn) {
+    return href;
+  }
+
+  return buildDashboardLoginHref(href);
+}
+
 export function buildTrackHref(confirmationNumber) {
   return `/track/${encodeURIComponent(String(confirmationNumber ?? ''))}`;
 }

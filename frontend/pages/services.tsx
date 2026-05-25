@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -23,10 +23,13 @@ import {
 } from 'lucide-react';
 
 import { SERVICE_CARDS, TOOL_CARDS } from '@/lib/siteFeatureContent.mjs';
+import { resolveLoggedInState } from '@/lib/layoutAuth.mjs';
+import { buildOfficialLoginHref } from '@/lib/officialSession.mjs';
+import { resolveProtectedHref } from '@/lib/navigationLinks.mjs';
 
 const PORTAL_CARDS = [
   { id: 'nsp', name: 'NSP', full: 'National Scholarship Portal', href: '/nsp', color: '#ff9933', bg: '#fff7ed' },
-  { id: 'pmss', name: 'PMSS', full: 'Post Matric Scholarship', href: '/pmss', color: '#3b82f6', bg: '#eff6ff' },
+  { id: 'ssp', name: 'SSP', full: 'State Scholarship Portal', href: '/ssp', color: '#2b6f89', bg: '#eef7fb' },
   { id: 'csss', name: 'CSSS', full: 'Central Sector Scholarship', href: '/csss', color: '#0d9488', bg: '#f0fdfa' },
   { id: 'minority', name: 'Minority', full: 'Minority Scholarship', href: '/minority', color: '#8b5cf6', bg: '#f5f3ff' },
 ];
@@ -49,6 +52,24 @@ const ICONS: Record<string, React.ElementType> = {
 
 export default function ServicesHub() {
   const prefersReducedMotion = useReducedMotion();
+  const [isLoggedIn, setIsLoggedIn] = useState(() =>
+    resolveLoggedInState({ hasMounted: false, storage: null }),
+  );
+
+  useEffect(() => {
+    const syncLoggedInState = () => {
+      setIsLoggedIn(
+        resolveLoggedInState({
+          hasMounted: true,
+          storage: window.localStorage,
+        }),
+      );
+    };
+
+    syncLoggedInState();
+    window.addEventListener('storage', syncLoggedInState);
+    return () => window.removeEventListener('storage', syncLoggedInState);
+  }, []);
 
   return (
     <>
@@ -172,6 +193,10 @@ export default function ServicesHub() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {TOOL_CARDS.map((card, i) => {
               const Icon = ICONS[card.icon] || ScanLine;
+              const href = resolveProtectedHref(card.href, {
+                isLoggedIn,
+                requiresAuth: card.requiresAuth,
+              });
               return (
                 <motion.div
                   key={card.title}
@@ -181,7 +206,7 @@ export default function ServicesHub() {
                   whileHover={prefersReducedMotion ? undefined : { y: -5, scale: 1.01 }}
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.99 }}
                 >
-                  <Link href={card.href} className="block group">
+                  <Link href={href} className="block group">
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 hover:border-slate-200 hover:shadow-lg transition-all duration-300 flex items-start gap-3.5 h-full">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: card.bg }}>
                         <Icon className="w-5 h-5" style={{ color: card.color }} />
@@ -204,7 +229,7 @@ export default function ServicesHub() {
         <section>
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Government Officials</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Link href="/gov-dashboard" className="block group">
+            <Link href={buildOfficialLoginHref('/gov-dashboard')} className="block group">
               <motion.div
                 className="bg-white border border-slate-100 rounded-2xl p-4 hover:border-slate-200 hover:shadow-lg transition-all duration-300 flex items-center gap-3.5"
                 whileHover={prefersReducedMotion ? undefined : { y: -4, scale: 1.01 }}
@@ -219,7 +244,7 @@ export default function ServicesHub() {
                 </div>
               </motion.div>
             </Link>
-            <Link href="/admin" className="block group">
+            <Link href={buildOfficialLoginHref('/admin')} className="block group">
               <motion.div
                 className="bg-white border border-slate-100 rounded-2xl p-4 hover:border-slate-200 hover:shadow-lg transition-all duration-300 flex items-center gap-3.5"
                 whileHover={prefersReducedMotion ? undefined : { y: -4, scale: 1.01 }}

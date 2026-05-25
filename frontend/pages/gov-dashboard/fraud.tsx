@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import {
   AlertTriangle,
   CalendarClock,
@@ -9,6 +10,8 @@ import {
   Users,
 } from 'lucide-react';
 import AnimatedCounter from '@/components/AnimatedCounter';
+import { fetchOfficialJson, logoutOfficialSession } from '@/lib/officialApi';
+import { useOfficialRouteGuard } from '@/lib/useOfficialRouteGuard';
 import {
   AnalyticsEmptyState,
   AnalyticsLoadingState,
@@ -34,25 +37,52 @@ interface FraudSummary {
 }
 
 export default function FraudDashboard() {
+  const router = useRouter();
+  const { isAuthorized, isChecking } = useOfficialRouteGuard();
   const [summary, setSummary] = useState<FraudSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchFraudData();
-  }, []);
+    if (!isAuthorized) {
+      return;
+    }
 
-  const fetchFraudData = async () => {
-    try {
-      const res = await fetch('/api/analytics/fraud/summary');
-      if (res.ok) {
-        const data = await res.json();
-        setSummary(data);
+    let active = true;
+
+    const loadFraudData = async () => {
+      try {
+        const data = await fetchOfficialJson<FraudSummary>(router, '/api/analytics/fraud/summary');
+        if (active) {
+          setSummary(data);
+        }
+      } catch (err) {
+        console.error('Fraud data error:', err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
+    };
+
+    void loadFraudData();
+    return () => {
+      active = false;
+    };
+  }, [isAuthorized, router]);
+
+  const handleRefresh = async () => {
+    try {
+      const data = await fetchOfficialJson<FraudSummary>(router, '/api/analytics/fraud/summary');
+      setSummary(data);
     } catch (err) {
       console.error('Fraud data error:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOfficialLogout = () => {
+    logoutOfficialSession(router);
   };
 
   const formatDate = (dateStr: string) => {
@@ -72,7 +102,7 @@ export default function FraudDashboard() {
   const hasFlags = (summary?.total_flags || 0) > 0;
   const recentFlags = summary?.recent_flags || [];
 
-  if (loading) {
+  if (isChecking || !isAuthorized || loading) {
     return (
       <AnalyticsLoadingState
         title="Loading fraud analytics"
@@ -94,7 +124,10 @@ export default function FraudDashboard() {
         summaryLabel="Current review load"
         summaryValue={<AnimatedCounter end={summary?.total_flags || 0} />}
         summaryText="Active flags currently waiting for validation by operations or compliance teams."
-        onRefresh={fetchFraudData}
+        onRefresh={handleRefresh}
+        onLogout={handleOfficialLogout}
+        backHref="/gov-dashboard"
+        backLabel="Back to Dashboard"
       >
         <section
           className={`mb-8 rounded-3xl border p-5 shadow-sm ${

@@ -12,7 +12,7 @@ interface EligibilityResult {
 
 const SCHEME_ROUTES: Record<string, string> = {
   NSP: '/nsp',
-  PMSS: '/pmss',
+  SSP: '/ssp',
   CSSS: '/csss',
   Minority: '/minority',
 };

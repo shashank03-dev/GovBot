@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Zap, CheckCircle, AlertCircle, ArrowLeft, ExternalLink,
   RefreshCw, ChevronRight, Globe, User
 } from 'lucide-react';
 import { buildBackendRequestInit, buildBackendUrl, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildDemoAliasAnalysis, findFormFillTarget, FORM_FILL_SAMPLE_TARGETS } from '@/lib/formFillTargets.mjs';
+import { NSP_DEMO_SESSION_STORAGE_KEY } from '@/lib/nspDemoAutofill.mjs';
 import { getErrorMessage } from '@/lib/errorMessage';
 
 type FormField = {
@@ -20,6 +23,13 @@ type FormField = {
 
 type AnalyzeResult = {
   url: string;
+  display_url?: string;
+  resolved_url?: string;
+  resolution_mode?: 'demo_alias' | 'live_site';
+  target_key?: string;
+  target_label?: string;
+  analyzed_page_label?: string;
+  proof_note?: string;
   form_fields: FormField[];
   field_map: Record<string, string>;
   fill_values: Record<string, string>;
@@ -48,12 +58,13 @@ type HistorySession = {
 };
 
 const EXAMPLE_URLS = [
-  { label: 'NSP Scholarship', url: 'https://scholarships.gov.in/fresh/newstdRegfrmInstruction' },
+  ...FORM_FILL_SAMPLE_TARGETS.map(({ label, displayUrl }) => ({ label, url: displayUrl })),
   { label: 'PM Kisan', url: 'https://pmkisan.gov.in/RegistrationForm.aspx' },
   { label: 'Udyam Registration', url: 'https://udyamregistration.gov.in/Government-India/Ministry-MSME-registration.htm' },
 ];
 
 export default function FormFillPage() {
+  const router = useRouter();
   const [phone, setPhone] = useState('');
   const [url, setUrl] = useState('');
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
@@ -68,6 +79,16 @@ export default function FormFillPage() {
     setPhone(p);
     if (p) fetchHistory(p);
   }, []);
+
+  const fetchProfile = async (p: string) => {
+    const token = localStorage.getItem('govbot_token');
+    const res = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(p)}`), buildBackendRequestInit({
+      headers: { Authorization: `Bearer ${token}` },
+    }));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not load your profile');
+    return data.profile || {};
+  };
 
   const fetchHistory = async (p: string) => {
     try {
@@ -91,15 +112,52 @@ export default function FormFillPage() {
     setAnalyzeResult(null);
     setFillResult(null);
     try {
+      const normalizedUrl = url.trim();
+      const target = findFormFillTarget(normalizedUrl);
+
+      if (target?.mode === 'demo_alias') {
+        const profile = await fetchProfile(phone);
+        const rawData = buildDemoAliasAnalysis(target, profile, window.location.origin) as Record<string, unknown>;
+        const data: AnalyzeResult = {
+          url: String(rawData.url || normalizedUrl),
+          display_url: rawData.display_url ? String(rawData.display_url) : undefined,
+          resolved_url: rawData.resolved_url ? String(rawData.resolved_url) : undefined,
+          resolution_mode: 'demo_alias',
+          target_key: rawData.target_key ? String(rawData.target_key) : undefined,
+          target_label: rawData.target_label ? String(rawData.target_label) : undefined,
+          analyzed_page_label: rawData.analyzed_page_label ? String(rawData.analyzed_page_label) : undefined,
+          proof_note: rawData.proof_note ? String(rawData.proof_note) : undefined,
+          form_fields: Array.isArray(rawData.form_fields) ? rawData.form_fields as FormField[] : [],
+          field_map: rawData.field_map && typeof rawData.field_map === 'object' ? { ...(rawData.field_map as Record<string, string>) } : {},
+          fill_values: rawData.fill_values && typeof rawData.fill_values === 'object' ? { ...(rawData.fill_values as Record<string, string>) } : {},
+          filled_count: Number(rawData.filled_count || 0),
+          missing_fields: Array.isArray(rawData.missing_fields) ? rawData.missing_fields as string[] : [],
+          profile_completeness: typeof rawData.profile_completeness === 'number' ? rawData.profile_completeness : undefined,
+          message: rawData.message ? String(rawData.message) : undefined,
+        };
+        setAnalyzeResult(data);
+        setStep('review');
+        return;
+      }
+
       const token = localStorage.getItem('govbot_token');
       const res = await fetch(buildProxyApiPath('form-scanner/analyze'), buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ url: url.trim(), phone }),
+        body: JSON.stringify({ url: normalizedUrl, phone }),
       }));
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Analysis failed');
-      setAnalyzeResult(data);
+      setAnalyzeResult({
+        ...data,
+        display_url: normalizedUrl,
+        resolved_url: data.url || normalizedUrl,
+        resolution_mode: 'live_site' as const,
+        target_key: target?.key,
+        target_label: target?.label,
+        analyzed_page_label: target?.analyzedPageLabel || 'Live analyzed page',
+        proof_note: target?.proofNote,
+      });
       setStep('review');
     } catch (error: unknown) {
       setError(getErrorMessage(error, 'Analysis failed'));
@@ -109,6 +167,18 @@ export default function FormFillPage() {
 
   const handleFill = async () => {
     if (!analyzeResult) return;
+
+    if (analyzeResult.resolution_mode === 'demo_alias' && analyzeResult.resolved_url) {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(
+          NSP_DEMO_SESSION_STORAGE_KEY,
+          JSON.stringify(analyzeResult.fill_values || {}),
+        );
+      }
+      void router.push(analyzeResult.resolved_url);
+      return;
+    }
+
     setStep('filling');
     const mergedMap = { ...analyzeResult.field_map };
     Object.entries(overrides).forEach(([k, v]) => { if (v) mergedMap[k] = v; });
@@ -138,6 +208,11 @@ export default function FormFillPage() {
     setStep('idle');
     setError('');
   };
+
+  const isDemoAlias = analyzeResult?.resolution_mode === 'demo_alias';
+  const primaryCtaLabel = isDemoAlias
+    ? 'Open Demo Form & Fill Fast'
+    : `Preview Fill (No Submit)${analyzeResult ? ` (${analyzeResult.filled_count} fields)` : ''}`;
 
   return (
     <>
@@ -235,18 +310,52 @@ export default function FormFillPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Form Analysis</h2>
-                    <p className="text-xs text-slate-400 mt-0.5 break-all">{analyzeResult.url}</p>
+                    <div className="mt-1 space-y-1 text-xs">
+                      <p className="text-slate-400 break-all">
+                        <span className="font-semibold text-slate-500">Displayed URL:</span> {analyzeResult.display_url || analyzeResult.url}
+                      </p>
+                      <p className="text-slate-400 break-all">
+                        <span className="font-semibold text-slate-500">Analyzed page:</span> {analyzeResult.resolved_url || analyzeResult.url}
+                      </p>
+                    </div>
                   </div>
-                  <a href={analyzeResult.url} target="_blank" rel="noopener noreferrer" className="text-slate-300 hover:text-slate-500">
-                    <ExternalLink size={14} />
-                  </a>
+                  <div className="flex items-center gap-2">
+                    {analyzeResult.resolution_mode && (
+                      <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isDemoAlias ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {isDemoAlias ? 'Demo alias' : 'Live site'}
+                      </span>
+                    )}
+                    <a href={analyzeResult.display_url || analyzeResult.url} target="_blank" rel="noopener noreferrer" className="text-slate-300 hover:text-slate-500">
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
                 </div>
 
-                {analyzeResult.message && (
-                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-700">
-                    ⚠️ {analyzeResult.message}
+                {(analyzeResult.proof_note || analyzeResult.message) && (
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-700 space-y-1">
+                    {analyzeResult.proof_note && (
+                      <p>Proof: {analyzeResult.proof_note}</p>
+                    )}
+                    {analyzeResult.message && (
+                      <p>Warning: {analyzeResult.message}</p>
+                    )}
                   </div>
                 )}
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Target</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{analyzeResult.target_label || 'Custom URL'}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Analyzer</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{analyzeResult.analyzed_page_label || 'Live analyzed page'}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Action</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{isDemoAlias ? 'Open local demo + auto-fill' : 'Live fill preview only'}</p>
+                  </div>
+                </div>
 
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-3">
@@ -312,11 +421,30 @@ export default function FormFillPage() {
                   </div>
                 )}
 
+                {isDemoAlias && analyzeResult.resolved_url && (
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={analyzeResult.display_url || analyzeResult.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                    >
+                      Open Official URL <ExternalLink size={12} />
+                    </a>
+                    <a
+                      href={analyzeResult.resolved_url}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-sky-200 bg-sky-50 text-xs font-semibold text-sky-700 hover:bg-sky-100 transition-colors"
+                    >
+                      Open Demo Form <ChevronRight size={12} />
+                    </a>
+                  </div>
+                )}
+
                 <button
                   onClick={handleFill}
                   className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-semibold rounded-xl hover:from-orange-600 hover:to-amber-600 transition-all shadow-sm"
                 >
-                  <Zap size={16} /> Fill Form Now ({analyzeResult.filled_count} fields)
+                  <Zap size={16} /> {primaryCtaLabel}
                 </button>
               </motion.div>
             )}

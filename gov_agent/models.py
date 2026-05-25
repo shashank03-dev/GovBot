@@ -78,17 +78,19 @@ class DocumentCheckResult(BaseModel):
 
 class DocumentUploadRequest(BaseModel):
     phone: str
-    doc_type: Literal["pan", "aadhaar", "income_cert", "caste_cert", "marksheet"]
+    doc_type: Literal["pan", "aadhaar", "income_cert", "caste_cert", "marksheet", "custom"]
     source: Literal["web", "whatsapp", "digilocker"]
     image_b64: Optional[str] = None
     media_id: Optional[str] = None
     session_id: Optional[str] = None
     file_name: Optional[str] = None
     mime_type: Optional[str] = None
+    custom_label: Optional[str] = None
 
 
 class DocumentEditRequest(BaseModel):
     extracted_data: dict[str, Any]
+    custom_label: Optional[str] = None
 
 
 class LiveSessionState(BaseModel):

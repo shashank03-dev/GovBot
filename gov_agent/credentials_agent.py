@@ -39,7 +39,7 @@ async def issue_credential_on_approval(confirmation_number: str, phone: str) -> 
     # Default amount based on portal (for demo)
     amounts = {
         "nsp": 25000,
-        "pmss": 15000,
+        "ssp": 15000,
         "csss": 20000,
         "minority": 12000,
     }

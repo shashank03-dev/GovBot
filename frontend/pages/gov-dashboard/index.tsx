@@ -1,12 +1,15 @@
 import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
 import {
   Activity,
+  ArrowLeft,
   ArrowRight,
   BadgeIndianRupee,
   Landmark,
+  LogOut,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -14,6 +17,8 @@ import {
   Users,
 } from 'lucide-react';
 import AnimatedCounter, { AnimatedCurrency } from '@/components/AnimatedCounter';
+import { fetchOfficialJson, logoutOfficialSession } from '@/lib/officialApi';
+import { useOfficialRouteGuard } from '@/lib/useOfficialRouteGuard';
 
 interface DashboardStats {
   total_applications: number;
@@ -167,32 +172,60 @@ function NavCard({
 }
 
 export default function GovDashboard() {
+  const router = useRouter();
+  const { isAuthorized, isChecking } = useOfficialRouteGuard();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [realtime, setRealtime] = useState<RealtimeStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
   useEffect(() => {
-    fetchDashboardData();
+    if (!isAuthorized) {
+      return;
+    }
 
-    const interval = setInterval(fetchDashboardData, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    let active = true;
 
-  const fetchDashboardData = async () => {
+    const loadDashboardData = async () => {
+      try {
+        const [statsData, realtimeData] = await Promise.all([
+          fetchOfficialJson<DashboardStats>(router, '/api/analytics/overview'),
+          fetchOfficialJson<RealtimeStats>(router, '/api/analytics/realtime'),
+        ]);
+
+        if (active) {
+          setStats(statsData);
+          setRealtime(realtimeData);
+          setLastUpdated(new Date());
+        }
+      } catch (err) {
+        console.error('Dashboard fetch error:', err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadDashboardData();
+    const interval = setInterval(() => {
+      void loadDashboardData();
+    }, 30000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isAuthorized, router]);
+
+  const handleRefresh = async () => {
     try {
-      const statsRes = await fetch('/api/analytics/overview');
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
-
-      const realtimeRes = await fetch('/api/analytics/realtime');
-      if (realtimeRes.ok) {
-        const realtimeData = await realtimeRes.json();
-        setRealtime(realtimeData);
-      }
-
+      const [statsData, realtimeData] = await Promise.all([
+        fetchOfficialJson<DashboardStats>(router, '/api/analytics/overview'),
+        fetchOfficialJson<RealtimeStats>(router, '/api/analytics/realtime'),
+      ]);
+      setStats(statsData);
+      setRealtime(realtimeData);
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Dashboard fetch error:', err);
@@ -201,13 +234,17 @@ export default function GovDashboard() {
     }
   };
 
+  const handleOfficialLogout = () => {
+    logoutOfficialSession(router);
+  };
+
   const totalApplications = stats?.total_applications || 0;
   const orderedStatuses = ['submitted', 'approved', 'processing', 'rejected'];
   const sortedStatusEntries = orderedStatuses.map(
     (status) => [status, stats?.status_breakdown?.[status] || 0] as const
   );
 
-  if (loading) {
+  if (isChecking || !isAuthorized || loading) {
     return (
       <div className="min-h-screen gradient-mesh flex items-center justify-center px-4">
         <div className="rounded-2xl border border-orange-100 bg-white px-6 py-5 text-center shadow-sm">
@@ -239,7 +276,24 @@ export default function GovDashboard() {
               transition={{ duration: 0.5 }}
               className="overflow-hidden rounded-3xl border border-white/70 bg-white/90 p-7 shadow-lg shadow-slate-200/60"
             >
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1.5 text-sm font-medium text-[#e67e00]">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                <Link
+                  href="/services"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-[#e67e00] transition-colors hover:text-slate-900"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to Services
+                </Link>
+                <button
+                  onClick={handleOfficialLogout}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
+              </div>
+
+              <div className="inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-1.5 text-sm font-medium text-[#e67e00]">
                 <Sparkles className="h-4 w-4" />
                 GovBot public-sector analytics
               </div>
@@ -295,7 +349,7 @@ export default function GovDashboard() {
                 </div>
 
                 <motion.button
-                  onClick={fetchDashboardData}
+                  onClick={handleRefresh}
                   whileHover={{ y: -2 }}
                   whileTap={{ scale: 0.98 }}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-200/50 transition-shadow hover:shadow-orange-300/60"

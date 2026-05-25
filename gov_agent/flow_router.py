@@ -16,6 +16,7 @@ from gov_agent.document_vault import (
     get_user_document,
     hash_passkey,
     ingest_document,
+    list_user_documents,
     log_document_access,
     verify_passkey,
 )
@@ -101,7 +102,7 @@ MENU = (
 PORTAL_MENU = (
     "📚 Which scholarship would you like to apply for?\n\n"
     "1️⃣ NSP (National Scholarship Portal)\n"
-    "2️⃣ PMSS (Post Matric Scholarship)\n"
+    "2️⃣ SSP (State Scholarship Portal)\n"
     "3️⃣ CSSS (Central Sector Scholarship)\n"
     "4️⃣ Minority Scholarship\n\n"
     "Reply with 1, 2, 3 or 4"
@@ -139,7 +140,7 @@ _UPLOAD_COMMAND_HELP = (
 
 _RENEWAL_PORTAL_KEYWORDS = {
     "nsp": "nsp",
-    "pmss": "pmss",
+    "ssp": "ssp",
     "csss": "csss",
     "minority": "minority",
 }
@@ -155,6 +156,11 @@ _DOCUMENT_ACCESS_KEYWORDS = {
     "caste cert": "caste_cert",
     "marksheet": "marksheet",
 }
+_CUSTOM_DOCUMENT_TOKEN_STOPWORDS = {"certificate", "document", "proof", "copy", "form", "card"}
+
+
+def _has_document_request_intent(body_lower: str) -> bool:
+    return any(token in body_lower for token in ("my", "show", "document", "preview"))
 
 
 def _is_renewal_question(body_lower: str) -> bool:
@@ -181,13 +187,54 @@ def _extract_portal_keyword(body_lower: str) -> str | None:
 
 
 def _match_document_request(body_lower: str) -> str | None:
-    has_request_intent = any(token in body_lower for token in ("my", "show", "document", "preview"))
-    if not has_request_intent:
+    if not _has_document_request_intent(body_lower):
         return None
     for phrase, doc_type in _DOCUMENT_ACCESS_KEYWORDS.items():
         if phrase in body_lower:
             return doc_type
     return None
+
+
+def _tokenize_custom_document_text(text: str) -> set[str]:
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+        if len(token) > 2 and token not in _CUSTOM_DOCUMENT_TOKEN_STOPWORDS
+    }
+    return tokens
+
+
+def _match_custom_document_request(phone: str, body_lower: str) -> dict[str, Any] | None:
+    if not _has_document_request_intent(body_lower):
+        return None
+
+    query_tokens = _tokenize_custom_document_text(body_lower)
+    best_document: dict[str, Any] | None = None
+    best_score = -1
+
+    for document in list_user_documents(phone, masked=False):
+        if document.get("doc_type") != "custom":
+            continue
+        label = str(document.get("custom_label") or "").strip()
+        if not label:
+            continue
+        label_lower = label.lower()
+        if label_lower in body_lower:
+            return document
+
+        label_tokens = _tokenize_custom_document_text(label_lower)
+        if not label_tokens:
+            continue
+
+        overlap = len(query_tokens & label_tokens)
+        if overlap <= 0:
+            continue
+
+        if overlap > best_score:
+            best_document = document
+            best_score = overlap
+
+    return best_document
 
 
 def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
@@ -251,7 +298,7 @@ def _has_prefilled_value(value: Any) -> bool:
 def _portal_next_manual_state(portal: str) -> str:
     return {
         "nsp": "collect_name",
-        "pmss": "pmss_collect_name",
+        "ssp": "ssp_collect_name",
         "csss": "csss_collect_name",
         "minority": "minority_collect_name",
     }.get(portal, "collect_name")
@@ -325,9 +372,9 @@ async def _continue_after_digilocker_review(phone: str, data: dict[str, Any], re
             )
         return ("What is your full name as per Aadhaar?", _portal_next_manual_state(portal), data)
 
-    if portal in {"pmss", "csss", "minority"}:
+    if portal in {"ssp", "csss", "minority"}:
         required_fields = {
-            "pmss": ("name", "dob"),
+            "ssp": ("name", "dob"),
             "csss": ("name", "dob", "marks_pct"),
             "minority": ("name", "dob", "income"),
         }[portal]
@@ -428,18 +475,26 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         )
 
     requested_doc_type = _match_document_request(body_lower)
+    requested_document = None
+    requested_document_type: str | None = None
     if requested_doc_type:
-        document = get_latest_user_document(msg.phone, requested_doc_type)
+        requested_document = get_latest_user_document(msg.phone, requested_doc_type)
+        requested_document_type = requested_doc_type
+    else:
+        requested_document = _match_custom_document_request(msg.phone, body_lower)
+        if requested_document:
+            requested_document_type = "custom"
+
+    if requested_document_type:
+        document = requested_document
         if not document:
-            return (
-                f"❌ No {requested_doc_type.replace('_', ' ')} found yet. Send 'upload {requested_doc_type}' first.",
-                "greeting",
-                data,
-            )
+            if requested_document_type == "custom":
+                return ("❌ I couldn't find that saved custom document yet. Open your vault and check the saved name.", "greeting", data)
+            return (f"❌ No {requested_document_type.replace('_', ' ')} found yet. Send 'upload {requested_document_type}' first.", "greeting", data)
         return (
             "📄 I found your document.\n\nReply QUICK for file + details in chat, or VAULT to open it on the website.",
             "document_retrieval_mode",
-            {**data, "_requested_doc_type": requested_doc_type, "_requested_document_id": document["id"]},
+            {**data, "_requested_doc_type": requested_document_type, "_requested_document_id": document["id"]},
         )
 
     # ── Sensitive data query: "whats my pan", "my aadhaar", etc. ──────────
@@ -601,7 +656,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             data["portal"] = "nsp"
             return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         elif body == "2":
-            data["portal"] = "pmss"
+            data["portal"] = "ssp"
             return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
         elif body == "3":
             data["portal"] = "csss"
@@ -644,7 +699,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             portal = data.get("portal", "nsp")
             next_states = {
                 "nsp": "collect_name",
-                "pmss": "pmss_collect_name",
+                "ssp": "ssp_collect_name",
                 "csss": "csss_collect_name",
                 "minority": "minority_collect_name",
             }
@@ -681,7 +736,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             portal = data.get("portal", "nsp")
             next_states = {
                 "nsp": "collect_name",
-                "pmss": "pmss_collect_name",
+                "ssp": "ssp_collect_name",
                 "csss": "csss_collect_name",
                 "minority": "minority_collect_name",
             }
@@ -1055,9 +1110,9 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             try:
                 # Check for portal-specific submission
                 portal = data.get("portal", "nsp")
-                if portal == "pmss":
-                    from gov_agent import pmss_agent
-                    result = await pmss_agent.run_pmss_application(data)
+                if portal == "ssp":
+                    from gov_agent import ssp_agent
+                    result = await ssp_agent.run_ssp_application(data)
                 elif portal == "csss":
                     from gov_agent import csss_agent
                     result = await csss_agent.run_csss_application(data)
@@ -1280,49 +1335,49 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             data
         )
 
-    # PMSS flow states
-    elif state == "pmss_collect_name":
+    # SSP flow states
+    elif state == "ssp_collect_name":
         data["name"] = body.strip()
-        data["portal"] = "pmss"
+        data["portal"] = "ssp"
         await _save_profile_field(msg.phone, "full_name", data["name"])
-        return ("Date of birth? (DD/MM/YYYY)", "pmss_collect_dob", data)
+        return ("Date of birth? (DD/MM/YYYY)", "ssp_collect_dob", data)
 
-    elif state == "pmss_collect_dob":
+    elif state == "ssp_collect_dob":
         if not re.match(r"^\d{2}/\d{2}/\d{4}$", body.strip()):
-            return ("❌ Invalid format. Use DD/MM/YYYY", "pmss_collect_dob", data)
+            return ("❌ Invalid format. Use DD/MM/YYYY", "ssp_collect_dob", data)
         data["dob"] = body.strip()
-        return ("Annual family income in ₹?", "pmss_collect_income", data)
+        return ("Annual family income in ₹?", "ssp_collect_income", data)
 
-    elif state == "pmss_collect_income":
+    elif state == "ssp_collect_income":
         if not body.strip().isdigit():
-            return ("❌ Enter numbers only", "pmss_collect_income", data)
+            return ("❌ Enter numbers only", "ssp_collect_income", data)
         data["income"] = int(body.strip())
-        return ("Caste category? (SC/ST/OBC)", "pmss_collect_caste", data)
+        return ("Caste category? (SC/ST/OBC)", "ssp_collect_caste", data)
 
-    elif state == "pmss_collect_caste":
+    elif state == "ssp_collect_caste":
         data["caste"] = body.strip().upper()
-        return ("Name of your institution/college?", "pmss_collect_institution", data)
+        return ("Name of your institution/college?", "ssp_collect_institution", data)
 
-    elif state == "pmss_collect_institution":
+    elif state == "ssp_collect_institution":
         data["institution"] = body.strip()
-        return ("Course name?", "pmss_collect_course", data)
+        return ("Course name?", "ssp_collect_course", data)
 
-    elif state == "pmss_collect_course":
+    elif state == "ssp_collect_course":
         data["course"] = body.strip()
-        return ("Enter your 12-digit Aadhaar number:", "pmss_collect_aadhaar", data)
+        return ("Enter your 12-digit Aadhaar number:", "ssp_collect_aadhaar", data)
 
-    elif state == "pmss_collect_aadhaar":
+    elif state == "ssp_collect_aadhaar":
         aadhaar = body.strip().replace(" ", "")
         if not aadhaar.isdigit() or len(aadhaar) != 12:
-            return ("❌ Invalid Aadhaar. Enter 12 digits only.", "pmss_collect_aadhaar", data)
+            return ("❌ Invalid Aadhaar. Enter 12 digits only.", "ssp_collect_aadhaar", data)
         data["aadhaar_number"] = aadhaar
-        return ("Please send a clear photo of your Aadhaar card 📎", "pmss_awaiting_document", data)
+        return ("Please send a clear photo of your Aadhaar card 📎", "ssp_awaiting_document", data)
 
-    elif state == "pmss_awaiting_document":
+    elif state == "ssp_awaiting_document":
         if msg.message_type == "image" and msg.media_id:
             data["media_id"] = msg.media_id
-            return await _submit_application(msg.phone, data, "pmss")
-        return ("Please send Aadhaar as image 📎", "pmss_awaiting_document", data)
+            return await _submit_application(msg.phone, data, "ssp")
+        return ("Please send Aadhaar as image 📎", "ssp_awaiting_document", data)
 
     # CSSS flow states
     elif state == "csss_collect_name":
@@ -1428,7 +1483,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
 async def _submit_application(phone: str, data: dict, portal: str) -> tuple:
     """Helper to submit application and return response."""
     from gov_agent import whatsapp_sender
-    from gov_agent import pmss_agent, csss_agent, minority_agent
+    from gov_agent import ssp_agent, csss_agent, minority_agent
 
     data["phone"] = phone
     data["portal"] = portal
@@ -1439,8 +1494,8 @@ async def _submit_application(phone: str, data: dict, portal: str) -> tuple:
     )
 
     try:
-        if portal == "pmss":
-            result = await pmss_agent.run_pmss_application(data)
+        if portal == "ssp":
+            result = await ssp_agent.run_ssp_application(data)
         elif portal == "csss":
             result = await csss_agent.run_csss_application(data)
         elif portal == "minority":

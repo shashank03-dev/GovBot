@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 !.env.*.example
+frontend/.env.local
+frontend/.env*.local
+.envrc
+.direnv/
 
 # Python caches, virtualenvs, and reports
 __pycache__/
@@ -17,6 +21,7 @@ __pycache__/
 .tox/
 *.py[cod]
 *.pyd
+*.py,cover
 htmlcov/
 pip-wheel-metadata/
 venv/
@@ -24,11 +29,19 @@ venv/
 
 # Local data stores
 chroma_db/
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-*
 
 # Logs and runtime output
 logs/
 server.log
 *.log
+*.out
+*.err
+*.pid
+*.pid.lock
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
@@ -44,6 +57,10 @@ test-results/
 *.tsbuildinfo
 .npm/
 .pnpm-store/
+.parcel-cache/
+.turbo/
+.cache/
+.eslintcache
 .yarn/
 .vercel/
 frontend/.next/
@@ -55,6 +72,8 @@ frontend/.vercel/
 *.swp
 *.swo
 *~
+*.orig
+*.rej
 
 # IDE and OS files
 .DS_Store

@@ -20,13 +20,24 @@ from gov_agent.gemini_client import generate_text, has_gemini_client, inline_dat
 
 logger = logging.getLogger(__name__)
 
-DOC_TYPES = {"pan", "aadhaar", "income_cert", "caste_cert", "marksheet"}
+CUSTOM_DOC_TYPE = "custom"
+CUSTOM_DOC_TYPE_PREFIX = "custom::"
+CUSTOM_LABEL_FIELD = "_custom_label"
+DOC_TYPES = {"pan", "aadhaar", "income_cert", "caste_cert", "marksheet", CUSTOM_DOC_TYPE}
 DOC_SOURCES = {"web", "whatsapp", "digilocker"}
 VALIDATION_DOC_TYPES = {"aadhaar", "income_cert", "caste_cert", "marksheet"}
 NO_EXPIRY_DOC_TYPES = {"pan", "aadhaar"}
 ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/jpg", "image/png", "application/pdf"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 _BUCKET_READY = False
+DOCUMENT_LABELS = {
+    "pan": "PAN Card",
+    "aadhaar": "Aadhaar Card",
+    "income_cert": "Income Certificate",
+    "caste_cert": "Caste Certificate",
+    "marksheet": "Marksheet",
+    CUSTOM_DOC_TYPE: "Custom Document",
+}
 
 
 class DocumentVaultError(Exception):
@@ -41,6 +52,38 @@ def _normalize_detected_mime(mime_type: Optional[str]) -> str:
     if normalized == "image/jpg":
         return "image/jpeg"
     return normalized
+
+
+def _normalize_custom_label(custom_label: Optional[str]) -> str:
+    normalized = re.sub(r"\s+", " ", str(custom_label or "").strip())
+    if not normalized:
+        raise DocumentVaultError(
+            "upload",
+            "Enter a document name before uploading a custom document.",
+        )
+    if len(normalized) > 80:
+        raise DocumentVaultError(
+            "upload",
+            "Document name must be 80 characters or fewer.",
+        )
+    return normalized
+
+
+def _is_custom_document_type(doc_type: Optional[str]) -> bool:
+    normalized = str(doc_type or "")
+    return normalized == CUSTOM_DOC_TYPE or normalized.startswith(CUSTOM_DOC_TYPE_PREFIX)
+
+
+def _build_custom_document_storage_type(custom_label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", custom_label.lower()).strip("-") or "document"
+    return f"{CUSTOM_DOC_TYPE_PREFIX}{slug}::{uuid.uuid4().hex[:8]}"
+
+
+def _document_label(doc_type: str, document: Optional[dict[str, Any]] = None, *, custom_label: Optional[str] = None) -> str:
+    if doc_type == CUSTOM_DOC_TYPE:
+        label = str(custom_label or (document or {}).get("custom_label") or "").strip()
+        return label or DOCUMENT_LABELS[CUSTOM_DOC_TYPE]
+    return DOCUMENT_LABELS.get(doc_type, doc_type.replace("_", " ").title())
 
 
 def hash_passkey(pin: str) -> str:
@@ -144,9 +187,25 @@ def _materialize_document(document: Optional[dict[str, Any]]) -> Optional[dict[s
         return None
     materialized = dict(document)
     effective = _effective_extracted_data(materialized)
+    doc_type = str(materialized.get("doc_type") or "")
+    custom_label = str(
+        materialized.get("custom_label")
+        or effective.get(CUSTOM_LABEL_FIELD)
+        or (materialized.get("user_corrected_data") or {}).get(CUSTOM_LABEL_FIELD)
+        or (materialized.get("ocr_extracted_data") or materialized.get("extracted_data") or {}).get(CUSTOM_LABEL_FIELD)
+        or ""
+    ).strip()
     materialized["ocr_extracted_data"] = materialized.get("ocr_extracted_data") or materialized.get("extracted_data") or {}
     materialized["user_corrected_data"] = materialized.get("user_corrected_data") or {}
     materialized["extracted_data"] = effective
+    for key in ("ocr_extracted_data", "user_corrected_data", "extracted_data"):
+        payload = materialized.get(key)
+        if isinstance(payload, dict):
+            payload.pop(CUSTOM_LABEL_FIELD, None)
+    if _is_custom_document_type(doc_type):
+        materialized["doc_type"] = CUSTOM_DOC_TYPE
+        if custom_label:
+            materialized["custom_label"] = custom_label
     if materialized.get("source_confidence") is None:
         materialized["source_confidence"] = materialized.get("confidence", 0)
     return materialized
@@ -178,14 +237,30 @@ def format_sensitive_document_reply(
     signed_url: Optional[str] = None,
 ) -> str:
     extracted = document.get("extracted_data") or {}
-    label_map = {
-        "pan": "PAN Card",
-        "aadhaar": "Aadhaar Card",
-        "income_cert": "Income Certificate",
-        "caste_cert": "Caste Certificate",
-        "marksheet": "Marksheet",
-    }
-    label = label_map.get(requested_type, requested_type.replace("_", " ").title())
+    label = _document_label(requested_type, document)
+
+    if requested_type == CUSTOM_DOC_TYPE:
+        lines = [f"🔓 Your {label} summary:", ""]
+        custom_rows = [
+            ("Summary", "summary"),
+            ("Document Type", "document_type_hint"),
+            ("Reference Number", "reference_number"),
+            ("Issue Date", "issue_date"),
+            ("Valid Until", "valid_until"),
+            ("Key Points", "key_points"),
+        ]
+        for label_key, field_key in custom_rows:
+            value = extracted.get(field_key)
+            if not value:
+                continue
+            lines.append(f"{label_key}: {value}")
+        if len(lines) == 2:
+            lines.append("Summary unavailable. Open the file from your vault for the original document.")
+        if signed_url:
+            lines.extend(["", f"View file: {signed_url}"])
+        lines.extend(["", "This message will not be stored. Type 'Hi' for menu."])
+        return "\n".join(lines)
+
     lines = [f"🔓 Your {label} details:", ""]
 
     field_rows = {
@@ -407,6 +482,19 @@ def _extract_fallback(doc_type: str) -> tuple[dict[str, Any], float, str]:
     return extracted, 0.91 if extracted else 0.0, "fallback-demo-extraction"
 
 
+def _custom_extraction_fallback(custom_label: str) -> tuple[dict[str, Any], float, str]:
+    summary = f"GovBot saved {custom_label}, but the automatic summary should be reviewed."
+    extracted = {
+        "summary": summary,
+        "document_type_hint": custom_label,
+        "reference_number": "",
+        "issue_date": "",
+        "valid_until": "",
+        "key_points": "",
+    }
+    return extracted, 0.35, summary
+
+
 def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
     prompts: dict[str, tuple[str, dict[str, Any]]] = {
         "pan": (
@@ -460,14 +548,72 @@ def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
     return prompts[doc_type]
 
 
+def _custom_extraction_prompt(custom_label: str) -> tuple[str, dict[str, Any]]:
+    fallback = {
+        "summary": "",
+        "document_type_hint": custom_label,
+        "reference_number": "",
+        "issue_date": "",
+        "valid_until": "",
+        "key_points": "",
+        "confidence": 0.0,
+    }
+    prompt = (
+        f"Analyze this uploaded document titled '{custom_label}'.\n"
+        "Return JSON only with the keys:\n"
+        '- "summary": short plain-English summary, maximum 220 characters\n'
+        '- "document_type_hint": what this appears to be\n'
+        '- "reference_number": reference / application / certificate number if visible\n'
+        '- "issue_date": issue date if visible\n'
+        '- "valid_until": expiry / validity date if visible\n'
+        '- "key_points": short highlights, maximum 220 characters\n'
+        '- "confidence": number from 0.0 to 1.0\n'
+        "If a field is unknown, return an empty string.\n"
+        "Mask sensitive identifiers in summaries so only the last 4 digits remain visible.\n"
+        "Do not quote full Aadhaar, PAN, bank account, or other long ID numbers."
+    )
+    return prompt, fallback
+
+
 def extract_document_data(
     doc_type: str,
     *,
     image_b64: str,
     mime_type: Optional[str] = None,
+    custom_label: Optional[str] = None,
 ) -> tuple[dict[str, Any], float, str]:
     if doc_type not in DOC_TYPES:
         raise ValueError(f"Unsupported document type: {doc_type}")
+
+    if doc_type == CUSTOM_DOC_TYPE:
+        label = _normalize_custom_label(custom_label)
+        if not has_gemini_client():
+            return _custom_extraction_fallback(label)
+        prompt, fallback = _custom_extraction_prompt(label)
+        try:
+            raw_text = generate_text(
+                [
+                    prompt,
+                    inline_data_part(
+                        data_b64=_normalize_base64(image_b64),
+                        mime_type=mime_type or "application/pdf",
+                    ),
+                ],
+                response_mime_type="application/json",
+                temperature=0.1,
+                max_output_tokens=512,
+            )
+            parsed = _parse_json_object(raw_text, fallback)
+            confidence = float(parsed.get("confidence", 0.0) or 0.0)
+            extracted = {key: value for key, value in parsed.items() if key != "confidence"}
+            if not str(extracted.get("summary") or "").strip():
+                extracted["summary"] = fallback["summary"] or f"GovBot saved {label}, but the automatic summary should be reviewed."
+            if not str(extracted.get("document_type_hint") or "").strip():
+                extracted["document_type_hint"] = label
+            return extracted, confidence, raw_text
+        except Exception as exc:
+            logger.warning("Gemini extraction failed for %s: %s", doc_type, exc)
+            return _custom_extraction_fallback(label)
 
     if not has_gemini_client() or mime_type == "application/pdf":
         return _extract_fallback(doc_type)
@@ -777,25 +923,32 @@ def list_user_documents(phone: str, *, masked: bool = True) -> list[dict[str, An
         .execute()
     )
     docs = result.data or []
-    latest_by_type: dict[str, dict[str, Any]] = {}
+    latest_documents: list[dict[str, Any]] = []
+    seen_builtin_types: set[str] = set()
     for doc in docs:
-        latest_by_type.setdefault(doc["doc_type"], _materialize_document(doc) or doc)
-    latest_documents = list(latest_by_type.values())
+        materialized = _materialize_document(doc) or doc
+        doc_type = str(doc.get("doc_type") or "")
+        if _is_custom_document_type(doc_type):
+            latest_documents.append(materialized)
+            continue
+        if doc_type in seen_builtin_types:
+            continue
+        seen_builtin_types.add(doc_type)
+        latest_documents.append(materialized)
     if masked:
         return [mask_document_for_list(doc) for doc in latest_documents]
     return latest_documents
 
 
 def list_documents_by_type(phone: str, doc_type: str) -> list[dict[str, Any]]:
-    result = (
-        supabase.table("user_documents")
-        .select("*")
-        .eq("phone", phone)
-        .eq("doc_type", doc_type)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return [_materialize_document(doc) or doc for doc in (result.data or [])]
+    query = supabase.table("user_documents").select("*").eq("phone", phone).order("created_at", desc=True)
+    if doc_type != CUSTOM_DOC_TYPE:
+        query = query.eq("doc_type", doc_type)
+    result = query.execute()
+    documents = [_materialize_document(doc) or doc for doc in (result.data or [])]
+    if doc_type == CUSTOM_DOC_TYPE:
+        return [doc for doc in documents if doc.get("doc_type") == CUSTOM_DOC_TYPE]
+    return documents
 
 
 def get_user_document(document_id: str) -> Optional[dict[str, Any]]:
@@ -839,6 +992,8 @@ def cleanup_document_duplicates(
     kept: set[tuple[str, str]] = set()
     removed = 0
     for doc in docs:
+        if _is_custom_document_type(doc.get("doc_type")):
+            continue
         key = (doc["phone"], doc["doc_type"])
         if key in kept:
             delete_user_document(doc["id"])
@@ -857,13 +1012,20 @@ def delete_user_document(document_id: str) -> bool:
     return True
 
 
-def update_user_document(document_id: str, extracted_updates: dict[str, Any]) -> Optional[dict[str, Any]]:
+def update_user_document(
+    document_id: str,
+    extracted_updates: dict[str, Any],
+    *,
+    custom_label: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
     document = get_user_document(document_id)
     if not document:
         return None
 
     ocr_data = document.get("ocr_extracted_data") or document.get("extracted_data") or {}
     merged_corrections = merge_extracted_data(document.get("user_corrected_data") or {}, extracted_updates)
+    if document.get("doc_type") == CUSTOM_DOC_TYPE and custom_label is not None:
+        merged_corrections[CUSTOM_LABEL_FIELD] = _normalize_custom_label(custom_label)
     merged_data = merge_extracted_data(ocr_data, merged_corrections)
     payload = {
         "ocr_extracted_data": ocr_data,
@@ -902,6 +1064,7 @@ async def ingest_document(
     session_id: Optional[str] = None,
     file_name: Optional[str] = None,
     mime_type: Optional[str] = None,
+    custom_label: Optional[str] = None,
 ) -> dict[str, Any]:
     if doc_type not in DOC_TYPES:
         raise ValueError(f"Unsupported document type: {doc_type}")
@@ -909,6 +1072,8 @@ async def ingest_document(
         raise ValueError(f"Unsupported source: {source}")
     if not image_b64 and not media_id:
         raise ValueError("Provide image_b64 or media_id")
+    normalized_custom_label = _normalize_custom_label(custom_label) if doc_type == CUSTOM_DOC_TYPE else None
+    stored_doc_type = _build_custom_document_storage_type(normalized_custom_label) if doc_type == CUSTOM_DOC_TYPE else doc_type
 
     if media_id:
         content, detected_mime, detected_name = await download_whatsapp_media(media_id)
@@ -925,7 +1090,7 @@ async def ingest_document(
 
     mime_type = validate_upload_payload(mime_type=mime_type, file_name=file_name, content=content)
 
-    existing_docs = list_documents_by_type(phone, doc_type)
+    existing_docs = [] if doc_type == CUSTOM_DOC_TYPE else list_documents_by_type(phone, doc_type)
     existing_doc = existing_docs[0] if existing_docs else None
 
     path = _storage_path(phone, doc_type, mime_type, file_name)
@@ -939,6 +1104,7 @@ async def ingest_document(
             doc_type,
             image_b64=payload_b64,
             mime_type=mime_type,
+            custom_label=normalized_custom_label,
         )
     except Exception as exc:
         _remove_storage_path(path)
@@ -974,7 +1140,13 @@ async def ingest_document(
             "issue_date": None,
             "expiry_date": None,
             "flags": [],
-            "message": "No validity check required.",
+            "message": (
+                "Custom document summary generated successfully."
+                if doc_type == CUSTOM_DOC_TYPE and confidence >= 0.6
+                else "Custom document saved, but the automatic summary should be reviewed."
+                if doc_type == CUSTOM_DOC_TYPE
+                else "No validity check required."
+            ),
             "verification_status": "not_applicable",
         }
 
@@ -994,10 +1166,15 @@ async def ingest_document(
     expiry_date = _parse_date(validation.get("expiry_date"))
     status = _record_status(doc_type, confidence, validation)
     status_reason = _status_reason(doc_type, status, validation, confidence)
+    stored_ocr_data = dict(extracted_data)
+    stored_extracted_data = dict(extracted_data)
+    if doc_type == CUSTOM_DOC_TYPE and normalized_custom_label:
+        stored_ocr_data[CUSTOM_LABEL_FIELD] = normalized_custom_label
+        stored_extracted_data[CUSTOM_LABEL_FIELD] = normalized_custom_label
 
     payload = {
         "phone": phone,
-        "doc_type": doc_type,
+        "doc_type": stored_doc_type,
         "source": source,
         "storage_path": path,
         "mime_type": mime_type,
@@ -1006,9 +1183,9 @@ async def ingest_document(
         "verification_status": validation.get("verification_status", "unknown"),
         "issue_date": issue_date.isoformat() if issue_date else None,
         "expiry_date": expiry_date.isoformat() if expiry_date else None,
-        "ocr_extracted_data": extracted_data,
+        "ocr_extracted_data": stored_ocr_data,
         "user_corrected_data": {},
-        "extracted_data": extracted_data,
+        "extracted_data": stored_extracted_data,
         "source_confidence": confidence,
         "confidence": confidence,
         "status_reason": status_reason,
@@ -1018,7 +1195,7 @@ async def ingest_document(
     }
     old_storage_path = existing_doc.get("storage_path") if existing_doc else None
     try:
-        if existing_doc:
+        if existing_doc and doc_type != CUSTOM_DOC_TYPE:
             updated_resp = (
                 supabase.table("user_documents")
                 .update(payload)
@@ -1033,10 +1210,11 @@ async def ingest_document(
         _remove_storage_path(path)
         raise DocumentVaultError("storage", "Storage failed: document metadata could not be saved.") from exc
 
-    if existing_doc and old_storage_path and old_storage_path != path:
+    if existing_doc and doc_type != CUSTOM_DOC_TYPE and old_storage_path and old_storage_path != path:
         _remove_storage_path(old_storage_path)
-    for stale in existing_docs[1:]:
-        delete_user_document(stale["id"])
+    if doc_type != CUSTOM_DOC_TYPE:
+        for stale in existing_docs[1:]:
+            delete_user_document(stale["id"])
 
     profile_updates = build_profile_updates(doc_type, extracted_data)
     try:

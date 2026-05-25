@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import {
   BadgeIndianRupee,
   CircleX,
@@ -9,6 +10,8 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { AnimatedCurrency } from '@/components/AnimatedCounter';
+import { fetchOfficialJson, logoutOfficialSession } from '@/lib/officialApi';
+import { useOfficialRouteGuard } from '@/lib/useOfficialRouteGuard';
 import {
   AnalyticsEmptyState,
   AnalyticsLoadingState,
@@ -38,25 +41,52 @@ interface DisbursementSummary {
 }
 
 export default function DisbursementsDashboard() {
+  const router = useRouter();
+  const { isAuthorized, isChecking } = useOfficialRouteGuard();
   const [summary, setSummary] = useState<DisbursementSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchDisbursementData();
-  }, []);
+    if (!isAuthorized) {
+      return;
+    }
 
-  const fetchDisbursementData = async () => {
-    try {
-      const res = await fetch('/api/analytics/disbursements/summary');
-      if (res.ok) {
-        const data = await res.json();
-        setSummary(data);
+    let active = true;
+
+    const loadDisbursementData = async () => {
+      try {
+        const data = await fetchOfficialJson<DisbursementSummary>(router, '/api/analytics/disbursements/summary');
+        if (active) {
+          setSummary(data);
+        }
+      } catch (err) {
+        console.error('Disbursement data error:', err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
+    };
+
+    void loadDisbursementData();
+    return () => {
+      active = false;
+    };
+  }, [isAuthorized, router]);
+
+  const handleRefresh = async () => {
+    try {
+      const data = await fetchOfficialJson<DisbursementSummary>(router, '/api/analytics/disbursements/summary');
+      setSummary(data);
     } catch (err) {
       console.error('Disbursement data error:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOfficialLogout = () => {
+    logoutOfficialSession(router);
   };
 
   const formatDate = (dateStr: string | null) => {
@@ -84,7 +114,7 @@ export default function DisbursementsDashboard() {
   const failedCount = summary?.status_counts?.failed || 0;
   const recentDisbursements = summary?.recent_disbursements || [];
 
-  if (loading) {
+  if (isChecking || !isAuthorized || loading) {
     return (
       <AnalyticsLoadingState
         title="Loading disbursement analytics"
@@ -106,7 +136,10 @@ export default function DisbursementsDashboard() {
         summaryLabel="Pending amount"
         summaryValue={<AnimatedCurrency end={summary?.pending_amount_inr || 0} />}
         summaryText="Queued payout volume waiting for the next processing pass."
-        onRefresh={fetchDisbursementData}
+        onRefresh={handleRefresh}
+        onLogout={handleOfficialLogout}
+        backHref="/gov-dashboard"
+        backLabel="Back to Dashboard"
       >
         <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <AnalyticsStatCard

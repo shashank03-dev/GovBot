@@ -6,7 +6,7 @@ import string
 from gov_agent.db import supabase
 
 
-class PMSSState(TypedDict):
+class SSPState(TypedDict):
     name: str
     dob: str
     income: int
@@ -21,31 +21,31 @@ class PMSSState(TypedDict):
     error: str
 
 
-async def check_completeness(state: PMSSState) -> PMSSState:
+async def check_completeness(state: SSPState) -> SSPState:
     required = ["name", "dob", "income", "caste", "institution", "course", "media_id"]
     state["missing_fields"] = [k for k in required if not state.get(k)]
     return state
 
 
-async def verify_eligibility(state: PMSSState) -> PMSSState:
+async def verify_eligibility(state: SSPState) -> SSPState:
     try:
         income_ok = int(state["income"]) < 250000
         caste_ok = state["caste"].upper() in ["SC", "ST", "OBC"]
         state["eligible"] = bool(income_ok and caste_ok)
         if not income_ok:
-            state["error"] = "Income ₹{} exceeds ₹2.5L limit for PMSS".format(state["income"])
+            state["error"] = "Income ₹{} exceeds ₹2.5L limit for SSP".format(state["income"])
         elif not caste_ok:
-            state["error"] = f"Caste {state['caste']} not eligible for PMSS (SC/ST/OBC only)"
+            state["error"] = f"Caste {state['caste']} not eligible for SSP (SC/ST/OBC only)"
     except Exception as e:
         state["eligible"] = False
         state["error"] = f"Verification error: {e}"
     return state
 
 
-async def execute_application(state: PMSSState) -> PMSSState:
+async def execute_application(state: SSPState) -> SSPState:
     try:
         conf = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        confirmation = f"PMSS2026{conf}"
+        confirmation = f"SSP2026{conf}"
 
         today = datetime.now()
         from datetime import timedelta
@@ -60,9 +60,9 @@ async def execute_application(state: PMSSState) -> PMSSState:
         supabase.table("applications").insert({
             "phone": state.get("phone", "unknown"),
             "confirmation_number": confirmation,
-            "service": "PMSS Scholarship",
+            "service": "SSP Scholarship",
             "status": "submitted",
-            "portal": "pmss",
+            "portal": "ssp",
             "timeline_steps": timeline_steps,
         }).execute()
 
@@ -75,7 +75,7 @@ async def execute_application(state: PMSSState) -> PMSSState:
     return state
 
 
-async def handle_error(state: PMSSState) -> PMSSState:
+async def handle_error(state: SSPState) -> SSPState:
     if not state.get("error"):
         if state.get("missing_fields"):
             state["error"] = "Missing required fields: " + ", ".join(state["missing_fields"])
@@ -84,15 +84,15 @@ async def handle_error(state: PMSSState) -> PMSSState:
     return state
 
 
-def route_completeness(state: PMSSState) -> str:
+def route_completeness(state: SSPState) -> str:
     return "handle_error" if state.get("missing_fields") else "verify_eligibility"
 
 
-def route_eligibility(state: PMSSState) -> str:
+def route_eligibility(state: SSPState) -> str:
     return "execute_application" if state.get("eligible") else "handle_error"
 
 
-workflow = StateGraph(PMSSState)
+workflow = StateGraph(SSPState)
 workflow.add_node("check_completeness", check_completeness)
 workflow.add_node("verify_eligibility", verify_eligibility)
 workflow.add_node("execute_application", execute_application)
@@ -102,11 +102,11 @@ workflow.add_conditional_edges("check_completeness", route_completeness)
 workflow.add_conditional_edges("verify_eligibility", route_eligibility)
 workflow.add_edge("execute_application", END)
 workflow.add_edge("handle_error", END)
-pmss_graph = workflow.compile()
+ssp_graph = workflow.compile()
 
 
-async def run_pmss_application(data: dict) -> dict:
-    state = PMSSState(
+async def run_ssp_application(data: dict) -> dict:
+    state = SSPState(
         name=data.get("name", ""),
         dob=data.get("dob", ""),
         income=int(data.get("income", 0)) if data.get("income") else 0,
@@ -120,5 +120,5 @@ async def run_pmss_application(data: dict) -> dict:
         submission_result={},
         error=""
     )
-    result = await pmss_graph.ainvoke(state)
+    result = await ssp_graph.ainvoke(state)
     return dict(result)

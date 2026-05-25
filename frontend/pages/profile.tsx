@@ -157,6 +157,7 @@ export default function ProfilePage() {
   const [activeSection, setActiveSection] = useState('personal');
   const [ocrLoading, setOcrLoading] = useState(false);
   const [vaultLoading, setVaultLoading] = useState(false);
+  const [sspLoading, setSspLoading] = useState(false);
   const [vaultAlert, setVaultAlert] = useState<string[]>([]);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
@@ -216,7 +217,72 @@ export default function ProfilePage() {
     return dirty;
   };
 
+  const getAllDirtyFields = (): Record<string, string | number | boolean> => {
+    const dirty: Record<string, string | number | boolean> = {};
+    const numericFields = new Set(['income', 'marks_pct']);
+
+    for (const section of SECTIONS) {
+      for (const field of section.fields) {
+        const rawValue = formData[field.key];
+        const formVal = String(rawValue ?? '').trim();
+        const savedVal = String(profile[field.key] ?? '').trim();
+        if (!formVal || formVal === savedVal) {
+          continue;
+        }
+        dirty[field.key] = numericFields.has(field.key) ? parseFloat(formVal) : formVal;
+      }
+    }
+
+    return dirty;
+  };
+
   const hasDirtyFields = Object.keys(getDirtyFields(activeSection)).length > 0;
+
+  const syncProfileToSSP = async () => {
+    const phone = getStoredPhone();
+    if (!phone) return;
+
+    setSspLoading(true);
+    try {
+      const token = localStorage.getItem('govbot_token');
+      const pendingProfileUpdates = getAllDirtyFields();
+
+      if (Object.keys(pendingProfileUpdates).length > 0) {
+        const saveResponse = await fetch(buildProxyApiPath(`profile/${encodeURIComponent(phone)}`), buildBackendRequestInit({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(pendingProfileUpdates),
+        }));
+
+        const savedProfile: ProfileApiResponse = await saveResponse.json().catch(() => ({}));
+        if (!saveResponse.ok) {
+          showToast(savedProfile.detail || 'Save your profile before syncing to SSP', 'error');
+          setSspLoading(false);
+          return;
+        }
+        applyProfileData(savedProfile);
+      }
+
+      const syncResponse = await fetch(buildProxyApiPath(`ssp/draft/${encodeURIComponent(phone)}/sync-profile`), buildBackendRequestInit({
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }));
+      const syncPayload = await syncResponse.json().catch(() => ({}));
+
+      if (!syncResponse.ok) {
+        showToast(syncPayload.detail || 'Could not add your profile to SSP', 'error');
+        setSspLoading(false);
+        return;
+      }
+
+      const updatedCount = Number(syncPayload.updated_count || 0);
+      showToast(updatedCount > 0 ? `Added ${updatedCount} profile fields to SSP` : 'Your SSP draft is already up to date');
+      await router.push('/ssp/dashboard');
+    } catch {
+      showToast('Could not add your profile to SSP', 'error');
+    }
+    setSspLoading(false);
+  };
 
   const saveSection = async () => {
     const phone = getStoredPhone();
@@ -375,6 +441,14 @@ export default function ProfilePage() {
               >
                 <ScanLine size={14} /> Upload Aadhaar
               </Link>
+              <button
+                onClick={syncProfileToSSP}
+                disabled={sspLoading}
+                className="flex items-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-semibold hover:bg-emerald-100 transition-colors disabled:opacity-50"
+              >
+                <GraduationCap size={14} />
+                {sspLoading ? 'Adding To SSP...' : 'Apply Profile To SSP'}
+              </button>
             </div>
             {vaultAlert.length > 0 && (
               <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -516,13 +590,22 @@ export default function ProfilePage() {
           {/* CTA */}
           <div className="bg-gradient-to-r from-orange-500 to-amber-500 rounded-2xl p-5 text-white">
             <h3 className="font-bold text-base mb-1">Ready to auto-fill any form?</h3>
-            <p className="text-sm text-orange-100 mb-3">Paste any government portal URL and GovBot fills it instantly from your profile.</p>
-            <Link
-              href="/form-fill"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-white text-orange-600 rounded-xl text-sm font-bold hover:bg-orange-50 transition-colors"
-            >
-              Try Auto-Fill <ChevronRight size={14} />
-            </Link>
+            <p className="text-sm text-orange-100 mb-3">Push this profile directly into your SSP draft or paste any government portal URL for generic auto-fill.</p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={syncProfileToSSP}
+                disabled={sspLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white text-emerald-700 rounded-xl text-sm font-bold hover:bg-orange-50 transition-colors disabled:opacity-60"
+              >
+                {sspLoading ? 'Adding To SSP...' : 'Add My Profile To SSP'} <ChevronRight size={14} />
+              </button>
+              <Link
+                href="/form-fill"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white text-orange-600 rounded-xl text-sm font-bold hover:bg-orange-50 transition-colors"
+              >
+                Try Auto-Fill <ChevronRight size={14} />
+              </Link>
+            </div>
           </div>
         </div>
       </div>
