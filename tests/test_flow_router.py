@@ -284,6 +284,40 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_state, "document_hub")
         self.assertEqual(new_data, {})
 
+    async def test_documents_hub_includes_saved_document_details(self):
+        flow_router = _load_flow_router()
+        session = {"state": "greeting", "collected_data": {}}
+        msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="documents")
+
+        with patch(
+            "gov_agent.flow_router.list_user_documents",
+            return_value=[
+                {
+                    "id": "doc-pan-1",
+                    "doc_type": "pan",
+                    "status": "ready",
+                    "source": "whatsapp",
+                    "extracted_data": {"pan_number": "ABXXXXXX4F"},
+                },
+                {
+                    "id": "doc-custom-1",
+                    "doc_type": "custom",
+                    "custom_label": "Domicile Certificate",
+                    "status": "ready",
+                    "source": "web",
+                    "extracted_data": {"summary": "Residence proof for Bengaluru."},
+                },
+            ],
+        ):
+            reply, new_state, new_data = await flow_router.route(session, msg)
+
+        self.assertIn("Document Manager", reply)
+        self.assertIn("Saved Documents", reply)
+        self.assertIn("PAN card", reply)
+        self.assertIn("Domicile Certificate", reply)
+        self.assertEqual(new_state, "document_hub")
+        self.assertEqual(new_data, {})
+
     async def test_my_docs_lists_saved_documents(self):
         flow_router = _load_flow_router()
         session = {"state": "greeting", "collected_data": {}}

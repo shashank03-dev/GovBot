@@ -191,8 +191,8 @@ def document_label(document: dict[str, Any]) -> str:
     return labels.get(doc_type, doc_type.replace("_", " ").title())
 
 
-def render_document_hub() -> str:
-    return (
+def render_document_hub(documents: list[dict[str, Any]] | None = None) -> str:
+    lines = [
         "🗂️ *Document Manager*\n\n"
         "1. View\n"
         "2. Upload\n"
@@ -201,7 +201,28 @@ def render_document_hub() -> str:
         "5. Delete\n"
         "6. Open Vault\n\n"
         "You can also type commands like *my docs*, *upload custom*, *send pan*, *edit domicile certificate*, or *delete aadhaar*."
-    )
+    ]
+    if documents is None:
+        return "".join(lines)
+
+    lines.extend(["", "", "📄 *Saved Documents*"])
+    if not documents:
+        lines.extend(["", "No saved documents yet.", "", "Reply *UPLOAD* to add one or *OPEN VAULT* for the website."])
+        return "\n".join(lines)
+
+    for index, document in enumerate(documents[:5], start=1):
+        line = f"{index}. {document_label(document)}"
+        summary = str((document.get("extracted_data") or {}).get("summary") or "").strip()
+        status = str(document.get("status") or "").strip()
+        if summary:
+            line += f" — {summary}"
+        elif status:
+            line += f" — {status}"
+        lines.append(line)
+    if len(documents) > 5:
+        lines.append(f"…and {len(documents) - 5} more.")
+    lines.extend(["", "Reply *MY DOCS* for the full list or choose an action above."])
+    return "\n".join(lines)
 
 
 def render_document_list(documents: list[dict[str, Any]], *, heading: str = "📄 *Your Documents*") -> str:

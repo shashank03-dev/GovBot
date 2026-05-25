@@ -464,6 +464,10 @@ def _render_document_list_reply(phone: str, *, heading: str = "📄 *Your Docume
     return wdm.render_document_list(list_user_documents(phone), heading=heading)
 
 
+def _render_document_hub_reply(phone: str) -> str:
+    return wdm.render_document_hub(list_user_documents(phone))
+
+
 def _resolve_document_target(phone: str, target_text: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     requested_type = wdm.match_document_type(target_text)
     if requested_type and requested_type != "custom":
@@ -532,7 +536,7 @@ async def _continue_document_manager_action(phone: str, action: str, document: d
             wdm.DOCUMENT_DELETE_CONFIRM_STATE,
             delete_data,
         )
-    return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
+    return (_render_document_hub_reply(phone), wdm.DOCUMENT_HUB_STATE, next_data)
 
 
 async def _start_document_manager_action(phone: str, action: str, document: dict[str, Any], data: dict[str, Any]) -> tuple[dict[str, Any] | str, str, dict]:
@@ -557,7 +561,7 @@ async def _resume_document_manager_action(phone: str, data: dict[str, Any]) -> t
     document_id = str(data.get("_document_target_id") or "").strip()
     document = get_user_document(document_id) if document_id else None
     if not action or not document:
-        return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        return (_render_document_hub_reply(phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
     unlocked = wdm.activate_unlock(data)
     return await _continue_document_manager_action(phone, action, document, unlocked)
 
@@ -580,7 +584,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     if document_command:
         kind = document_command["kind"]
         if kind == "hub":
-            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         if kind == "list":
             return (_render_document_list_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         if kind == "upload":
@@ -812,11 +816,11 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 "greeting",
                 _clear_document_manager_state(data),
             )
-        return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+        return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
 
     elif state == wdm.DOCUMENT_UPLOAD_CHOOSE_STATE:
         if normalized_body == "back":
-            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         doc_type = wdm.match_document_type(body)
         if not doc_type:
             return (
@@ -849,7 +853,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
 
     elif state == wdm.DOCUMENT_SELECT_STATE:
         if normalized_body == "back":
-            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         action = str(data.get("_document_manager_action") or "").strip()
         candidate_ids = [str(value) for value in (data.get("_document_candidate_ids") or [])]
         document = _resolve_document_from_candidates(msg.phone, body, candidate_ids)
@@ -874,7 +878,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 data,
             )
         if normalized_body == "back":
-            return (wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         return (
             "Reply *DETAILS* to edit saved fields, *REPLACE* to upload a new file, or *BACK* to cancel.",
             wdm.DOCUMENT_EDIT_MODE_STATE,
@@ -913,7 +917,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         extracted_updates = {} if field_key == "__custom_label__" else {field_key: value}
         update_user_document(document_id, extracted_updates, custom_label=custom_label)
         next_data = wdm.touch_unlock(_clear_document_manager_state(data))
-        return ("✅ Document details updated.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
+        return ("✅ Document details updated.\n\n" + _render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, next_data)
 
     elif state == wdm.DOCUMENT_REPLACE_FILE_STATE:
         document = get_user_document(str(data.get("_document_target_id") or ""))
@@ -936,7 +940,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             await _emit_activity(msg.phone, f"📄 {document.get('doc_type')} replaced in vault")
             next_data = wdm.touch_unlock(_clear_document_manager_state(data))
             return (
-                _format_upload_result(str(document.get("doc_type") or ""), result) + "\n\n" + wdm.render_document_hub(),
+                _format_upload_result(str(document.get("doc_type") or ""), result) + "\n\n" + _render_document_hub_reply(msg.phone),
                 wdm.DOCUMENT_HUB_STATE,
                 next_data,
             )
@@ -946,14 +950,14 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
 
     elif state == wdm.DOCUMENT_DELETE_CONFIRM_STATE:
         if normalized_body in {"no", "n", "cancel", "back"}:
-            return ("Deletion cancelled.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return ("Deletion cancelled.\n\n" + _render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         if normalized_body not in {"yes", "y", "confirm"}:
             return ("Reply *YES* to delete or *NO* to cancel.", wdm.DOCUMENT_DELETE_CONFIRM_STATE, data)
         document_id = str(data.get("_document_target_id") or "")
         delete_user_document(document_id)
         await _emit_activity(msg.phone, f"🗑️ Document deleted: {document_id}")
         next_data = wdm.touch_unlock(_clear_document_manager_state(data))
-        return ("✅ Document deleted.\n\n" + wdm.render_document_hub(), wdm.DOCUMENT_HUB_STATE, next_data)
+        return ("✅ Document deleted.\n\n" + _render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, next_data)
 
     if _is_renewal_question(body_lower):
         return (
