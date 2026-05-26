@@ -35,9 +35,12 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
     normalized = raw.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _build_explorer_url(tx_hash: str | None) -> str | None:

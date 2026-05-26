@@ -217,3 +217,61 @@ def test_beneficiary_status_flags_bank_verification_when_release_exists(
     assert payload["release_authorized"] is True
     assert payload["action_required"] == "verify_bank"
     assert payload["release_tx_hash"] == "0xreleasehash"
+
+
+def test_treasury_summary_handles_naive_application_timestamps_after_release(
+    client: TestClient,
+    official_headers: dict[str, str],
+    ledger_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ledger_file.write_text(
+        json.dumps(
+            {
+                "sanctions": [
+                    {
+                        "scheme": "nsp",
+                        "amount_inr": 500000,
+                        "sanction_tx_hash": "0xsanctionnsp",
+                        "sanctioned_at": "2026-05-26T10:00:00Z",
+                        "authority": "Central Treasury",
+                    }
+                ],
+                "releases": [
+                    {
+                        "release_id": "rel-2",
+                        "scheme": "nsp",
+                        "amount_inr": 250000,
+                        "beneficiary_count": 10,
+                        "ready_count": 0,
+                        "blocked_count": 10,
+                        "tx_hash": "0xreleasehashnspdemo",
+                        "wallet_address": "0xapprovedwallet",
+                        "released_at": "2026-05-26T12:00:00+00:00",
+                        "official_username": "district-ops",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "gov_agent.treasury_release._list_applications",
+        lambda: [
+            {
+                "confirmation_number": "NSP2026A1",
+                "phone": "919632363213",
+                "portal": "nsp",
+                "submitted_at": "2026-05-26T11:00:00",
+                "status": "submitted",
+            }
+        ],
+    )
+    monkeypatch.setattr("gov_agent.treasury_release._verified_phones", lambda: set())
+
+    response = client.get("/api/treasury/summary", headers=official_headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    nsp = next(item for item in payload["schemes"] if item["scheme"] == "nsp")
+    assert nsp["pending_beneficiary_count"] == 0
