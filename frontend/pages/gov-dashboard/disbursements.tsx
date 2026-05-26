@@ -10,6 +10,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { AnimatedCurrency } from '@/components/AnimatedCounter';
+import TreasuryReleasePanel from '@/components/gov-dashboard/TreasuryReleasePanel';
 import { fetchOfficialJson, logoutOfficialSession } from '@/lib/officialApi';
 import { useOfficialRouteGuard } from '@/lib/useOfficialRouteGuard';
 import {
@@ -171,6 +172,8 @@ export default function DisbursementsDashboard() {
             icon={CircleX}
           />
         </section>
+
+        <TreasuryReleasePanel onReleased={handleRefresh} />
 
         <div className="mb-8">
           <AnalyticsSection

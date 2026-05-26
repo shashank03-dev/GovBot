@@ -142,6 +142,13 @@ app.include_router(
     tags=["Admin"]
 )
 
+from gov_agent import treasury_router
+app.include_router(
+    treasury_router.router,
+    prefix="/api",
+    tags=["Treasury"]
+)
+
 from gov_agent import profile_router
 app.include_router(
     profile_router.router,

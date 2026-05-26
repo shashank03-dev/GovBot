@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { ArrowRight, CheckCircle2, Landmark, ShieldCheck, WalletCards } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ExternalLink, Landmark, ShieldCheck, WalletCards } from 'lucide-react';
 import CredentialCard from '@/components/CredentialCard';
 import AnimatedCounter from '@/components/AnimatedCounter';
+import {
+  resolveBeneficiaryReleaseMessage,
+  shouldShowUrgentBankVerificationBanner,
+} from '@/lib/treasuryRelease.mjs';
 
 interface Credential {
   credential_id: string;
@@ -23,8 +27,18 @@ interface WalletData {
   total_amount: number;
 }
 
+interface BeneficiaryReleaseStatus {
+  release_authorized: boolean;
+  action_required: string;
+  message?: string;
+  release_tx_hash?: string;
+  release_explorer_url?: string;
+  scheme?: string;
+}
+
 export default function CredentialWallet() {
   const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [releaseStatus, setReleaseStatus] = useState<BeneficiaryReleaseStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -40,8 +54,12 @@ export default function CredentialWallet() {
 
   const fetchWalletData = async (phone: string) => {
     try {
-      const response = await fetch(`/api/credentials/${phone}`);
-      const data = await response.json();
+      const [walletResponse, releaseResponse] = await Promise.all([
+        fetch(`/api/credentials/${phone}`),
+        fetch(`/api/treasury/beneficiary/${phone}`),
+      ]);
+      const data = await walletResponse.json();
+      const releaseData = (await releaseResponse.json().catch(() => null)) as BeneficiaryReleaseStatus | null;
 
       if (data.credentials) {
         const total = data.credentials.reduce((sum: number, credential: Credential) => sum + credential.amount, 0);
@@ -51,6 +69,9 @@ export default function CredentialWallet() {
           credentials: data.credentials,
           total_amount: total,
         });
+      }
+      if (releaseData) {
+        setReleaseStatus(releaseData);
       }
     } catch {
       setError('Failed to load credentials');
@@ -169,11 +190,60 @@ export default function CredentialWallet() {
                 transition={{ duration: 0.35, delay: 0.16 }}
               >
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-600">Verification network</p>
-                <p className="mt-3 text-xl font-bold text-slate-900">Polygon Mumbai</p>
+                <p className="mt-3 text-xl font-bold text-slate-900">Polygon Amoy</p>
                 <p className="mt-2 text-sm text-slate-500">Proof links and verification remain ready to share.</p>
               </motion.div>
             </div>
           </section>
+
+          {releaseStatus ? (
+            <section
+              className={`rounded-[30px] border p-6 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.35)] sm:p-8 ${
+                shouldShowUrgentBankVerificationBanner(releaseStatus)
+                  ? 'border-orange-200 bg-orange-50'
+                  : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-[#e67e00]">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Release status
+                  </div>
+                  <h2 className="mt-4 text-2xl font-bold text-slate-900" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                    {releaseStatus.release_authorized
+                      ? `${String(releaseStatus.scheme || '').toUpperCase()} funds have been authorized`
+                      : 'Scholarship release pending'}
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                    {releaseStatus.message || resolveBeneficiaryReleaseMessage(releaseStatus)}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {shouldShowUrgentBankVerificationBanner(releaseStatus) ? (
+                    <Link
+                      href="/bank-verify"
+                      className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-200/60 transition-transform hover:-translate-y-0.5"
+                    >
+                      Verify bank now
+                    </Link>
+                  ) : null}
+                  {releaseStatus.release_explorer_url ? (
+                    <a
+                      href={releaseStatus.release_explorer_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:text-[#e67e00]"
+                    >
+                      On-chain proof
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_-50px_rgba(15,23,42,0.35)] sm:p-8">
             <div className="flex items-center justify-between gap-4">

@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { getErrorMessage } from '@/lib/errorMessage';
 import { resolveProtectedRouteRedirect } from '@/lib/layoutAuth.mjs';
+import {
+  resolveBeneficiaryReleaseMessage,
+  shouldShowUrgentBankVerificationBanner,
+} from '@/lib/treasuryRelease.mjs';
 
 interface VerifyResult {
   success: boolean;
@@ -25,6 +29,13 @@ interface BankReadyResult {
   disbursement_id?: string;
 }
 
+interface BeneficiaryReleaseStatus {
+  release_authorized: boolean;
+  action_required: string;
+  message?: string;
+  scheme?: string;
+}
+
 export default function BankVerifyPage() {
   const [mounted, setMounted] = useState(false);
   const [phone, setPhone] = useState('');
@@ -40,6 +51,7 @@ export default function BankVerifyPage() {
   const [otpError, setOtpError] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [releaseStatus, setReleaseStatus] = useState<BeneficiaryReleaseStatus | null>(null);
   const router = useRouter();
 
   useEffect(() => { setMounted(true); }, []);
@@ -58,6 +70,14 @@ export default function BankVerifyPage() {
       return;
     }
     setPhone(storedPhone);
+    void fetch(`/api/treasury/beneficiary/${storedPhone}`)
+      .then((response) => response.json().catch(() => null))
+      .then((payload) => {
+        if (payload) {
+          setReleaseStatus(payload as BeneficiaryReleaseStatus);
+        }
+      })
+      .catch(() => {});
   }, [mounted, router]);
 
   if (!mounted) return null;
@@ -214,6 +234,19 @@ export default function BankVerifyPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">NPCI penny drop verification for scholarship disbursement</p>
         </div>
+
+        {releaseStatus && shouldShowUrgentBankVerificationBanner(releaseStatus) ? (
+          <motion.section
+            className="rounded-2xl border border-orange-200 bg-orange-50 p-5 shadow-sm"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <h2 className="text-base font-bold text-slate-900">Funds are already released for your scholarship</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {releaseStatus.message || resolveBeneficiaryReleaseMessage(releaseStatus)}
+            </p>
+          </motion.section>
+        ) : null}
 
         {/* Form */}
         {step === 'form' && (
@@ -458,7 +491,9 @@ export default function BankVerifyPage() {
             </div>
 
             <div className="rounded-xl bg-white/70 p-3.5 text-sm text-slate-700">
-              Your bank account has been verified and OTP-confirmed. GovBot will now surface this application as payout-ready in the dashboard flow.
+              {releaseStatus?.release_authorized
+                ? 'Your bank account has been verified and OTP-confirmed. This scholarship can now move into the next payout run without needing a second release.'
+                : 'Your bank account has been verified and OTP-confirmed. GovBot will now surface this application as payout-ready in the dashboard flow.'}
             </div>
 
             <div className="flex gap-3 mt-5">

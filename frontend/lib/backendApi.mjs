@@ -110,6 +110,7 @@ export function resolveBackendProxyPath(path = '') {
     ['credentials/', '/api/credentials/'],
     ['analytics/', '/api/analytics/'],
     ['admin/', '/api/admin/'],
+    ['treasury/', '/api/treasury/'],
     ['live/', '/live/'],
     ['applications/', '/applications/'],
     ['profile/', '/profile/'],
