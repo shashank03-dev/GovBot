@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { session } = req.query;
@@ -7,9 +8,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === 'GET') {
     try {
+      const backendPath = `/live/${session}`;
+      const authorization = resolveSessionAuthorizationHeader({ req, backendPath });
       const response = await fetch(
-        buildBackendUrl(`/live/${session}`),
-        buildBackendRequestInit(),
+        buildBackendUrl(backendPath),
+        buildBackendRequestInit({
+          headers: authorization ? { Authorization: authorization } : {},
+        }),
       );
       const data = await response.json();
       return res.status(response.status).json(data);
@@ -20,11 +25,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === 'POST') {
     try {
+      const backendPath = `/live/${session}/update`;
+      const authorization = resolveSessionAuthorizationHeader({ req, backendPath });
       const response = await fetch(
-        buildBackendUrl(`/live/${session}/update`),
+        buildBackendUrl(backendPath),
         buildBackendRequestInit({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authorization ? { Authorization: authorization } : {}),
+          },
           body: JSON.stringify(req.body),
         }),
       );

@@ -4,16 +4,14 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 
-from gov_agent.config import SECRET_KEY
 from gov_agent.db import supabase
 from gov_agent.digilocker_router import get_latest_review_session_for_phone
+from gov_agent.user_auth import optional_jwt as _optional_jwt
+from gov_agent.user_auth import require_phone_access
 
 router = APIRouter()
-_bearer = HTTPBearer(auto_error=False)
 
 
 class SSPDraftRequest(BaseModel):
@@ -39,20 +37,6 @@ _REQUIRED_SUBMISSION_FIELDS = (
     "college_name",
     "course_name",
 )
-
-
-def _optional_jwt(
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> Optional[str]:
-    if not creds:
-        return None
-    try:
-        payload = jwt.decode(creds.credentials, SECRET_KEY, algorithms=["HS256"])
-        return payload.get("phone") or payload.get("sub")
-    except JWTError:
-        return None
-
-
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -233,15 +217,13 @@ def _persist_draft(phone: str, draft: dict[str, Any], state: str = "ssp_web_draf
 
 @router.get("/ssp/draft/{phone}")
 async def get_ssp_draft(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     return {"draft": _build_draft(phone)}
 
 
 @router.put("/ssp/draft/{phone}")
 async def save_ssp_draft(phone: str, body: SSPDraftRequest, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
 
     draft = {
         "current_step": body.current_step,
@@ -256,8 +238,7 @@ async def save_ssp_draft(phone: str, body: SSPDraftRequest, token_phone: Optiona
 
 @router.post("/ssp/draft/{phone}/sync-profile")
 async def sync_ssp_profile(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
 
     draft, updated_fields = _sync_profile_into_draft(phone)
     return {
@@ -270,8 +251,7 @@ async def sync_ssp_profile(phone: str, token_phone: Optional[str] = Depends(_opt
 
 @router.post("/ssp/draft/{phone}/submit")
 async def submit_ssp_draft(phone: str, body: SSPDraftRequest, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
 
     if body.confirmation_number and body.submission_status == "submitted":
         return {

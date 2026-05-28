@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,10 +17,14 @@ export default async function handler(
   }
 
   try {
+    const backendPath = `/api/digilocker/mock/status/${consent_id}`;
+    const authorization = resolveSessionAuthorizationHeader({ req, backendPath });
     // Forward to backend
     const response = await fetch(
-      buildBackendUrl(`/api/digilocker/mock/status/${consent_id}`),
-      buildBackendRequestInit(),
+      buildBackendUrl(backendPath),
+      buildBackendRequestInit({
+        headers: authorization ? { Authorization: authorization } : {},
+      }),
     );
 
     if (!response.ok) {

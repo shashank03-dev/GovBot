@@ -140,8 +140,17 @@ export function useSSPDraft(defaultStep = 'step-1') {
     return nextDraft;
   };
 
-  const submitDraft = async () => {
+  const submitDraft = async (overrides: Partial<DraftShape> = {}) => {
     if (!phone) throw new Error('You must be logged in to submit.');
+
+    const payload: DraftShape = {
+      ...draft,
+      ...overrides,
+      fields: {
+        ...draft.fields,
+        ...(overrides.fields || {}),
+      },
+    };
 
     const response = await fetch(buildProxyApiPath(`ssp/draft/${encodeURIComponent(phone)}/submit`), {
       method: 'POST',
@@ -149,7 +158,7 @@ export function useSSPDraft(defaultStep = 'step-1') {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(draft),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {

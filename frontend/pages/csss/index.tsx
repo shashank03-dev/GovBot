@@ -49,7 +49,7 @@ export default function CSSSHome() {
         },
       ]}
       announcements={[
-        'CSSS applications for Academic Year 2025-26 can be demonstrated through the shared GovBot intake and application path.',
+        'CSSS applications for Academic Year 2025-26 run through the shared GovBot intake and application path.',
         'High marks and family income remain the two most important early qualification points for this flow.',
         'Students comparing schemes now get a visually consistent path instead of four different mini-sites.',
       ]}

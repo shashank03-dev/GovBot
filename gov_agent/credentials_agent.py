@@ -8,10 +8,13 @@ Handles credential lifecycle:
 """
 
 import logging
-import asyncio
 from datetime import datetime, timezone
 from gov_agent.db import supabase
 from gov_agent import whatsapp_sender
+from gov_agent.credential_network import (
+    build_credential_explorer_url,
+    get_credential_network_name,
+)
 from gov_agent.config import BASE_URL
 
 logger = logging.getLogger(__name__)
@@ -36,7 +39,7 @@ async def issue_credential_on_approval(confirmation_number: str, phone: str) -> 
     student_name = session_data.get("name", "Student")
     scholarship_type = app.get("portal", "NSP").upper()
     
-    # Default amount based on portal (for demo)
+    # Default amount based on portal.
     amounts = {
         "nsp": 25000,
         "ssp": 15000,
@@ -62,7 +65,7 @@ async def issue_credential_on_approval(confirmation_number: str, phone: str) -> 
             phone,
             credential.credential_id,
             credential.confirmation_number,
-            credential.polygonscan_url,
+            credential.explorer_url,
             credential.qr_code_url
         )
         
@@ -80,7 +83,7 @@ async def notify_credential_issued(
     phone: str,
     credential_id: str,
     confirmation_number: str,
-    polygonscan_url: str,
+    explorer_url: str,
     verify_url: str
 ):
     """Send WhatsApp notification for issued credential."""
@@ -89,7 +92,7 @@ async def notify_credential_issued(
         f"🎓 *Scholarship Credential Issued!*\n\n"
         f"Confirmation: {confirmation_number}\n"
         f"Credential ID: {credential_id[:20]}...\n\n"
-        f"🔗 *Blockchain Record:*\n{polygonscan_url}\n\n"
+        f"🔗 *Blockchain Record:*\n{explorer_url}\n\n"
         f"📱 *Verification Portal:*\n{verify_url}\n\n"
         f"Share this QR code or link with employers, colleges, or any verifier. "
         f"They can instantly verify your scholarship on the blockchain.\n\n"
@@ -121,7 +124,8 @@ def get_credential_summary(credential_id: str) -> dict | None:
         "blockchain_tx_hash": cred["blockchain_tx_hash"],
         "ipfs_hash": cred.get("ipfs_hash"),
         "revoked": cred.get("revoked", False),
-        "polygonscan_url": f"https://mumbai.polygonscan.com/tx/{cred['blockchain_tx_hash']}",
+        "network_name": get_credential_network_name(),
+        "explorer_url": build_credential_explorer_url(cred["blockchain_tx_hash"]),
         "verify_url": f"{BASE_URL}/verify/{cred['credential_id']}",
     }
 
@@ -140,7 +144,7 @@ def format_credential_whatsapp(credential_id: str) -> str:
         f"*Scholarship:* {summary['scholarship_type']}\n"
         f"*Amount:* ₹{summary['amount']:,.2f}\n"
         f"*Confirmation:* {summary['confirmation_number']}\n\n"
-        f"*Blockchain:* ✅ Verified on Polygon\n"
+        f"*Blockchain:* ✅ Verified on {summary['network_name']}\n"
         f"*Issued:* {summary['issued_at'][:10]}\n\n"
         f"🔗 {summary['verify_url']}"
     )
@@ -222,6 +226,8 @@ def get_wallet_summary(phone: str) -> dict:
             "amount": amount,
             "issued_at": cred["issued_at"],
             "revoked": cred.get("revoked", False),
+            "network_name": get_credential_network_name(),
+            "explorer_url": build_credential_explorer_url(cred.get("blockchain_tx_hash")),
             "verify_url": f"{BASE_URL}/verify/{cred['credential_id']}",
         })
     

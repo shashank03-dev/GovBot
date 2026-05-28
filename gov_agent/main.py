@@ -36,6 +36,12 @@ app.include_router(
     prefix="/govbot/webhook",
     tags=["WhatsApp"]
 )
+app.include_router(
+    whatsapp_webhook.router,
+    prefix="/webhook",
+    tags=["WhatsApp"],
+    include_in_schema=False,
+)
 
 from gov_agent import auth_router
 app.include_router(

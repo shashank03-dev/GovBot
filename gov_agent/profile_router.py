@@ -17,17 +17,15 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel
 
-from gov_agent.config import SECRET_KEY
 from gov_agent.db import supabase
 from gov_agent.document_vault import build_profile_updates, list_user_documents
+from gov_agent.user_auth import optional_jwt as _optional_jwt
+from gov_agent.user_auth import require_phone_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-_bearer = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------------------
 # Profile fields and their weights for completeness calculation
@@ -93,21 +91,6 @@ class ProfileResponse(BaseModel):
 _PROFILE_MUTABLE_FIELDS = set(ProfileUpsert.model_fields.keys())
 
 
-# ---------------------------------------------------------------------------
-# JWT auth dependency — accepts missing / invalid token gracefully for demo
-# ---------------------------------------------------------------------------
-def _optional_jwt(
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> Optional[str]:
-    if not creds:
-        return None
-    try:
-        payload = jwt.decode(creds.credentials, SECRET_KEY, algorithms=["HS256"])
-        return payload.get("phone") or payload.get("sub")
-    except JWTError:
-        return None
-
-
 def _compute_completeness(profile: dict) -> tuple[int, list[str]]:
     """Return (pct_complete, list_of_missing_field_names)."""
     earned = 0
@@ -153,8 +136,7 @@ def _merge_profile_fields(profile: dict[str, Any], updates: dict[str, Any]) -> d
 # ---------------------------------------------------------------------------
 @router.get("/{phone}", response_model=ProfileResponse)
 async def get_profile(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     try:
         resp = supabase.table("citizen_profiles").select("*").eq("phone", phone).limit(1).execute()
         if resp.data:
@@ -170,8 +152,7 @@ async def get_profile(phone: str, token_phone: Optional[str] = Depends(_optional
 
 @router.post("/{phone}", response_model=ProfileResponse)
 async def upsert_profile(phone: str, body: ProfileUpsert, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     try:
         updates: dict[str, Any] = {
             k: v for k, v in body.model_dump().items() if v is not None
@@ -195,8 +176,7 @@ async def upsert_profile(phone: str, body: ProfileUpsert, token_phone: Optional[
 @router.post("/{phone}/from-ocr", response_model=ProfileResponse)
 async def populate_from_ocr(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
     """Pull the latest OCR extraction for this phone and copy mapped fields into the profile."""
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     try:
         ocr_resp = (
             supabase.table("ocr_extractions")
@@ -238,8 +218,7 @@ async def populate_from_ocr(phone: str, token_phone: Optional[str] = Depends(_op
 @router.post("/{phone}/from-vault", response_model=ProfileResponse)
 async def populate_from_vault(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
     """Copy mapped fields from the latest unified vault documents into empty profile fields."""
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     try:
         documents = list_user_documents(phone, masked=False)
         if not documents:
@@ -269,8 +248,7 @@ async def populate_from_vault(phone: str, token_phone: Optional[str] = Depends(_
 @router.get("/{phone}/completeness")
 async def profile_completeness(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
     """Return completeness % and list of missing fields without full profile data."""
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
     try:
         resp = supabase.table("citizen_profiles").select("*").eq("phone", phone).limit(1).execute()
         profile = resp.data[0] if resp.data else {}

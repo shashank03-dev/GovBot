@@ -1,30 +1,53 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
+import { buildPortalDocumentChecklist } from '@/lib/documentVault.mjs';
 import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
 import {
   NSP_DEMO_DATA as DEMO_DATA,
   NSP_DEMO_SESSION_STORAGE_KEY,
   NSP_DEMO_STEPS as RAW_NSP_DEMO_STEPS,
   buildNspDemoDataFromFillValues,
+  shouldShowNspShowcaseFallbackNotice,
 } from '@/lib/nspDemoAutofill.mjs';
 
 type FormFields = Partial<typeof DEMO_DATA>;
+type DemoState = 'idle' | 'running' | 'uploading' | 'needs_documents' | 'done';
+type VaultDocument = {
+  id?: string;
+  doc_type?: string;
+  custom_label?: string | null;
+  source?: string;
+  status?: string;
+  verification_status?: string;
+};
+type DocumentChecklistItem = {
+  docType: string;
+  label: string;
+  required: boolean;
+  status: 'ready' | 'needs_review' | 'missing';
+  document: VaultDocument | null;
+};
+type PortalDocumentChecklist = {
+  items: DocumentChecklistItem[];
+  missingRequiredDocuments: DocumentChecklistItem[];
+  reviewRequiredDocuments: DocumentChecklistItem[];
+  readyRequiredDocuments: DocumentChecklistItem[];
+  isComplete: boolean;
+};
 const DEMO_STEPS = RAW_NSP_DEMO_STEPS as Array<{
   field: keyof typeof DEMO_DATA;
   label: string;
   tab: number;
 }>;
-type ReviewSessionPayload = {
-  portal_label?: string;
-  documents?: Array<{ name: string }>;
-  missing_fields?: string[];
-  portal_prefill?: Partial<typeof DEMO_DATA>;
-};
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function formatDocumentNames(items: DocumentChecklistItem[]) {
+  return items.map((item) => item.label).join(', ');
 }
 
 const TABS = ['Applicant Details', 'Academic Details', 'Bank Details', 'Documents & Submit'];
@@ -55,9 +78,9 @@ function useTypewriter(target: string, speed = 55): [string, boolean] {
 
 // ─── Form input styled to NSP ─────────────────────────────────────────────────
 function NSPInput({
-  label, value, active, filled, type = 'text', required = false,
+  label, value, active, filled, required = false,
 }: {
-  label: string; value: string; active: boolean; filled: boolean; type?: string; required?: boolean;
+  label: string; value: string; active: boolean; filled: boolean; required?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -145,17 +168,12 @@ export default function NSPApply() {
   const [spectatorData, setSpectatorData] = useState<{ step: number; total_steps: number; form_state: Record<string, string>; status: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── OCR state ──
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrDone, setOcrDone] = useState(false);
-  const [ocrAnimField, setOcrAnimField] = useState<string | null>(null);
-
   // ── doc validator state ──
   const [docSlots, setDocSlots] = useState<DocSlot[]>(INITIAL_DOC_SLOTS);
   const docInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const [activeTab, setActiveTab] = useState(0);
-  const [demoState, setDemoState] = useState<'idle' | 'running' | 'uploading' | 'done'>('idle');
+  const [demoState, setDemoState] = useState<DemoState>('idle');
   const [filledData, setFilledData] = useState<FormFields>({});
   const [activeField, setActiveField] = useState<string | null>(null);
   const [stepLog, setStepLog] = useState<{ label: string; done: boolean }[]>([]);
@@ -163,13 +181,21 @@ export default function NSPApply() {
   const [confirmNumber, setConfirmNumber] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [showShowcaseNotice, setShowShowcaseNotice] = useState(false);
+  const [vaultDocuments, setVaultDocuments] = useState<VaultDocument[]>([]);
+  const [documentFetchState, setDocumentFetchState] = useState<'idle' | 'loading' | 'loaded' | 'unavailable' | 'error'>('idle');
+  const [documentFetchError, setDocumentFetchError] = useState('');
+  const [documentGateMessage, setDocumentGateMessage] = useState('');
   const [currentTypeTarget, setCurrentTypeTarget] = useState('');
   const [typeSpeed] = useState(55);
-  const [digilockerProfile, setDigilockerProfile] = useState<typeof DEMO_DATA | null>(null);
-  const [digilockerReview, setDigilockerReview] = useState<ReviewSessionPayload | null>(null);
   const activeDataRef = useRef<typeof DEMO_DATA>(DEMO_DATA);
+  const hasApplicantPrefillRef = useRef(false);
   const trackHref = confirmNumber ? buildTrackHref(confirmNumber) : TRACK_SEARCH_HREF;
   const dashboardHref = buildDashboardLoginHref();
+  const documentChecklist = useMemo(
+    () => buildPortalDocumentChecklist(portalId, vaultDocuments) as PortalDocumentChecklist,
+    [portalId, vaultDocuments],
+  );
 
   // ── Load DigiLocker profile from review session or localStorage ──
   useEffect(() => {
@@ -179,11 +205,12 @@ export default function NSPApply() {
     const launchedFromFormFill = router.query.source === 'form-fill';
     const storedPhone = typeof window !== 'undefined' ? (localStorage.getItem('govbot_phone') || '') : '';
 
-    const applyProfile = (profile: Partial<typeof DEMO_DATA>, reviewMeta: ReviewSessionPayload | null = null) => {
+    const applyProfile = (profile: Partial<typeof DEMO_DATA>, suppliedValues: Record<string, unknown> = profile) => {
       const merged = { ...DEMO_DATA, ...profile };
-      setDigilockerProfile(merged);
       activeDataRef.current = merged;
-      setDigilockerReview(reviewMeta);
+      if (!shouldShowNspShowcaseFallbackNotice(suppliedValues)) {
+        hasApplicantPrefillRef.current = true;
+      }
     };
 
     const loadFromFormFill = () => {
@@ -193,9 +220,9 @@ export default function NSPApply() {
 
       try {
         const fillValues = JSON.parse(stored);
-        applyProfile(buildNspDemoDataFromFillValues(fillValues), null);
+        applyProfile(buildNspDemoDataFromFillValues(fillValues), fillValues);
         return true;
-      } catch (_) {
+      } catch {
         return false;
       } finally {
         window.sessionStorage.removeItem(NSP_DEMO_SESSION_STORAGE_KEY);
@@ -205,10 +232,10 @@ export default function NSPApply() {
     const loadFromReview = async () => {
       if (!reviewSessionId || !storedPhone) return false;
       try {
-        const res = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(storedPhone)}`);
+        const res = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}`);
         const data = await res.json();
         if (!res.ok || !data.portal_prefill) return false;
-        applyProfile(data.portal_prefill, data);
+        applyProfile(data.portal_prefill);
         return true;
       } catch {
         return false;
@@ -220,8 +247,8 @@ export default function NSPApply() {
       if (!stored) return;
       try {
         const profile = JSON.parse(stored);
-        applyProfile(profile, null);
-      } catch (_) {}
+        applyProfile(profile);
+      } catch {}
     };
 
     void (async () => {
@@ -238,6 +265,50 @@ export default function NSPApply() {
   const clearTimeouts = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
   }, []);
+
+  const loadVaultDocuments = useCallback(async () => {
+    if (typeof window === 'undefined') return [] as VaultDocument[];
+
+    const storedPhone = localStorage.getItem('govbot_phone') || '';
+    const storedToken = localStorage.getItem('govbot_token') || '';
+
+    if (!storedPhone || !storedToken) {
+      setVaultDocuments([]);
+      setDocumentFetchState('unavailable');
+      setDocumentFetchError('');
+      return [] as VaultDocument[];
+    }
+
+    setDocumentFetchState('loading');
+    setDocumentFetchError('');
+
+    try {
+      const response = await fetch(
+        buildProxyApiPath(`documents/${encodeURIComponent(storedPhone)}`),
+        buildBackendRequestInit({
+          headers: { Authorization: `Bearer ${storedToken}` },
+        }),
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof payload?.detail === 'string' ? payload.detail : `Document fetch failed with ${response.status}`);
+      }
+      const documents = Array.isArray(payload?.documents) ? payload.documents as VaultDocument[] : [];
+      setVaultDocuments(documents);
+      setDocumentFetchState('loaded');
+      return documents;
+    } catch (error: unknown) {
+      setVaultDocuments([]);
+      setDocumentFetchState('error');
+      setDocumentFetchError(getErrorMessage(error, 'Could not fetch saved documents.'));
+      return [] as VaultDocument[];
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    void loadVaultDocuments();
+  }, [loadVaultDocuments, router.isReady]);
 
   // Typewriter for current field
   const [typedValue, typeDone] = useTypewriter(currentTypeTarget, typeSpeed);
@@ -284,6 +355,38 @@ export default function NSPApply() {
       setProgress(95);
       const submitApplication = async () => {
         try {
+          setDocumentGateMessage('');
+          const latestDocuments = await loadVaultDocuments();
+          const latestChecklist = buildPortalDocumentChecklist(portalId, latestDocuments) as PortalDocumentChecklist;
+          if (!latestChecklist.isComplete) {
+            const missingNames = formatDocumentNames(latestChecklist.missingRequiredDocuments);
+            const reviewNames = formatDocumentNames(latestChecklist.reviewRequiredDocuments);
+            const problemParts = [
+              missingNames ? `Missing: ${missingNames}` : '',
+              reviewNames ? `Needs review: ${reviewNames}` : '',
+            ].filter(Boolean);
+            setProgress(96);
+            setDemoState('needs_documents');
+            setActiveTab(3);
+            setDocumentGateMessage(
+              `${problemParts.join('. ')}. Please add or correct these documents, then press Submit again.`,
+            );
+            setStepLog((prev) => [
+              ...prev,
+              { label: 'Required documents checked — user input needed before submit', done: true },
+            ]);
+            return;
+          }
+
+          if (!hasApplicantPrefillRef.current) {
+            setShowShowcaseNotice(true);
+            setStepLog((prev) => [
+              ...prev,
+              { label: 'No applicant fields found — showcase sample data disclosed', done: true },
+            ]);
+            await new Promise((resolve) => setTimeout(resolve, 1400));
+          }
+
           const rawPhone = localStorage.getItem('govbot_phone') || activeDataRef.current.mobile;
           const digitsOnly = rawPhone.replace(/\D/g, '');
           const phone = digitsOnly.startsWith('91') ? digitsOnly : `91${digitsOnly.slice(-10)}`;
@@ -327,7 +430,7 @@ export default function NSPApply() {
       void submitApplication();
     }, 2500);
     return () => clearTimeout(fakeUpload);
-  }, [demoState, portalId]);
+  }, [demoState, loadVaultDocuments, portalId]);
 
   const startDemo = useCallback(() => {
     clearTimeouts();
@@ -337,6 +440,8 @@ export default function NSPApply() {
     setProgress(0);
     setShowSuccess(false);
     setSubmitError('');
+    setShowShowcaseNotice(false);
+    setDocumentGateMessage('');
     setConfirmNumber('');
     setActiveTab(0);
     stepIndexRef.current = 0;
@@ -378,47 +483,12 @@ export default function NSPApply() {
           setShowSuccess(true);
           setConfirmNumber('');
         }
-      } catch (_) {}
+      } catch {}
     };
     poll();
     pollRef.current = setInterval(poll, 1500);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [isSpectator, sessionParam]);
-
-  // ── OCR upload handler ──
-  const handleOcrUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setOcrLoading(true);
-    setOcrDone(false);
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const b64 = (reader.result as string).split(',')[1];
-        const res = await fetch('/api/ocr/extract', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_b64: b64 }),
-        });
-        const data = await res.json();
-        if (data.field_map) {
-          const fields = Object.entries(data.field_map) as [string, string][];
-          for (let i = 0; i < fields.length; i++) {
-            const [key, value] = fields[i];
-            await new Promise((r) => setTimeout(r, 300 * i));
-            setOcrAnimField(key);
-            setFilledData((prev) => ({ ...prev, [key === 'aadhaar_number' ? 'aadhaar' : key]: value }));
-          }
-          setOcrAnimField(null);
-          setOcrDone(true);
-        }
-        setOcrLoading(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (_) {
-      setOcrLoading(false);
-    }
-  }, []);
 
   // ── doc validator upload handler ──
   const handleDocUpload = useCallback(async (idx: number, file: File) => {
@@ -444,7 +514,7 @@ export default function NSPApply() {
         } : s));
       };
       reader.readAsDataURL(file);
-    } catch (_) {
+    } catch {
       setDocSlots((prev) => prev.map((s, i) => i === idx ? { ...s, status: 'invalid', message: 'Upload failed' } : s));
     }
   }, [docSlots]);
@@ -460,6 +530,8 @@ export default function NSPApply() {
     setProgress(0);
     setShowSuccess(false);
     setSubmitError('');
+    setShowShowcaseNotice(false);
+    setDocumentGateMessage('');
     setConfirmNumber('');
     setCurrentTypeTarget('');
     setActiveTab(0);
@@ -548,54 +620,7 @@ export default function NSPApply() {
             {router.query.source === 'form-fill' && (
               <div className="px-5 pt-4 pb-3 border-b border-[#E0E0E0] bg-[#E3F2FD]">
                 <div className="text-[13px] font-bold text-[#0D47A1]">Opened from GovBot form-fill proof flow</div>
-                <div className="text-[11px] text-sky-700 mt-0.5">GovBot mapped the official NSP sample to this local showcase and started the fast-fill demo.</div>
-              </div>
-            )}
-
-            {/* DigiLocker Auto-fill Banner */}
-            {!isSpectator && digilockerProfile && demoState === 'idle' && (
-              <div className="px-5 pt-4 pb-3 border-b border-[#E0E0E0] bg-[#E8F5E9]">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🔗</span>
-                    <div>
-                      <div className="text-[13px] text-[#1B5E20] font-bold">
-                        {digilockerReview ? `DigiLocker reviewed for ${digilockerReview.portal_label || 'your portal'}` : `DigiLocker Connected — ${digilockerProfile.name}`}
-                      </div>
-                      <div className="text-[11px] text-green-700 mt-0.5">
-                        {digilockerReview
-                          ? `${digilockerReview.documents?.length || 0} documents shared • ${digilockerReview.missing_fields?.length || 0} fields still need input`
-                          : 'Documents ready: Aadhaar, Income Cert, Caste Cert, Marksheet'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={startDemo}
-                    className="flex items-center gap-2 px-4 py-2 bg-[#2E7D32] text-white text-[12px] font-bold rounded transition-colors hover:bg-[#1B5E20]"
-                  >
-                    ⚡ Auto-fill from DigiLocker
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* OCR Auto-fill button */}
-            {!isSpectator && (
-              <div className="px-5 pt-4 pb-2 border-b border-[#E0E0E0] bg-[#FFFDE7]">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-[13px] text-[#F57F17] font-semibold">📷 Upload Aadhaar to Auto-fill</div>
-                  <label className={`cursor-pointer px-3 py-1.5 text-[12px] font-bold border transition-colors ${
-                    ocrLoading ? 'border-gray-300 text-gray-400 cursor-not-allowed' :
-                    ocrDone ? 'border-green-500 text-green-600 bg-green-50' :
-                    'border-[#F57F17] text-[#F57F17] hover:bg-[#F57F17] hover:text-white'
-                  }`}>
-                    {ocrLoading ? '⏳ Reading Aadhaar...' : ocrDone ? '✅ Auto-fill Complete' : '📤 Choose Aadhaar Image'}
-                    <input type="file" accept="image/*" className="hidden" onChange={handleOcrUpload} disabled={ocrLoading} />
-                  </label>
-                </div>
-                {ocrDone && (
-                  <p className="text-[11px] text-green-700 mt-1">Auto-fill complete! Please verify each field and edit if needed.</p>
-                )}
+                <div className="text-[11px] text-sky-700 mt-0.5">GovBot mapped the official NSP sample to this local workspace and started the fast-fill run.</div>
               </div>
             )}
 
@@ -631,8 +656,8 @@ export default function NSPApply() {
                   <NSPSelect label="Gender" value={val('gender')} active={isActive('gender')} filled={isFilled('gender')} required />
                   <NSPSelect label="Category" value={val('category')} active={isActive('category')} filled={isFilled('category')} required />
                   <NSPSelect label="Religion" value={val('religion')} active={isActive('religion')} filled={isFilled('religion')} />
-                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required type="tel" />
-                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} type="email" />
+                  <NSPInput label="Mobile Number" value={val('mobile')} active={isActive('mobile')} filled={isFilled('mobile')} required />
+                  <NSPInput label="Email ID" value={val('email')} active={isActive('email')} filled={isFilled('email')} />
                   <NSPInput label="Aadhaar Number" value={val('aadhaar')} active={isActive('aadhaar')} filled={isFilled('aadhaar')} required />
                   <NSPInput label="Annual Family Income (₹)" value={val('income')} active={isActive('income')} filled={isFilled('income')} required />
                   <NSPSelect label="State of Domicile" value={val('domicile')} active={isActive('domicile')} filled={isFilled('domicile')} required />
@@ -769,12 +794,20 @@ export default function NSPApply() {
 
                   {demoState !== 'done' && (
                     <button
-                      disabled={hasInvalidDocs}
+                      type="button"
+                      disabled={hasInvalidDocs || demoState !== 'needs_documents'}
+                      onClick={() => {
+                        setSubmitError('');
+                        setDocumentGateMessage('');
+                        setDemoState('uploading');
+                      }}
                       className={`w-full mt-2 py-3 font-bold text-sm ${
-                        hasInvalidDocs ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        hasInvalidDocs || demoState !== 'needs_documents'
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-[#C2185B] text-white'
                       }`}
                     >
-                      SUBMIT APPLICATION
+                      {demoState === 'needs_documents' ? 'SUBMIT AFTER ADDING DOCUMENTS' : 'SUBMIT APPLICATION'}
                     </button>
                   )}
                 </div>
@@ -817,8 +850,47 @@ export default function NSPApply() {
             <div className="p-4">
               {/* Status */}
               <div className="text-[12px] text-gray-500 mb-3 flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${demoState === 'running' || demoState === 'uploading' ? 'bg-green-500 animate-pulse' : demoState === 'done' ? 'bg-green-500' : 'bg-gray-300'}`} />
-                {demoState === 'idle' ? 'Ready' : demoState === 'running' ? 'Filling form...' : demoState === 'uploading' ? 'Uploading documents...' : '✅ Application submitted'}
+                <span className={`w-2 h-2 rounded-full ${demoState === 'running' || demoState === 'uploading' ? 'bg-green-500 animate-pulse' : demoState === 'done' ? 'bg-green-500' : demoState === 'needs_documents' ? 'bg-amber-500' : 'bg-gray-300'}`} />
+                {demoState === 'idle'
+                  ? 'Ready'
+                  : demoState === 'running'
+                    ? 'Filling form...'
+                    : demoState === 'uploading'
+                      ? 'Fetching documents...'
+                      : demoState === 'needs_documents'
+                        ? 'Documents needed'
+                        : '✅ Application submitted'}
+              </div>
+
+              <div className="mb-4 border border-[#E0E0E0] bg-[#FAFAFA] px-3 py-3 text-[12px]">
+                <div className="font-semibold text-[#424242]">Document packet</div>
+                <div className="mt-1 text-gray-500">
+                  {documentFetchState === 'loading'
+                    ? 'Fetching saved documents from GovBot vault...'
+                    : documentFetchState === 'unavailable'
+                      ? 'Login required to fetch actual saved documents.'
+                      : documentFetchState === 'error'
+                        ? documentFetchError || 'Could not fetch saved documents.'
+                        : `${documentChecklist.readyRequiredDocuments.length}/${documentChecklist.items.length} required documents ready`}
+                </div>
+                {documentChecklist.items.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {documentChecklist.items.map((item) => (
+                      <div key={item.docType} className="flex items-center justify-between gap-2">
+                        <span className="text-gray-600">{item.label}</span>
+                        <span className={`font-semibold ${
+                          item.status === 'ready'
+                            ? 'text-green-600'
+                            : item.status === 'needs_review'
+                              ? 'text-amber-700'
+                              : 'text-red-600'
+                        }`}>
+                          {item.status === 'ready' ? 'Fetched' : item.status === 'needs_review' ? 'Review' : 'Missing'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Progress bar */}
@@ -861,6 +933,34 @@ export default function NSPApply() {
                 </div>
               )}
 
+              {showShowcaseNotice && (
+                <div className="mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800">
+                  <span className="font-bold">Showcase notice:</span> No applicant fields were added before this run, so GovBot is using clearly marked sample data for the demo submission.
+                </div>
+              )}
+
+              {documentGateMessage && (
+                <div className="mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800">
+                  <span className="font-bold">Action needed:</span> {documentGateMessage}
+                  <div className="mt-3 flex flex-col gap-2">
+                    <Link href="/documents" className="border border-amber-500 px-3 py-2 text-center font-bold uppercase tracking-[0.08em] text-amber-800">
+                      Upload missing documents
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubmitError('');
+                        setDocumentGateMessage('');
+                        setDemoState('uploading');
+                      }}
+                      className="bg-[#C2185B] px-3 py-2 font-bold uppercase tracking-[0.08em] text-white"
+                    >
+                      I added documents — submit again
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Step Log */}
               {stepLog.length > 0 && (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto">
@@ -882,28 +982,6 @@ export default function NSPApply() {
                 </div>
               )}
 
-              {/* Info box when idle */}
-              {demoState === 'idle' && (
-                <div className="bg-[#FFF5F7] border border-[#F48FB1] p-3 text-[12px] text-gray-600 leading-relaxed">
-                  <div className="font-bold text-[#C2185B] mb-1">How it works</div>
-                  <ol className="space-y-1 list-decimal list-inside">
-                    <li>Send your details to GovBot on WhatsApp</li>
-                    <li>GovBot uses AI to fill this form automatically</li>
-                    <li>Application submitted in under 60 seconds</li>
-                    <li>Confirmation number sent to your WhatsApp</li>
-                  </ol>
-                </div>
-              )}
-
-              {/* WhatsApp CTA */}
-              <a
-                href="https://wa.me/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 flex items-center justify-center gap-2 w-full bg-[#25D366] text-white font-bold py-2.5 text-sm hover:bg-[#1EB855] transition-colors"
-              >
-                <span>💬</span> Apply via WhatsApp
-              </a>
             </div>
           </div>
         </div>

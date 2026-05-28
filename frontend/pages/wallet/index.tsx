@@ -18,6 +18,10 @@ interface Credential {
   issued_at: string;
   revoked: boolean;
   verify_url: string;
+  blockchain_tx_hash?: string;
+  network_name?: string;
+  explorer_url?: string;
+  polygonscan_url?: string;
 }
 
 interface WalletData {
@@ -25,6 +29,7 @@ interface WalletData {
   total_credentials: number;
   credentials: Credential[];
   total_amount: number;
+  network_name: string;
 }
 
 interface BeneficiaryReleaseStatus {
@@ -68,6 +73,7 @@ export default function CredentialWallet() {
           total_credentials: data.total,
           credentials: data.credentials,
           total_amount: total,
+          network_name: data.network_name || data.credentials[0]?.network_name || 'Configured network',
         });
       }
       if (releaseData) {
@@ -190,7 +196,7 @@ export default function CredentialWallet() {
                 transition={{ duration: 0.35, delay: 0.16 }}
               >
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sky-600">Verification network</p>
-                <p className="mt-3 text-xl font-bold text-slate-900">Polygon Amoy</p>
+                <p className="mt-3 text-xl font-bold text-slate-900">{wallet?.network_name || 'Configured network'}</p>
                 <p className="mt-2 text-sm text-slate-500">Proof links and verification remain ready to share.</p>
               </motion.div>
             </div>
@@ -313,7 +319,7 @@ export default function CredentialWallet() {
               </div>
               <div className="rounded-[26px] border border-slate-100 bg-slate-50 p-5">
                 <Landmark className="h-5 w-5 text-sky-600" />
-                <h3 className="mt-4 text-lg font-semibold text-slate-900">Ready for demo handoff</h3>
+                <h3 className="mt-4 text-lg font-semibold text-slate-900">Ready to share</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   Open a credential, copy the verification link, and move directly into the proof flow without a visual theme break.
                 </p>

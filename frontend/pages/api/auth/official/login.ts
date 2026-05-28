@@ -1,37 +1,34 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { setOfficialSessionCookie } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { phone } = req.body;
-  if (!phone) {
-    return res.status(400).json({ error: 'phone is required' });
-  }
-
   try {
     const response = await fetch(
-      buildBackendUrl('/auth/send-otp'),
+      buildBackendUrl('/auth/official/login'),
       buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify(req.body || {}),
       }),
     );
+    const payload = await response.json().catch(() => ({}));
 
-    const data = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json(data);
+    if (!response.ok || !payload?.token) {
+      return res.status(response.status).json(payload);
     }
 
+    setOfficialSessionCookie(res, payload.token);
     return res.status(200).json({
-      success: true,
-      delivery_mode: 'whatsapp',
-      message: 'OTP sent via WhatsApp',
+      username: payload.username,
+      role: payload.role,
     });
   } catch {
-    return res.status(500).json({ error: 'Failed to send OTP' });
+    return res.status(500).json({ error: 'Official login failed' });
   }
 }

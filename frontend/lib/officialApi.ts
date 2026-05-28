@@ -11,6 +11,7 @@ function redirectToOfficialLogin(router: NextRouter) {
   if (typeof window !== 'undefined') {
     clearOfficialSession(window.localStorage);
   }
+  void fetch('/api/auth/official/logout', { method: 'POST' }).catch(() => {});
 
   void router.replace(buildOfficialLoginHref(sanitizeOfficialNextPath(router.asPath)));
 }
@@ -53,6 +54,7 @@ export function logoutOfficialSession(router: NextRouter, destination = '/servic
   if (typeof window !== 'undefined') {
     clearOfficialSession(window.localStorage);
   }
+  void fetch('/api/auth/official/logout', { method: 'POST' }).catch(() => {});
 
   void router.push(destination);
 }

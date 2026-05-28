@@ -8,7 +8,7 @@ import {
   ScanLine, Link2, CheckCircle, AlertCircle, ChevronRight, Save, ArrowLeft
 } from 'lucide-react';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
-import { buildPhoneLookupCandidates, normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
+import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 import {
   hasProfileContent,
   mergeReviewIntoProfile,
@@ -182,12 +182,6 @@ export default function ProfilePage() {
     return canonicalPhone;
   };
 
-  const getStoredPhoneCandidates = () => {
-    if (typeof window === 'undefined') return [];
-    const storedPhone = localStorage.getItem('govbot_phone') || '';
-    return buildPhoneLookupCandidates(storedPhone);
-  };
-
   const applyProfileData = (data: ProfileApiResponse) => {
     const p = data.profile || {};
     setProfile(p);
@@ -210,12 +204,8 @@ export default function ProfilePage() {
         applyProfileData(data);
         const reviewSessionId = typeof router.query.review_session === 'string' ? router.query.review_session : '';
         if (reviewSessionId && !hasProfileContent(data.profile || {})) {
-          for (const candidate of getStoredPhoneCandidates()) {
-            const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(candidate)}`);
-            if (!reviewRes.ok) {
-              continue;
-            }
-
+          const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}`);
+          if (reviewRes.ok) {
             const reviewData = await reviewRes.json();
             const merged = mergeReviewIntoProfile(data.profile || {}, reviewData.imported_fields || {});
             setProfile(merged.profile);
@@ -226,7 +216,6 @@ export default function ProfilePage() {
               msg: 'Loaded your DigiLocker review into the profile form. Save any edits to keep them on your account.',
               type: 'success',
             });
-            break;
           }
         }
       } else {
@@ -234,12 +223,8 @@ export default function ProfilePage() {
         let reviewLoaded = false;
 
         if (reviewSessionId) {
-          for (const candidate of getStoredPhoneCandidates()) {
-            const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}?phone=${encodeURIComponent(candidate)}`);
-            if (!reviewRes.ok) {
-              continue;
-            }
-
+          const reviewRes = await fetch(`/api/digilocker/review/${encodeURIComponent(reviewSessionId)}`);
+          if (reviewRes.ok) {
             const reviewData = await reviewRes.json();
             const merged = mergeReviewIntoProfile({}, reviewData.imported_fields || {});
             setProfile(merged.profile);
@@ -251,7 +236,6 @@ export default function ProfilePage() {
               type: 'success',
             });
             reviewLoaded = true;
-            break;
           }
         }
 

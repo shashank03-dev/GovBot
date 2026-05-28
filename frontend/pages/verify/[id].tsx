@@ -3,6 +3,11 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { ArrowRight, ExternalLink, ShieldCheck } from 'lucide-react';
+import {
+  buildCredentialByConfirmationApiPath,
+  buildCredentialRecordApiPath,
+  buildCredentialVerifyApiPath,
+} from '@/lib/credentialApi.mjs';
 
 interface VerificationResult {
   valid: boolean;
@@ -33,6 +38,9 @@ interface CredentialData {
   };
   issued_at: string;
   revoked: boolean;
+  network_name?: string;
+  explorer_url?: string;
+  polygonscan_url?: string;
 }
 
 export default function VerifyCredential() {
@@ -51,32 +59,31 @@ export default function VerifyCredential() {
 
   const fetchCredential = async (credentialId: string) => {
     try {
-      const credResponse = await fetch(`/api/credentials/by-confirmation/${credentialId}`);
+      let credentialData: CredentialData | null = null;
 
-      if (!credResponse.ok) {
-        const altResponse = await fetch(`/api/credentials/verify/${credentialId}`);
-        if (!altResponse.ok) {
-          throw new Error('Credential not found');
-        }
-        const verifyData = await altResponse.json();
-        setVerification(verifyData);
-
-        const fullResponse = await fetch(`/api/credentials/${credentialId}`);
-        if (fullResponse.ok) {
-          const walletData = await fullResponse.json();
-          const found = walletData.credentials?.find(
-            (item: CredentialData) => item.credential_id === credentialId,
-          );
-          if (found) setCredential(found);
-        }
+      const recordResponse = await fetch(buildCredentialRecordApiPath(credentialId));
+      if (recordResponse.ok) {
+        credentialData = (await recordResponse.json()) as CredentialData;
       } else {
-        const credData = await credResponse.json();
-        setCredential(credData);
-
-        const verifyResponse = await fetch(`/api/credentials/verify/${credData.credential_id}`);
-        const verifyData = await verifyResponse.json();
-        setVerification(verifyData);
+        const confirmationResponse = await fetch(buildCredentialByConfirmationApiPath(credentialId));
+        if (confirmationResponse.ok) {
+          credentialData = (await confirmationResponse.json()) as CredentialData;
+        }
       }
+
+      if (!credentialData) {
+        throw new Error('Credential not found');
+      }
+
+      setCredential(credentialData);
+
+      const verifyResponse = await fetch(buildCredentialVerifyApiPath(credentialData.credential_id));
+      if (!verifyResponse.ok) {
+        throw new Error('Credential verification is unavailable');
+      }
+
+      const verifyData = await verifyResponse.json();
+      setVerification(verifyData);
     } catch {
       setError('Credential not found or invalid');
     } finally {
@@ -215,12 +222,14 @@ export default function VerifyCredential() {
                 <div className="mt-4 space-y-3">
                   <div className="flex flex-col gap-1 rounded-2xl border border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-sm text-slate-500">Network</span>
-                    <span className="text-sm font-semibold text-slate-900">Polygon Mumbai</span>
+                    <span className="text-sm font-semibold text-slate-900">
+                      {credential.network_name || 'Configured network'}
+                    </span>
                   </div>
                   <div className="flex flex-col gap-1 rounded-2xl border border-slate-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-sm text-slate-500">Transaction hash</span>
                     <a
-                      href={`https://mumbai.polygonscan.com/tx/${credential.blockchain_tx_hash}`}
+                      href={credential.explorer_url || credential.polygonscan_url || '#'}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-sm font-semibold text-[#e67e00] hover:underline"

@@ -49,9 +49,9 @@ export default function NSPHome() {
         },
       ]}
       announcements={[
-        'Portal intake is active for Academic Year 2025-26 and supports fresh application demos through GovBot.',
-        'WhatsApp-first onboarding remains the fastest path for showcase runs because it feeds directly into the guided web apply flow.',
-        'Aadhaar-backed prefill, vault uploads, and bank verification can all be demonstrated from the same student record.',
+        'Portal intake is active for Academic Year 2025-26 and supports fresh applications through GovBot.',
+        'WhatsApp-first onboarding remains the fastest path for guided runs because it feeds directly into the web apply flow.',
+        'Aadhaar-backed prefill, vault uploads, and bank verification can all be handled from the same student record.',
       ]}
       requirements={[
         'Student identity details exactly as they should appear in the application.',
@@ -61,7 +61,7 @@ export default function NSPHome() {
       ]}
       about={[
         'The National Scholarship Portal acts as the broad scholarship layer inside GovBot. It is the most flexible entry point when you want to show application intake, profile reuse, document handling, and live status tracking in one story.',
-        'For demos, NSP works especially well because it exposes both sides of the system: guided citizen onboarding at the start and dashboard-based follow-through after submission.',
+        'NSP works especially well because it exposes both sides of the system: guided citizen onboarding at the start and dashboard-based follow-through after submission.',
       ]}
     />
   );

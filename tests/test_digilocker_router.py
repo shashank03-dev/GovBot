@@ -1,11 +1,14 @@
 import types
 import unittest
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jose import jwt
 
 from gov_agent import digilocker_router
+from gov_agent.config import SECRET_KEY
 
 
 class _FakeResult:
@@ -107,6 +110,11 @@ def _build_client() -> TestClient:
     return TestClient(app)
 
 
+def _auth_headers(phone: str) -> dict[str, str]:
+    token = jwt.encode({"phone": phone, "sub": phone}, str(SECRET_KEY), algorithm="HS256")
+    return {"Authorization": f"Bearer {token}"}
+
+
 class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_mock_consent_stores_portal_aware_scope_and_context(self):
         fake_supabase = _FakeSupabase()
@@ -120,7 +128,8 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
                     channel="web",
                     return_to="/nsp/apply",
                     selected_optional_docs=["marksheet"],
-                )
+                ),
+                token_phone="919999999999",
             )
 
         stored = fake_supabase.storage["digilocker_consents"][0]
@@ -132,30 +141,36 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session_context["portal"], "nsp")
         self.assertEqual(session_context["channel"], "web")
         self.assertEqual(session_context["return_to"], "/nsp/apply")
+        callback_token = parse_qs(urlparse(consent.redirect_url).query)["callback_token"][0]
+        self.assertTrue(callback_token)
 
     async def test_mock_callback_returns_review_session_and_only_selected_documents(self):
         fake_supabase = _FakeSupabase()
         fake_supabase.storage["sessions"].append({"phone": "919999999999", "state": "greeting", "collected_data": {}})
-        fake_supabase.storage["digilocker_consents"].append(
-            {
-                "consent_id": "mock-consent-123",
-                "phone": "919999999999",
-                "status": "pending",
-                "scope": ["aadhaar", "income_certificate"],
-            }
-        )
-        fake_supabase.storage["sessions"][0]["collected_data"] = {
-            "digilocker_context_by_consent": {
-                "mock-consent-123": {"portal": "nsp", "channel": "web", "return_to": "/nsp/apply"}
-            }
-        }
+        with patch.object(digilocker_router, "supabase", fake_supabase):
+            consent = await digilocker_router.create_mock_consent(
+                digilocker_router.CreateConsentRequest(
+                    phone="919999999999",
+                    portal="nsp",
+                    channel="web",
+                    return_to="/nsp/apply",
+                    selected_optional_docs=[],
+                ),
+                token_phone="919999999999",
+            )
+
+        callback_token = parse_qs(urlparse(consent.redirect_url).query)["callback_token"][0]
 
         with patch.object(digilocker_router, "supabase", fake_supabase), patch.object(
             digilocker_router,
             "ingest_document",
             new=AsyncMock(return_value={"status": "ready"}),
         ):
-            result = await digilocker_router.mock_callback("mock-consent-123")
+            result = await digilocker_router.mock_callback(
+                consent.consent_id,
+                callback_token=callback_token,
+                token_phone="919999999999",
+            )
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["documents_fetched"], 2)
@@ -167,26 +182,30 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_review_and_decision_endpoints_round_trip(self):
         fake_supabase = _FakeSupabase()
         fake_supabase.storage["sessions"].append({"phone": "919999999999", "state": "greeting", "collected_data": {}})
-        fake_supabase.storage["digilocker_consents"].append(
-            {
-                "consent_id": "mock-consent-456",
-                "phone": "919999999999",
-                "status": "pending",
-                "scope": ["aadhaar", "income_certificate", "marksheet"],
-            }
-        )
-        fake_supabase.storage["sessions"][0]["collected_data"] = {
-            "digilocker_context_by_consent": {
-                "mock-consent-456": {"portal": "nsp", "channel": "web", "return_to": "/nsp/apply"}
-            }
-        }
+        with patch.object(digilocker_router, "supabase", fake_supabase):
+            consent = await digilocker_router.create_mock_consent(
+                digilocker_router.CreateConsentRequest(
+                    phone="919999999999",
+                    portal="nsp",
+                    channel="web",
+                    return_to="/nsp/apply",
+                    selected_optional_docs=["marksheet"],
+                ),
+                token_phone="919999999999",
+            )
+
+        callback_token = parse_qs(urlparse(consent.redirect_url).query)["callback_token"][0]
 
         with patch.object(digilocker_router, "supabase", fake_supabase), patch.object(
             digilocker_router,
             "ingest_document",
             new=AsyncMock(return_value={"status": "ready"}),
         ):
-            callback_result = await digilocker_router.mock_callback("mock-consent-456")
+            callback_result = await digilocker_router.mock_callback(
+                consent.consent_id,
+                callback_token=callback_token,
+                token_phone="919999999999",
+            )
 
         review_session_id = callback_result["review_session_id"]
         client = _build_client()
@@ -194,18 +213,21 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(digilocker_router, "supabase", fake_supabase):
             review_response = client.get(
                 f"/digilocker/review/{review_session_id}",
-                params={"phone": "919999999999"},
+                headers=_auth_headers("919999999999"),
             )
             decision_response = client.post(
                 f"/digilocker/review/{review_session_id}/decision",
-                json={"phone": "919999999999", "decision": "use"},
+                json={"decision": "use"},
+                headers=_auth_headers("919999999999"),
             )
+            unauthorized_response = client.get(f"/digilocker/review/{review_session_id}")
 
         self.assertEqual(review_response.status_code, 200)
         self.assertEqual(review_response.json()["portal"], "nsp")
         self.assertEqual(decision_response.status_code, 200)
         self.assertEqual(decision_response.json()["decision"], "use")
         self.assertIn("/nsp/apply?review_session=", decision_response.json()["next_url"])
+        self.assertEqual(unauthorized_response.status_code, 401)
 
 
 if __name__ == "__main__":

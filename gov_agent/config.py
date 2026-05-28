@@ -115,6 +115,11 @@ ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "")
 POLYGON_PRIVATE_KEY = os.getenv("POLYGON_PRIVATE_KEY", "")
 POLYGON_RPC_URL = os.getenv("POLYGON_RPC_URL", "https://rpc-mumbai.maticvigil.com")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS", "")
+CREDENTIAL_CHAIN_NAME = os.getenv("CREDENTIAL_CHAIN_NAME", "Polygon Mumbai")
+CREDENTIAL_EXPLORER_BASE_URL = os.getenv(
+    "CREDENTIAL_EXPLORER_BASE_URL",
+    "https://mumbai.polygonscan.com/tx/",
+)
 
 TREASURY_CHAIN_ID = int(os.getenv("TREASURY_CHAIN_ID", "80002"))
 TREASURY_NETWORK_NAME = os.getenv("TREASURY_NETWORK_NAME", "Polygon Amoy")
@@ -123,7 +128,7 @@ TREASURY_EXPLORER_BASE_URL = os.getenv(
     "https://amoy.polygonscan.com/tx/",
 )
 TREASURY_APPROVED_WALLET = os.getenv("TREASURY_APPROVED_WALLET", "").lower()
-TREASURY_RELEASE_ANCHOR_ADDRESS = os.getenv("TREASURY_RELEASE_ANCHOR_ADDRESS", "")
+TREASURY_RELEASE_ANCHOR_ADDRESS = os.getenv("TREASURY_RELEASE_ANCHOR_ADDRESS", "").strip().lower()
 TREASURY_LEDGER_FILE = os.getenv("TREASURY_LEDGER_FILE", "/tmp/govbot-treasury-ledger.json")
 TREASURY_SANCTIONS_JSON = os.getenv("TREASURY_SANCTIONS_JSON", "[]")
 

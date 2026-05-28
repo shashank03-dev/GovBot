@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { setCitizenSessionCookie } from '@/lib/authSession.mjs';
 import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 
 const MOCK_PROFILE = {
@@ -33,18 +34,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { phone, otp, mock_hint } = req.body;
+  const { phone, otp } = req.body;
   if (!phone || !otp) {
     return res.status(400).json({ error: 'phone and otp are required' });
-  }
-
-  if (
-    typeof mock_hint === 'string' &&
-    mock_hint.replace(/\D/g, '').slice(0, 6) === String(otp).replace(/\D/g, '').slice(0, 6)
-  ) {
-    const canonicalPhone = normalizeIndianPhone(phone);
-    const profile = { ...MOCK_PROFILE, mobile: canonicalPhone };
-    return res.status(200).json({ success: true, profile, delivery_mode: 'demo', phone: canonicalPhone });
   }
 
   try {
@@ -62,10 +54,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!response.ok || data.valid === false) {
       return res.status(401).json({ success: false, error: data.error || 'Invalid or expired OTP' });
     }
+    if (!data.token) {
+      return res.status(500).json({ success: false, error: 'Session token missing from auth response' });
+    }
 
     // Merge the actual phone number into the profile
     const canonicalPhone = normalizeIndianPhone(data.phone || phone);
     const profile = { ...MOCK_PROFILE, mobile: canonicalPhone };
+    setCitizenSessionCookie(res, data.token);
 
     return res.status(200).json({ success: true, profile, delivery_mode: 'whatsapp', phone: canonicalPhone });
   } catch {

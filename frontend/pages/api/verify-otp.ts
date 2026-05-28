@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { setCitizenSessionCookie } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -21,7 +22,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     const data = await response.json();
-    return res.status(response.status).json(data);
+    if (!response.ok || !data.valid || !data.token || !data.phone) {
+      return res.status(response.status).json(data);
+    }
+
+    setCitizenSessionCookie(res, data.token);
+    return res.status(response.status).json({
+      valid: true,
+      phone: data.phone,
+    });
   } catch {
     return res.status(500).json({ message: 'Internal Server Error' });
   }

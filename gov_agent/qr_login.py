@@ -1,22 +1,11 @@
 import io
 import base64
-import jwt
 from urllib.parse import quote
-from datetime import datetime, timezone, timedelta
-from gov_agent.config import SECRET_KEY, FRONTEND_URL
 
+from fastapi import HTTPException
 
-def _sanitize_next_path(next_path: str | None) -> str:
-    if not next_path or not next_path.startswith("/") or next_path.startswith("//"):
-        return "/dashboard"
-    return next_path
-
-
-def _dashboard_next_path(phone: str, next_path: str | None) -> str:
-    safe_path = _sanitize_next_path(next_path)
-    if safe_path == "/dashboard":
-        return f"/dashboard?phone={quote(str(phone), safe='')}"
-    return safe_path
+from gov_agent.config import FRONTEND_URL
+from gov_agent.web_session import _dashboard_next_path, create_login_handoff
 
 
 def generate_login_qr(phone: str, next_path: str = "/dashboard") -> str:
@@ -34,10 +23,9 @@ def generate_login_qr(phone: str, next_path: str = "/dashboard") -> str:
 
 
 def get_login_url(phone: str, next_path: str = "/dashboard") -> str:
-    token = jwt.encode(
-        {"phone": phone, "exp": datetime.now(timezone.utc) + timedelta(hours=2)},
-        SECRET_KEY,
-        algorithm="HS256",
-    )
-    safe_next_path = quote(_dashboard_next_path(phone, next_path), safe="")
-    return f"{FRONTEND_URL}/login?token={token}&phone={phone}&next={safe_next_path}"
+    try:
+        handoff_code = create_login_handoff(phone, next_path)
+        return f"{FRONTEND_URL}/login?handoff={quote(handoff_code, safe='')}"
+    except HTTPException:
+        safe_next_path = quote(_dashboard_next_path(phone, next_path), safe="")
+        return f"{FRONTEND_URL}/login?next={safe_next_path}"

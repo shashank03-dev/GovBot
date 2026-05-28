@@ -56,6 +56,55 @@ class LiveDashboardSnapshotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 403)
 
+    async def test_get_dashboard_snapshot_requires_authentication(self):
+        with self.assertRaises(HTTPException) as ctx:
+            await live_router.get_dashboard_snapshot("919876543210", token_phone=None)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_post_activity_event_normalizes_phone_before_insert(self):
+        activity_table = MagicMock()
+        activity_table.insert.return_value.execute.return_value = None
+
+        supabase_mock = MagicMock()
+        supabase_mock.table.return_value = activity_table
+
+        with patch.object(live_router, "supabase", supabase_mock):
+            response = await live_router.post_activity_event(
+                live_router.ActivityEvent(phone="09876543210", event="Application submitted"),
+                token_phone="919876543210",
+            )
+
+        self.assertEqual(response, {"ok": True})
+        inserted_payload = activity_table.insert.call_args.args[0]
+        self.assertEqual(inserted_payload["phone"], "919876543210")
+
+    async def test_get_live_session_requires_owner_authentication(self):
+        session_table = MagicMock()
+        session_table.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"session_id": "live-123", "phone": "919876543210", "status": "in_progress"}
+        ]
+
+        supabase_mock = MagicMock()
+        supabase_mock.table.return_value = session_table
+
+        with patch.object(live_router, "supabase", supabase_mock):
+            session = await live_router.get_live_session("live-123", token_phone="919876543210")
+
+        self.assertEqual(session["session_id"], "live-123")
+
+        with patch.object(live_router, "supabase", supabase_mock):
+            with self.assertRaises(HTTPException) as ctx:
+                await live_router.get_live_session("live-123", token_phone=None)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+        with patch.object(live_router, "supabase", supabase_mock):
+            with self.assertRaises(HTTPException) as ctx:
+                await live_router.get_live_session("live-123", token_phone="911234567890")
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

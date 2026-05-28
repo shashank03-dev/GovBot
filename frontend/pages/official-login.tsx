@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
 
+import { OFFICIAL_SESSION_SENTINEL } from '@/lib/authSession.mjs';
 import {
   OFFICIAL_SESSION_STORAGE_KEY,
   OFFICIAL_USERNAME_STORAGE_KEY,
@@ -49,11 +50,11 @@ export default function OfficialLoginPage() {
       });
 
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload?.token) {
+      if (!response.ok || !payload?.username) {
         throw new Error(payload?.detail || 'Official login failed');
       }
 
-      window.localStorage.setItem(OFFICIAL_SESSION_STORAGE_KEY, payload.token);
+      window.localStorage.setItem(OFFICIAL_SESSION_STORAGE_KEY, OFFICIAL_SESSION_SENTINEL);
       window.localStorage.setItem(OFFICIAL_USERNAME_STORAGE_KEY, payload.username || username.trim());
       await router.push(redirectPath);
     } catch (err) {

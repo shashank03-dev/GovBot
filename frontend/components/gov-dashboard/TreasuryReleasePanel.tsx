@@ -7,7 +7,9 @@ import { fetchOfficialJson } from '@/lib/officialApi';
 import {
   buildReleaseReference,
   buildReleaseTransactionRequest,
+  extractWalletErrorMessage,
   isApprovedTreasuryWallet,
+  resolveTreasuryNetworkConfig,
 } from '@/lib/treasuryRelease.mjs';
 
 type TreasuryWalletConfig = {
@@ -70,8 +72,8 @@ declare global {
   }
 }
 
-const AMOY_RPC_URL = 'https://rpc-amoy.polygon.technology/';
-const AMOY_EXPLORER_URL = 'https://amoy.polygonscan.com/';
+const RELEASE_MEMO_GAS_HEX = '0x186A0';
+const RELEASE_FALLBACK_GAS_HEX = '0x5208';
 
 function toChainHex(chainId: number) {
   return `0x${Number(chainId || 0).toString(16)}`;
@@ -86,6 +88,7 @@ function encodeTextToHex(value: string) {
 
 async function ensureTreasuryNetwork(wallet: EthereumProvider, chainId: number, networkName: string) {
   const chainHex = toChainHex(chainId);
+  const networkConfig = resolveTreasuryNetworkConfig(chainId, networkName);
   try {
     await wallet.request({
       method: 'wallet_switchEthereumChain',
@@ -96,19 +99,18 @@ async function ensureTreasuryNetwork(wallet: EthereumProvider, chainId: number, 
     if (code !== 4902) {
       throw error;
     }
+    if (!networkConfig.rpcUrls.length || !networkConfig.blockExplorerUrls.length) {
+      throw new Error(`Wallet does not recognize ${networkConfig.chainName} and no RPC configuration is available.`);
+    }
     await wallet.request({
       method: 'wallet_addEthereumChain',
       params: [
         {
           chainId: chainHex,
-          chainName: networkName,
-          nativeCurrency: {
-            name: 'POL',
-            symbol: 'POL',
-            decimals: 18,
-          },
-          rpcUrls: [AMOY_RPC_URL],
-          blockExplorerUrls: [AMOY_EXPLORER_URL],
+          chainName: networkConfig.chainName,
+          nativeCurrency: networkConfig.nativeCurrency,
+          rpcUrls: networkConfig.rpcUrls,
+          blockExplorerUrls: networkConfig.blockExplorerUrls,
         },
       ],
     });
@@ -220,16 +222,40 @@ export default function TreasuryReleasePanel({ onReleased }: { onReleased?: () =
         officialUsername: summary.official.username,
         createdAt: new Date().toISOString(),
       });
-      const txHash = (await window.ethereum.request({
-        method: 'eth_sendTransaction',
-        params: [
-          buildReleaseTransactionRequest({
-            from: walletAddress,
-            to: summary.wallet.release_anchor_address,
-            dataHex: encodeTextToHex(releaseReference),
-          }),
-        ],
-      })) as string;
+      const memoRequest = buildReleaseTransactionRequest({
+        from: walletAddress,
+        to: summary.wallet.release_anchor_address,
+        dataHex: encodeTextToHex(releaseReference),
+        gasHex: RELEASE_MEMO_GAS_HEX,
+      });
+
+      let txHash = '';
+      try {
+        txHash = (await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [memoRequest],
+        })) as string;
+      } catch (walletError) {
+        const walletMessage = extractWalletErrorMessage(walletError);
+        const fallbackRequest = buildReleaseTransactionRequest({
+          from: walletAddress,
+          to: summary.wallet.release_anchor_address,
+          gasHex: RELEASE_FALLBACK_GAS_HEX,
+        });
+        try {
+          txHash = (await window.ethereum.request({
+            method: 'eth_sendTransaction',
+            params: [fallbackRequest],
+          })) as string;
+        } catch (fallbackError) {
+          throw new Error(
+            `${walletMessage} Fallback proof transfer also failed: ${extractWalletErrorMessage(
+              fallbackError,
+              'Could not submit a fallback proof transfer.',
+            )}`,
+          );
+        }
+      }
 
       await fetchOfficialJson(router, '/api/treasury/release', {
         method: 'POST',
@@ -245,7 +271,7 @@ export default function TreasuryReleasePanel({ onReleased }: { onReleased?: () =
         await onReleased();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to authorize treasury release');
+      setError(extractWalletErrorMessage(err, 'Failed to authorize treasury release'));
     } finally {
       setReleaseBusy(false);
     }
@@ -267,7 +293,7 @@ export default function TreasuryReleasePanel({ onReleased }: { onReleased?: () =
             Treasury Release Console
           </h2>
           <p className="mt-2 max-w-3xl text-sm text-slate-500">
-            Connect the approved department wallet, anchor the batch on Polygon Amoy, and publish a citizen-visible release record without exposing private beneficiary details.
+            Connect the approved department wallet, anchor the batch on the configured treasury test network, and publish a citizen-visible release record without exposing private beneficiary details.
           </p>
         </div>
         <Link

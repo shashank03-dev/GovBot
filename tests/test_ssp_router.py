@@ -3,8 +3,10 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jose import jwt
 
 from gov_agent import ssp_router
+from gov_agent.config import SECRET_KEY
 
 
 class _FakeResult:
@@ -85,7 +87,19 @@ def _build_client() -> TestClient:
     return TestClient(app)
 
 
+def _auth_headers(phone: str) -> dict[str, str]:
+    token = jwt.encode({"phone": phone, "sub": phone}, str(SECRET_KEY), algorithm="HS256")
+    return {"Authorization": f"Bearer {token}"}
+
+
 class SSPRouterTests(unittest.TestCase):
+    def test_get_ssp_draft_requires_authentication(self):
+        client = _build_client()
+
+        response = client.get("/api/ssp/draft/919999999999")
+
+        self.assertEqual(response.status_code, 401)
+
     def test_get_ssp_draft_returns_saved_session_data(self):
         fake_supabase = _FakeSupabase()
         fake_supabase.storage["sessions"].append(
@@ -106,7 +120,7 @@ class SSPRouterTests(unittest.TestCase):
         client = _build_client()
 
         with patch.object(ssp_router, "supabase", fake_supabase):
-            response = client.get("/api/ssp/draft/919999999999")
+            response = client.get("/api/ssp/draft/919999999999", headers=_auth_headers("919999999999"))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["draft"]["fields"]["student_name"], "Test User")
@@ -147,7 +161,10 @@ class SSPRouterTests(unittest.TestCase):
             "get_latest_review_session_for_phone",
             return_value={"imported_fields": {"aadhaar_number": "123412341234"}},
         ):
-            response = client.post("/api/ssp/draft/919999999999/sync-profile")
+            response = client.post(
+                "/api/ssp/draft/919999999999/sync-profile",
+                headers=_auth_headers("919999999999"),
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -164,6 +181,7 @@ class SSPRouterTests(unittest.TestCase):
         with patch.object(ssp_router, "supabase", fake_supabase):
             response = client.post(
                 "/api/ssp/draft/919999999999/submit",
+                headers=_auth_headers("919999999999"),
                 json={
                     "current_step": "step-5",
                     "language": "en",

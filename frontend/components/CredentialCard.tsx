@@ -13,6 +13,8 @@ interface Credential {
   revoked: boolean;
   verify_url: string;
   blockchain_tx_hash?: string;
+  network_name?: string;
+  explorer_url?: string;
 }
 
 interface CredentialCardProps {
@@ -123,7 +125,7 @@ export default function CredentialCard({ credential, onCopy }: CredentialCardPro
               </div>
               <div className="flex-1">
                 <p className="text-slate-500 text-xs mb-2">Scan to verify on blockchain</p>
-                <p className="text-slate-400 text-xs">Polygon Mumbai Testnet</p>
+                <p className="text-slate-400 text-xs">{credential.network_name || 'Configured network'}</p>
               </div>
             </div>
 
@@ -149,14 +151,14 @@ export default function CredentialCard({ credential, onCopy }: CredentialCardPro
             <div className="space-y-4 flex-1">
               <div>
                 <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Network</p>
-                <p className="text-teal-600 font-mono text-sm">Polygon Mumbai</p>
+                <p className="text-teal-600 font-mono text-sm">{credential.network_name || 'Configured network'}</p>
               </div>
               
               {credential.blockchain_tx_hash && (
                 <div>
                   <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Transaction</p>
                   <a 
-                    href={`https://mumbai.polygonscan.com/tx/${credential.blockchain_tx_hash}`}
+                    href={credential.explorer_url || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[#ff9933] font-mono text-sm hover:underline flex items-center gap-1"

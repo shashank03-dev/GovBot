@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from gov_agent.db import supabase
-from gov_agent.profile_router import _optional_jwt
+from gov_agent.user_auth import optional_jwt as _optional_jwt
+from gov_agent.user_auth import require_authenticated_phone, require_phone_access
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +20,15 @@ class LiveUpdateRequest(BaseModel):
     status: Optional[str] = "in_progress"
 
 
-@router.get("/{session_id}")
-async def get_live_session(session_id: str):
+def _load_live_session_row(session_id: str) -> dict:
     try:
-        resp = supabase.table("live_sessions").select("*").eq("session_id", session_id).execute()
+        resp = (
+            supabase.table("live_sessions")
+            .select("*")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute()
+        )
     except Exception as e:
         logger.error("live_sessions fetch failed: %s", e)
         raise HTTPException(status_code=500, detail="DB error")
@@ -33,8 +39,25 @@ async def get_live_session(session_id: str):
     return resp.data[0]
 
 
+@router.get("/{session_id}")
+async def get_live_session(
+    session_id: str,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    session = _load_live_session_row(session_id)
+    require_phone_access(str(session.get("phone") or ""), require_authenticated_phone(token_phone))
+    return session
+
+
 @router.post("/{session_id}/update")
-async def update_live_session(session_id: str, body: LiveUpdateRequest):
+async def update_live_session(
+    session_id: str,
+    body: LiveUpdateRequest,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    session = _load_live_session_row(session_id)
+    require_phone_access(str(session.get("phone") or ""), require_authenticated_phone(token_phone))
+
     try:
         supabase.table("live_sessions").update({
             "step": body.step,
@@ -98,8 +121,7 @@ def _build_dashboard_summary(applications: list[dict]) -> dict[str, int]:
 
 @router.get("/dashboard/{phone}")
 async def get_dashboard_snapshot(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
-    if token_phone and token_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    phone = require_phone_access(phone, token_phone)
 
     try:
         applications_resp = (
@@ -138,10 +160,14 @@ async def get_dashboard_snapshot(phone: str, token_phone: Optional[str] = Depend
 
 
 @router.post("/event")
-async def post_activity_event(body: ActivityEvent):
+async def post_activity_event(
+    body: ActivityEvent,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    phone = require_phone_access(body.phone, token_phone)
     try:
         supabase.table("activity_feed").insert({
-            "phone": body.phone,
+            "phone": phone,
             "event": body.event,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
@@ -151,7 +177,8 @@ async def post_activity_event(body: ActivityEvent):
 
 
 @router.get("/feed/{phone}")
-async def get_activity_feed(phone: str):
+async def get_activity_feed(phone: str, token_phone: Optional[str] = Depends(_optional_jwt)):
+    phone = require_phone_access(phone, token_phone)
     try:
         resp = supabase.table("activity_feed").select("*").eq(
             "phone", phone

@@ -258,6 +258,25 @@ create table if not exists otp_rate_limits (
     window_start  timestamptz not null default now()
 );
 
+create table if not exists otp_verify_rate_limits (
+    phone         text        primary key,
+    request_count integer     not null default 0,
+    window_start  timestamptz not null default now()
+);
+
+create table if not exists login_handoffs (
+    id          uuid        primary key default gen_random_uuid(),
+    phone       text        not null,
+    code_hash   text        not null unique,
+    next_path   text        not null default '/dashboard',
+    expires_at  timestamptz not null,
+    used        boolean     not null default false,
+    created_at  timestamptz not null default now(),
+    used_at     timestamptz
+);
+create index if not exists login_handoffs_phone_idx on login_handoffs(phone);
+create index if not exists login_handoffs_expires_idx on login_handoffs(expires_at);
+
 -- ------------------------------------------------------------
 -- 9. fraud_flags — duplicate-Aadhaar detection
 --    aadhaar_hash is SHA-256 of the 12-digit Aadhaar number.

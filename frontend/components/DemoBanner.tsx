@@ -17,8 +17,8 @@ export default function DemoBanner({ show = true }: DemoBannerProps) {
       <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-xs text-slate-500">
         <Info className="w-3.5 h-3.5 text-[#ff9933]" />
         <span>
-          <span className="text-slate-700 font-medium">Demo Mode:</span> Using mock integrations. 
-          Production supports real DigiLocker, NPCI, and Polygon blockchain.
+          <span className="text-slate-700 font-medium">Integration Mode:</span> Using configured mock integrations.
+          Production supports real DigiLocker, NPCI, and blockchain providers.
         </span>
       </div>
     </motion.div>

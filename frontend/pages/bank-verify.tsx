@@ -3,8 +3,10 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { CITIZEN_SESSION_SENTINEL, CITIZEN_SESSION_STORAGE_KEY } from '@/lib/authSession.mjs';
 import { getErrorMessage } from '@/lib/errorMessage';
 import { resolveProtectedRouteRedirect } from '@/lib/layoutAuth.mjs';
+import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 import {
   resolveBeneficiaryReleaseMessage,
   shouldShowUrgentBankVerificationBanner,
@@ -150,11 +152,12 @@ export default function BankVerifyPage() {
   async function sendOtp() {
     setOtpLoading(true);
     setOtpError('');
+    const canonicalPhone = normalizeIndianPhone(phone) || phone.trim();
     try {
       const res = await fetch('/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: canonicalPhone }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -177,24 +180,24 @@ export default function BankVerifyPage() {
 
     setOtpLoading(true);
     setOtpError('');
+    const canonicalPhone = normalizeIndianPhone(phone) || phone.trim();
     try {
       const verifyRes = await fetch('/api/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, otp: otp.trim() }),
+        body: JSON.stringify({ phone: canonicalPhone, code: otp.trim() }),
       });
       const verifyData = await verifyRes.json().catch(() => ({}));
       if (!verifyRes.ok || !verifyData.valid) {
         throw new Error(verifyData.error || verifyData.detail || verifyData.message || 'Invalid or expired OTP');
       }
-      if (verifyData.token) {
-        localStorage.setItem('govbot_token', verifyData.token);
-      }
+      localStorage.setItem(CITIZEN_SESSION_STORAGE_KEY, CITIZEN_SESSION_SENTINEL);
+      localStorage.setItem('govbot_phone', normalizeIndianPhone(verifyData.phone || canonicalPhone));
 
       const readyRes = await fetch('/api/bank/ready', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: canonicalPhone }),
       });
       const readyData: BankReadyResult = await readyRes.json();
       if (!readyRes.ok || !readyData.ready) {

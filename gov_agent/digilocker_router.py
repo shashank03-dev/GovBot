@@ -9,21 +9,25 @@ Simulates a production-shaped DigiLocker integration:
 """
 
 import asyncio
+import hashlib
 import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from gov_agent.config import FRONTEND_URL
+from gov_agent.config import FRONTEND_URL, MOCK_DIGILOCKER
 from gov_agent.db import supabase
 from gov_agent.digilocker_agent import (
     build_portal_prefill,
     extract_prefill_data_from_documents,
 )
 from gov_agent.document_vault import ingest_document
+from gov_agent.user_auth import optional_jwt as _optional_jwt
+from gov_agent.user_auth import require_authenticated_phone, require_phone_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,7 +49,7 @@ class ConsentResponse(BaseModel):
 
 
 class ReviewDecisionRequest(BaseModel):
-    phone: str
+    phone: str | None = None
     decision: Literal["use", "edit", "save"]
 
 
@@ -132,6 +136,15 @@ _PORTAL_RULES: dict[str, dict[str, Any]] = {
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _require_mock_digilocker() -> None:
+    if not MOCK_DIGILOCKER:
+        raise HTTPException(status_code=503, detail="Mock DigiLocker is disabled")
+
+
+def _hash_callback_token(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
 def _get_portal_rules(portal: str | None) -> dict[str, Any]:
@@ -389,25 +402,32 @@ def apply_review_decision_for_phone(phone: str, review_session_id: str, decision
 
 
 @router.post("/digilocker/mock/consent", response_model=ConsentResponse)
-async def create_mock_consent(body: CreateConsentRequest):
+async def create_mock_consent(
+    body: CreateConsentRequest,
+    token_phone: str | None = Depends(_optional_jwt),
+):
     """Create a portal-aware mock DigiLocker consent request."""
+    _require_mock_digilocker()
 
+    phone = require_phone_access(body.phone, token_phone)
     rules = _get_portal_rules(body.portal)
     scope = _normalize_scope(rules, body.selected_optional_docs)
     consent_id = f"mock-consent-{uuid.uuid4().hex[:12]}"
+    callback_token = secrets.token_urlsafe(24)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
-    callback_path = f"/digilocker/callback?consent_id={consent_id}"
+    callback_path = f"/digilocker/callback?consent_id={consent_id}&callback_token={callback_token}"
     callback_url = callback_path if body.channel == "web" else f"{FRONTEND_URL}{callback_path}"
     return_to = body.return_to or rules["next_url"]
 
-    _ensure_session(body.phone)
+    _ensure_session(phone)
     _store_consent_context(
-        body.phone,
+        phone,
         consent_id,
         {
             "portal": str(body.portal or "profile").lower(),
             "channel": body.channel,
             "return_to": return_to,
+            "callback_token_hash": _hash_callback_token(callback_token),
             "required_docs": list(rules["required_docs"]),
             "optional_docs": list(rules["optional_docs"]),
             "selected_optional_docs": [doc for doc in scope if doc not in rules["required_docs"]],
@@ -417,7 +437,7 @@ async def create_mock_consent(body: CreateConsentRequest):
 
     supabase.table("digilocker_consents").insert({
         "consent_id": consent_id,
-        "phone": body.phone,
+        "phone": phone,
         "status": "pending",
         "scope": scope,
         "redirect_url": return_to,
@@ -425,7 +445,7 @@ async def create_mock_consent(body: CreateConsentRequest):
         "created_at": _utcnow_iso(),
     }).execute()
 
-    logger.info("Mock DigiLocker consent created for %s: %s", body.phone, consent_id)
+    logger.info("Mock DigiLocker consent created for %s: %s", phone, consent_id)
 
     return ConsentResponse(
         consent_id=consent_id,
@@ -436,10 +456,30 @@ async def create_mock_consent(body: CreateConsentRequest):
 
 
 @router.get("/digilocker/mock/callback")
-async def mock_callback(consent_id: str, action: str = "approve"):
+async def mock_callback(
+    consent_id: str,
+    action: str = "approve",
+    callback_token: str = Query(..., min_length=16),
+    token_phone: str | None = Depends(_optional_jwt),
+):
     """Simulate a callback from DigiLocker and create a shared review session."""
+    _require_mock_digilocker()
 
     await asyncio.sleep(2)
+
+    result = supabase.table("digilocker_consents").select("*").eq("consent_id", consent_id).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Consent not found")
+
+    consent = result.data[0]
+    phone = require_phone_access(str(consent["phone"]), require_authenticated_phone(token_phone))
+    scope = list(consent.get("scope") or [])
+    context = _get_consent_context(phone, consent_id)
+    if _hash_callback_token(callback_token) != str(context.get("callback_token_hash") or ""):
+        raise HTTPException(status_code=403, detail="Invalid callback token")
+    portal = str(context.get("portal") or "profile")
+    channel = str(context.get("channel") or "web")
+    return_to = str(context.get("return_to") or _get_portal_rules(portal)["next_url"])
 
     if action == "reject":
         supabase.table("digilocker_consents").update({
@@ -447,18 +487,6 @@ async def mock_callback(consent_id: str, action: str = "approve"):
             "updated_at": _utcnow_iso(),
         }).eq("consent_id", consent_id).execute()
         return {"status": "rejected", "message": "User denied access"}
-
-    result = supabase.table("digilocker_consents").select("*").eq("consent_id", consent_id).limit(1).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Consent not found")
-
-    consent = result.data[0]
-    phone = consent["phone"]
-    scope = list(consent.get("scope") or [])
-    context = _get_consent_context(phone, consent_id)
-    portal = str(context.get("portal") or "profile")
-    channel = str(context.get("channel") or "web")
-    return_to = str(context.get("return_to") or _get_portal_rules(portal)["next_url"])
 
     await asyncio.sleep(1)
 
@@ -528,7 +556,7 @@ async def mock_callback(consent_id: str, action: str = "approve"):
 
     logger.info("Mock DigiLocker consent completed for %s: %s", phone, consent_id)
 
-    review_url = f"/digilocker/review/{review['review_session_id']}?phone={phone}"
+    review_url = f"/digilocker/review/{review['review_session_id']}"
 
     return {
         "status": "success",
@@ -542,7 +570,11 @@ async def mock_callback(consent_id: str, action: str = "approve"):
 
 
 @router.get("/digilocker/review/{review_session_id}")
-async def get_review_session(review_session_id: str, phone: str = Query(..., min_length=10)):
+async def get_review_session(
+    review_session_id: str,
+    token_phone: str | None = Depends(_optional_jwt),
+):
+    phone = require_authenticated_phone(token_phone)
     review = _get_review_session(phone, review_session_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review session not found")
@@ -550,8 +582,16 @@ async def get_review_session(review_session_id: str, phone: str = Query(..., min
 
 
 @router.post("/digilocker/review/{review_session_id}/decision")
-async def apply_review_decision(review_session_id: str, body: ReviewDecisionRequest):
-    review = apply_review_decision_for_phone(body.phone, review_session_id, body.decision)
+async def apply_review_decision(
+    review_session_id: str,
+    body: ReviewDecisionRequest,
+    token_phone: str | None = Depends(_optional_jwt),
+):
+    review = apply_review_decision_for_phone(
+        require_authenticated_phone(token_phone),
+        review_session_id,
+        body.decision,
+    )
 
     return {
         "review_session_id": review_session_id,
@@ -563,7 +603,16 @@ async def apply_review_decision(review_session_id: str, body: ReviewDecisionRequ
 
 
 @router.get("/digilocker/mock/documents/{consent_id}")
-async def get_mock_documents(consent_id: str):
+async def get_mock_documents(
+    consent_id: str,
+    token_phone: str | None = Depends(_optional_jwt),
+):
+    _require_mock_digilocker()
+    consent_result = supabase.table("digilocker_consents").select("*").eq("consent_id", consent_id).limit(1).execute()
+    if not consent_result.data:
+        raise HTTPException(status_code=404, detail="Consent not found")
+    require_phone_access(str(consent_result.data[0]["phone"]), require_authenticated_phone(token_phone))
+
     result = supabase.table("digilocker_docs").select("*").eq("consent_id", consent_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="No documents found")
@@ -575,15 +624,25 @@ async def get_mock_documents(consent_id: str):
 
 
 @router.get("/digilocker/mock/status/{consent_id}")
-async def get_mock_status(consent_id: str):
+async def get_mock_status(
+    consent_id: str,
+    token_phone: str | None = Depends(_optional_jwt),
+):
+    _require_mock_digilocker()
     result = supabase.table("digilocker_consents").select("*").eq("consent_id", consent_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Consent not found")
+    require_phone_access(str(result.data[0]["phone"]), require_authenticated_phone(token_phone))
     return result.data[0]
 
 
 @router.post("/digilocker/mock/reset/{phone}")
-async def reset_mock_digilocker(phone: str):
+async def reset_mock_digilocker(
+    phone: str,
+    token_phone: str | None = Depends(_optional_jwt),
+):
+    _require_mock_digilocker()
+    phone = require_phone_access(phone, token_phone)
     supabase.table("digilocker_consents").delete().eq("phone", phone).execute()
     supabase.table("digilocker_docs").delete().eq("phone", phone).execute()
 

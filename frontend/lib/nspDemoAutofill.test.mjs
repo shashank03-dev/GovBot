@@ -6,6 +6,7 @@ import {
   NSP_DEMO_STEPS,
   buildNspDemoDataFromFillValues,
   getMissingNspDemoStepFields,
+  shouldShowNspShowcaseFallbackNotice,
 } from './nspDemoAutofill.mjs';
 
 test('normal NSP demo autofill covers every visible field in the typing sequence', () => {
@@ -35,4 +36,11 @@ test('buildNspDemoDataFromFillValues merges analyzed profile values into the nor
   assert.equal(merged.accountNo, '1234567890');
   assert.equal(merged.confirmAccountNo, '1234567890');
   assert.equal(merged.branch, NSP_DEMO_DATA.branch);
+});
+
+test('shouldShowNspShowcaseFallbackNotice detects when no applicant fields were supplied', () => {
+  assert.equal(shouldShowNspShowcaseFallbackNotice({}), true);
+  assert.equal(shouldShowNspShowcaseFallbackNotice({ name: '   ', unknown: 'ignored' }), true);
+  assert.equal(shouldShowNspShowcaseFallbackNotice({ name: 'Demo Citizen' }), false);
+  assert.equal(shouldShowNspShowcaseFallbackNotice({ accountNo: '1234567890' }), false);
 });

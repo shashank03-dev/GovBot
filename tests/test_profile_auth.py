@@ -1,7 +1,10 @@
 import unittest
+from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from jose import jwt
 
+from gov_agent import profile_router
 from gov_agent.auth_router import _normalize_phone
 from gov_agent.config import SECRET_KEY
 from gov_agent.profile_router import (
@@ -20,6 +23,39 @@ class ProfileAuthTests(unittest.TestCase):
 
         resolved = _optional_jwt(Creds())
         self.assertEqual(resolved, "919876543210")
+
+    def test_optional_jwt_normalizes_legacy_phone_claims(self):
+        token = jwt.encode({"phone": "09876543210"}, str(SECRET_KEY), algorithm="HS256")
+
+        class Creds:
+            credentials = token
+
+        resolved = _optional_jwt(Creds())
+        self.assertEqual(resolved, "919876543210")
+
+
+class ProfileRouteAuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_profile_requires_authenticated_phone(self):
+        with self.assertRaises(HTTPException) as ctx:
+            await profile_router.get_profile("919876543210", token_phone=None)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_get_profile_normalizes_phone_before_profile_lookup(self):
+        profile_table = MagicMock()
+        profile_query = profile_table.select.return_value
+        profile_query.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"phone": "919876543210", "full_name": "Asha Singh"}
+        ]
+
+        fake_supabase = MagicMock()
+        fake_supabase.table.return_value = profile_table
+
+        with patch.object(profile_router, "supabase", fake_supabase):
+            response = await profile_router.get_profile("09876543210", token_phone="919876543210")
+
+        self.assertEqual(response.phone, "919876543210")
+        profile_query.eq.assert_called_once_with("phone", "919876543210")
 
 
 class ProfileVaultFillTests(unittest.TestCase):

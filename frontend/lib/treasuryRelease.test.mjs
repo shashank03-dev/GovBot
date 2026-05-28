@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   buildExplorerTransactionUrl,
+  extractWalletErrorMessage,
   buildReleaseReference,
   buildReleaseTransactionRequest,
   isApprovedTreasuryWallet,
+  resolveTreasuryNetworkConfig,
   resolveBeneficiaryReleaseMessage,
   shouldShowUrgentBankVerificationBanner,
 } from './treasuryRelease.mjs';
@@ -36,9 +38,10 @@ test('buildReleaseReference produces a short payload for chain anchoring', () =>
 
 test('buildReleaseTransactionRequest creates a zero-value anchor transaction', () => {
   const request = buildReleaseTransactionRequest({
-    from: '0xapproved',
-    to: '0xanchor',
+    from: '0xApPrOvEd',
+    to: '0xAnChOr',
     dataHex: '0x1234',
+    gasHex: '0x5208',
   });
 
   assert.deepEqual(request, {
@@ -46,7 +49,24 @@ test('buildReleaseTransactionRequest creates a zero-value anchor transaction', (
     to: '0xanchor',
     value: '0x0',
     data: '0x1234',
+    gas: '0x5208',
   });
+});
+
+test('resolveTreasuryNetworkConfig returns Sepolia settings for the Sepolia chain id', () => {
+  const config = resolveTreasuryNetworkConfig(11155111, 'Ethereum Sepolia');
+
+  assert.equal(config.chainName, 'Ethereum Sepolia');
+  assert.equal(config.nativeCurrency.symbol, 'ETH');
+  assert.deepEqual(config.rpcUrls, ['https://ethereum-sepolia-rpc.publicnode.com']);
+  assert.deepEqual(config.blockExplorerUrls, ['https://sepolia.etherscan.io/']);
+});
+
+test('extractWalletErrorMessage reads plain-object provider errors', () => {
+  assert.equal(
+    extractWalletErrorMessage({ message: 'User rejected the request.' }),
+    'User rejected the request.',
+  );
 });
 
 test('resolveBeneficiaryReleaseMessage marks bank verification as urgent when release is blocked', () => {

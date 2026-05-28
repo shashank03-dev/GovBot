@@ -7,18 +7,20 @@ Provides OTP-based phone authentication over WhatsApp:
 """
 
 import hashlib
-import random
+import ast
 import logging
+import re
+import secrets
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from jose import jwt
 
-from gov_agent.config import SECRET_KEY
 from gov_agent.db import supabase
+from gov_agent.user_auth import normalize_phone
 from gov_agent import whatsapp_sender
 from gov_agent.official_auth import issue_official_token, validate_official_credentials
+from gov_agent.web_session import consume_login_handoff, issue_citizen_token
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,95 @@ router = APIRouter()
 # ── OTP rate-limit config ────────────────────────────────────────────────────
 _OTP_WINDOW_MINUTES = 10
 _OTP_MAX_REQUESTS = 3
+_OTP_MAX_VERIFY_ATTEMPTS = 5
+_OTP_TTL_MINUTES = 10
+_MISSING_RATE_LIMIT_TABLE = object()
+
+
+def _coerce_utc_datetime(value: str | None) -> datetime:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return datetime.now(timezone.utc)
+    normalized = raw_value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        match = re.fullmatch(
+            r"(?P<base>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})"
+            r"(?:\.(?P<fraction>\d+))?"
+            r"(?P<tz>[+-]\d{2}:\d{2}|[+-]\d{4})?$",
+            normalized,
+        )
+        if not match:
+            return datetime.now(timezone.utc)
+        tz = match.group("tz") or ""
+        if tz and len(tz) == 5:
+            tz = f"{tz[:3]}:{tz[3:]}"
+        fraction = match.group("fraction")
+        if fraction:
+            fraction = f"{fraction[:6]:0<6}"
+            normalized = f"{match.group('base')}.{fraction}{tz}"
+        else:
+            normalized = f"{match.group('base')}{tz}"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return datetime.now(timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
+    payload = exc.args[0] if exc.args else None
+    message = str(exc)
+    code = getattr(exc, "code", None)
+    if isinstance(payload, dict):
+        code = payload.get("code") or code
+        message = str(payload.get("message") or message)
+    elif isinstance(payload, str):
+        try:
+            parsed = ast.literal_eval(payload)
+        except (SyntaxError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            code = parsed.get("code") or code
+            message = str(parsed.get("message") or message)
+    else:
+        message = str(exc)
+    return code == "PGRST205" and f"public.{table_name}" in message
+
+
+def _skip_missing_rate_limit_table(exc: Exception, table_name: str, phone: str) -> bool:
+    if not _is_missing_table_error(exc, table_name):
+        return False
+    logger.warning("OTP rate-limit table %s is missing; skipping enforcement for %s", table_name, phone)
+    return True
+
+
+def _load_rate_limit_row(
+    table_name: str,
+    phone: str,
+    *,
+    fail_open_missing_table: bool = False,
+) -> dict | object | None:
+    try:
+        result = (
+            supabase.table(table_name)
+            .select("request_count, window_start")
+            .eq("phone", phone)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        if fail_open_missing_table and _skip_missing_rate_limit_table(exc, table_name, phone):
+            return _MISSING_RATE_LIMIT_TABLE
+        logger.error("OTP rate-limit storage failed for %s on %s: %s", table_name, phone, exc)
+        raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+
+    if not result.data:
+        return None
+    return result.data[0]
 
 
 def _check_rate_limit(phone: str) -> None:
@@ -35,20 +126,12 @@ def _check_rate_limit(phone: str) -> None:
     State is stored in the Supabase `otp_rate_limits` table so the limit is
     enforced consistently across all workers and survives restarts.
     """
+    now = datetime.now(timezone.utc)
+    window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
+    row = _load_rate_limit_row("otp_rate_limits", phone)
+
     try:
-        now = datetime.now(timezone.utc)
-        window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
-
-        result = (
-            supabase.table("otp_rate_limits")
-            .select("request_count, window_start")
-            .eq("phone", phone)
-            .limit(1)
-            .execute()
-        )
-
-        if not result.data:
-            # First request from this phone — create row
+        if not row:
             supabase.table("otp_rate_limits").insert({
                 "phone": phone,
                 "request_count": 1,
@@ -56,14 +139,10 @@ def _check_rate_limit(phone: str) -> None:
             }).execute()
             return
 
-        row = result.data[0]
-        window_start = datetime.fromisoformat(row["window_start"])
-        if window_start.tzinfo is None:
-            window_start = window_start.replace(tzinfo=timezone.utc)
-        count = row["request_count"]
+        window_start = _coerce_utc_datetime(row.get("window_start"))
+        count = int(row.get("request_count") or 0)
 
         if window_start < window_cutoff:
-            # Window expired — reset counter
             supabase.table("otp_rate_limits").update({
                 "request_count": 1,
                 "window_start": now.isoformat(),
@@ -81,10 +160,90 @@ def _check_rate_limit(phone: str) -> None:
         }).eq("phone", phone).execute()
     except HTTPException:
         raise
-    except Exception as e:
-        # If otp_rate_limits table doesn't exist or other error, log and continue without rate limiting
-        logger.warning("Rate limiting disabled due to missing table or error: %s", e)
+    except Exception as exc:
+        logger.error("OTP request rate-limit update failed for %s: %s", phone, exc)
+        raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+
+
+def _check_verify_rate_limit(phone: str) -> None:
+    now = datetime.now(timezone.utc)
+    window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
+    row = _load_rate_limit_row(
+        "otp_verify_rate_limits",
+        phone,
+        fail_open_missing_table=True,
+    )
+    if row is _MISSING_RATE_LIMIT_TABLE or not row:
         return
+
+    window_start = _coerce_utc_datetime(row.get("window_start"))
+    count = int(row.get("request_count") or 0)
+
+    if window_start < window_cutoff:
+        try:
+            supabase.table("otp_verify_rate_limits").update({
+                "request_count": 0,
+                "window_start": now.isoformat(),
+            }).eq("phone", phone).execute()
+        except Exception as exc:
+            if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
+                return
+            logger.error("OTP verify rate-limit reset failed for %s: %s", phone, exc)
+            raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+        return
+
+    if count >= _OTP_MAX_VERIFY_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many OTP verification attempts. Try again in {_OTP_WINDOW_MINUTES} minutes.",
+        )
+
+
+def _record_verify_failure(phone: str) -> None:
+    now = datetime.now(timezone.utc)
+    window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
+    row = _load_rate_limit_row(
+        "otp_verify_rate_limits",
+        phone,
+        fail_open_missing_table=True,
+    )
+    if row is _MISSING_RATE_LIMIT_TABLE:
+        return
+
+    try:
+        if not row:
+            supabase.table("otp_verify_rate_limits").insert({
+                "phone": phone,
+                "request_count": 1,
+                "window_start": now.isoformat(),
+            }).execute()
+            return
+
+        window_start = _coerce_utc_datetime(row.get("window_start"))
+        count = int(row.get("request_count") or 0)
+        next_count = 1 if window_start < window_cutoff else count + 1
+        supabase.table("otp_verify_rate_limits").update({
+            "request_count": next_count,
+            "window_start": now.isoformat() if window_start < window_cutoff else row.get("window_start"),
+        }).eq("phone", phone).execute()
+    except Exception as exc:
+        if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
+            return
+        logger.error("OTP verify failure rate-limit update failed for %s: %s", phone, exc)
+        raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+
+
+def _clear_verify_failures(phone: str) -> None:
+    try:
+        supabase.table("otp_verify_rate_limits").update({
+            "request_count": 0,
+            "window_start": datetime.now(timezone.utc).isoformat(),
+        }).eq("phone", phone).execute()
+    except Exception as exc:
+        if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
+            return
+        logger.error("OTP verify rate-limit clear failed for %s: %s", phone, exc)
+        raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
 
 
 def _hash_otp(code: str) -> str:
@@ -93,11 +252,7 @@ def _hash_otp(code: str) -> str:
 
 
 def _normalize_phone(phone: str) -> str:
-    phone = phone.strip().removeprefix("+")
-    # Prepend India country code for bare 10-digit numbers
-    if len(phone) == 10 and phone.isdigit():
-        phone = "91" + phone
-    return phone
+    return normalize_phone(phone)
 
 
 # ── Request schemas ──────────────────────────────────────────────────────────
@@ -111,9 +266,26 @@ class VerifyOTPRequest(BaseModel):
     code: str | None = None
 
 
+class ExchangeHandoffRequest(BaseModel):
+    code: str | None = None
+
+
 class OfficialLoginRequest(BaseModel):
     username: str | None = None
     password: str | None = None
+
+
+async def _send_web_connection_confirmation(phone: str) -> None:
+    message = (
+        "✅ Your GovBot WhatsApp and web login are now connected.\n"
+        "You can continue on the dashboard and come back to WhatsApp anytime."
+    )
+    try:
+        delivered = await whatsapp_sender.send_message(phone, message)
+        if not delivered:
+            logger.warning("Web connection confirmation was not delivered to %s", phone)
+    except Exception as exc:
+        logger.warning("Failed to send web connection confirmation to %s: %s", phone, exc)
 
 
 # ── POST /send-otp ───────────────────────────────────────────────────────────
@@ -127,11 +299,12 @@ async def send_otp(body: SendOTPRequest):
     phone = _normalize_phone(body.phone)
     _check_rate_limit(phone)
 
-    code = str(random.randint(100_000, 999_999))
+    code = f"{secrets.randbelow(900_000) + 100_000:06d}"
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=10)
+    expires_at = now + timedelta(minutes=_OTP_TTL_MINUTES)
 
     try:
+        supabase.table("otp_codes").update({"used": True}).eq("phone", phone).eq("used", False).execute()
         supabase.table("otp_codes").insert({
             "phone": phone,
             "code": _hash_otp(code),
@@ -162,6 +335,7 @@ async def verify_otp(body: VerifyOTPRequest):
 
     phone = _normalize_phone(body.phone)
     now_iso = datetime.now(timezone.utc).isoformat()
+    _check_verify_rate_limit(phone)
 
     # Fetch a valid, unused, non-expired OTP row (compare hashed code)
     result = (
@@ -176,19 +350,31 @@ async def verify_otp(body: VerifyOTPRequest):
     )
 
     if not result.data:
+        _record_verify_failure(phone)
         return {"valid": False, "error": "Invalid or expired OTP"}
 
-    # Mark the OTP as consumed
+    # Mark all active OTPs for the phone as consumed so older codes cannot be replayed.
     row_id = result.data[0]["id"]
+    supabase.table("otp_codes").update({"used": True}).eq("phone", phone).eq("used", False).execute()
     supabase.table("otp_codes").update({"used": True}).eq("id", row_id).execute()
+    _clear_verify_failures(phone)
 
-    # Issue a 7-day JWT
-    exp = datetime.now(timezone.utc) + timedelta(days=7)
-    payload = {"phone": phone, "sub": phone, "exp": exp}
-    token = jwt.encode(payload, str(SECRET_KEY), algorithm="HS256")
+    token = issue_citizen_token(phone)
 
     logger.info("JWT issued for %s", phone)
+    await _send_web_connection_confirmation(phone)
     return {"valid": True, "token": token, "phone": phone}
+
+
+@router.post("/exchange-handoff")
+async def exchange_handoff(body: ExchangeHandoffRequest):
+    session = consume_login_handoff(body.code or "")
+    return {
+        "valid": True,
+        "phone": session["phone"],
+        "next_path": session["next_path"],
+        "token": session["token"],
+    }
 
 
 @router.post("/official/login")

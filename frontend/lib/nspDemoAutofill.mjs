@@ -113,6 +113,15 @@ export function buildNspDemoDataFromFillValues(fillValues = {}) {
   return merged;
 }
 
+function hasNspApplicantValue(value) {
+  if (value === null || value === undefined) return false;
+  return String(value).trim() !== '';
+}
+
+export function shouldShowNspShowcaseFallbackNotice(fillValues = {}) {
+  return !NSP_VISIBLE_AUTOFILL_FIELDS.some((field) => hasNspApplicantValue(fillValues[field]));
+}
+
 export function getMissingNspDemoStepFields() {
   const stepFields = new Set(NSP_DEMO_STEPS.map((step) => step.field));
   return NSP_VISIBLE_AUTOFILL_FIELDS.filter((field) => !stepFields.has(field));

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Smartphone, ArrowRight, ShieldCheck, GraduationCap } from 'lucide-react';
 
+import { CITIZEN_SESSION_SENTINEL, CITIZEN_SESSION_STORAGE_KEY } from '@/lib/authSession.mjs';
 import { LOGIN_HIGHLIGHTS } from '@/lib/siteFeatureContent.mjs';
 import { DEFAULT_POST_LOGIN_PATH, sanitizePostLoginPath } from '@/lib/navigationLinks.mjs';
 import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
@@ -33,24 +34,41 @@ export default function Login() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const nextPath = sanitizePostLoginPath(params.get('next') || DEFAULT_POST_LOGIN_PATH);
-    const token = params.get('token');
-    const ph = params.get('phone');
+    const handoffCode = params.get('handoff');
     setRedirectPath(nextPath);
 
-    if (token && ph) {
-      const canonicalPhone = normalizeIndianPhone(ph) || ph;
-      localStorage.setItem('govbot_token', token);
-      localStorage.setItem('govbot_phone', canonicalPhone);
-      router.replace(nextPath);
-      return;
-    }
-
-    const storedToken = localStorage.getItem('govbot_token');
+    const storedToken = localStorage.getItem(CITIZEN_SESSION_STORAGE_KEY);
     const storedPhone = localStorage.getItem('govbot_phone') || '';
     const canonicalStoredPhone = normalizeIndianPhone(storedPhone);
     if (storedPhone && canonicalStoredPhone && canonicalStoredPhone !== storedPhone) {
       localStorage.setItem('govbot_phone', canonicalStoredPhone);
     }
+
+    if (handoffCode) {
+      setLoading(true);
+      void fetch('/api/auth/handoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: handoffCode }),
+      })
+        .then(async (response) => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload?.valid || !payload?.phone) {
+            throw new Error(payload?.detail || payload?.error || 'This login link is invalid or expired.');
+          }
+
+          const verifiedPhone = normalizeIndianPhone(payload.phone) || payload.phone;
+          localStorage.setItem(CITIZEN_SESSION_STORAGE_KEY, CITIZEN_SESSION_SENTINEL);
+          localStorage.setItem('govbot_phone', verifiedPhone);
+          void router.replace(sanitizePostLoginPath(payload.next_path || nextPath));
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : 'This login link is invalid or expired.');
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     if (storedToken && (canonicalStoredPhone || storedPhone)) {
       router.replace(nextPath);
     }
@@ -60,12 +78,13 @@ export default function Login() {
     if (e) e.preventDefault();
     setError('');
     setLoading(true);
+    const canonicalPhone = normalizeIndianPhone(phone) || phone.trim();
 
     try {
       const res = await fetch('/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code: otp.replace(/\s/g, '') })
+        body: JSON.stringify({ phone: canonicalPhone })
       });
 
       if (!res.ok) {
@@ -85,12 +104,14 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
+    const canonicalPhone = normalizeIndianPhone(phone) || phone.trim();
+    const normalizedOtp = otp.replace(/\s/g, '');
 
     try {
       const res = await fetch('/api/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, otp }),
+        body: JSON.stringify({ phone: canonicalPhone, code: normalizedOtp }),
       });
 
       const data = await res.json();
@@ -99,13 +120,9 @@ export default function Login() {
         throw new Error(data.error || 'Invalid OTP. Please try again.');
       }
 
-      if (!data.token) {
-        throw new Error('Authentication failed. Please try again.');
-      }
-
-      const canonicalPhone = normalizeIndianPhone(data.phone || phone);
-      localStorage.setItem('govbot_token', data.token);
-      localStorage.setItem('govbot_phone', canonicalPhone);
+      const verifiedPhone = normalizeIndianPhone(data.phone || canonicalPhone);
+      localStorage.setItem(CITIZEN_SESSION_STORAGE_KEY, CITIZEN_SESSION_SENTINEL);
+      localStorage.setItem('govbot_phone', verifiedPhone);
 
       router.push(redirectPath);
     } catch (err: unknown) {

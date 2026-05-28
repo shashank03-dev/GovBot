@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Smartphone,
 } from 'lucide-react';
+import { CITIZEN_SESSION_SENTINEL, CITIZEN_SESSION_STORAGE_KEY } from '@/lib/authSession.mjs';
 import { normalizeIndianPhone, toLocalTenDigitPhone } from '@/lib/phoneStorage.mjs';
 
 type Step = 'credentials' | 'otp' | 'success';
@@ -54,8 +55,6 @@ export default function DigiLockerInitPage() {
   const [loading, setLoading] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [error, setError] = useState('');
-  const [otpHint, setOtpHint] = useState('');
-  const [otpDeliveryMode, setOtpDeliveryMode] = useState<'whatsapp' | 'demo' | ''>('');
   const [resendTimer, setResendTimer] = useState(0);
 
   useEffect(() => {
@@ -121,8 +120,6 @@ export default function DigiLockerInitPage() {
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError('');
-    setOtpHint('');
-    setOtpDeliveryMode('');
     setLoading(true);
     try {
       const canonicalPhone = normalizeIndianPhone(phone);
@@ -132,9 +129,7 @@ export default function DigiLockerInitPage() {
         body: JSON.stringify({ phone: canonicalPhone }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
-      setOtpHint(typeof data.otp_hint === 'string' ? data.otp_hint : '');
-      setOtpDeliveryMode(data.delivery_mode === 'demo' ? 'demo' : 'whatsapp');
+      if (!res.ok) throw new Error(data.error || data.detail || 'Failed to send OTP');
       setStep('otp');
       startResendTimer();
     } catch (err: unknown) {
@@ -160,13 +155,13 @@ export default function DigiLockerInitPage() {
         body: JSON.stringify({
           phone: canonicalPhone,
           otp: otp.replace(/\D/g, ''),
-          mock_hint: otpHint || undefined,
         }),
       });
       const verifyData = await verifyRes.json();
       if (!verifyRes.ok || !verifyData.success) throw new Error(verifyData.error || 'Invalid or expired OTP');
 
       const verifiedPhone = normalizeIndianPhone(verifyData.phone || canonicalPhone);
+      localStorage.setItem(CITIZEN_SESSION_STORAGE_KEY, CITIZEN_SESSION_SENTINEL);
       localStorage.setItem('govbot_phone', verifiedPhone);
       setStep('success');
 
@@ -406,17 +401,8 @@ export default function DigiLockerInitPage() {
                       </div>
 
                       <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-[#003399]">
-                        {otpDeliveryMode === 'demo'
-                          ? 'Local demo mode is active. Use the code below to continue this mock DigiLocker run while keeping the same review-first journey.'
-                          : 'OTP sent to your WhatsApp number. The selected document set will be reviewed inside GovBot before any portal action begins.'}
+                        OTP sent to your WhatsApp number. The selected document set will be reviewed inside GovBot before any portal action begins.
                       </div>
-
-                      {otpDeliveryMode === 'demo' && otpHint && (
-                        <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3">
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-orange-500">Demo OTP</div>
-                          <div className="mt-2 font-mono text-lg tracking-[0.35em] text-slate-900">{otpHint}</div>
-                        </div>
-                      )}
 
                       <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1.5">6-digit OTP</label>

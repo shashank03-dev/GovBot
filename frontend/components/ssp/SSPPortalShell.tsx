@@ -132,6 +132,7 @@ export default function SSPPortalShell({
                 <button
                   type="button"
                   onClick={() => {
+                    void fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
                     localStorage.removeItem('govbot_token');
                     localStorage.removeItem('govbot_phone');
                     router.push('/ssp');

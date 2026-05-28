@@ -357,7 +357,7 @@ export default function FormFillPage() {
                   </div>
                   <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Action</p>
-                    <p className="mt-1 text-xs font-semibold text-slate-700">{isDemoAlias ? 'Open local demo + auto-fill' : 'Live fill preview only'}</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{isDemoAlias ? 'Open local sample + auto-fill' : 'Live fill preview only'}</p>
                   </div>
                 </div>
 

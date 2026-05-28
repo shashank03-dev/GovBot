@@ -14,6 +14,7 @@ import {
 test('normalizeIndianPhone stores one canonical auth-safe phone format', () => {
   assert.equal(normalizeIndianPhone('9632363213'), '919632363213');
   assert.equal(normalizeIndianPhone('+91 96323 63213'), '919632363213');
+  assert.equal(normalizeIndianPhone('09632363213'), '919632363213');
   assert.equal(normalizeIndianPhone('919632363213'), '919632363213');
   assert.equal(toLocalTenDigitPhone('919632363213'), '9632363213');
 });

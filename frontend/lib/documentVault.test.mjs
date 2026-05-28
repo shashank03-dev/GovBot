@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getDocumentLabel,
   getDocumentUploadPrompt,
+  buildPortalDocumentChecklist,
   describeVaultAction,
   getFocusedDocumentId,
   orderDocumentsWithFocusFirst,
@@ -54,5 +55,47 @@ test('getDocumentUploadPrompt uses the custom label when present', () => {
   assert.equal(
     getDocumentUploadPrompt('pan'),
     'Choose your PAN Card',
+  );
+});
+
+test('buildPortalDocumentChecklist lists missing required NSP documents', () => {
+  const checklist = buildPortalDocumentChecklist('nsp', [
+    { id: 'doc-aadhaar', doc_type: 'aadhaar', status: 'ready' },
+  ]);
+
+  assert.equal(checklist.isComplete, false);
+  assert.deepEqual(
+    checklist.missingRequiredDocuments.map((item) => item.docType),
+    ['income_cert', 'marksheet'],
+  );
+  assert.deepEqual(
+    checklist.readyRequiredDocuments.map((item) => item.docType),
+    ['aadhaar'],
+  );
+});
+
+test('buildPortalDocumentChecklist accepts DigiLocker document type names', () => {
+  const checklist = buildPortalDocumentChecklist('ssp', [
+    { id: 'doc-aadhaar', doc_type: 'aadhaar', status: 'ready' },
+    { id: 'doc-income', doc_type: 'income_certificate', status: 'ready' },
+    { id: 'doc-caste', doc_type: 'caste_certificate', status: 'ready' },
+    { id: 'doc-marks', doc_type: 'marksheet', status: 'ready' },
+  ]);
+
+  assert.equal(checklist.isComplete, true);
+  assert.deepEqual(checklist.missingRequiredDocuments, []);
+});
+
+test('buildPortalDocumentChecklist asks users to review unreadable fetched documents', () => {
+  const checklist = buildPortalDocumentChecklist('nsp', [
+    { id: 'doc-aadhaar', doc_type: 'aadhaar', status: 'ready' },
+    { id: 'doc-income', doc_type: 'income_cert', status: 'needs_review' },
+    { id: 'doc-marks', doc_type: 'marksheet', verification_status: 'invalid' },
+  ]);
+
+  assert.equal(checklist.isComplete, false);
+  assert.deepEqual(
+    checklist.reviewRequiredDocuments.map((item) => item.docType),
+    ['income_cert', 'marksheet'],
   );
 });

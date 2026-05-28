@@ -19,7 +19,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export default function DigiLockerCallback() {
   const router = useRouter();
-  const { consent_id } = router.query;
+  const { consent_id, callback_token } = router.query;
 
   const [status, setStatus] = useState<CallbackState>('loading');
   const [progress, setProgress] = useState(0);
@@ -28,7 +28,13 @@ export default function DigiLockerCallback() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!router.isReady || typeof consent_id !== 'string' || !consent_id) return;
+    if (
+      !router.isReady ||
+      typeof consent_id !== 'string' ||
+      !consent_id ||
+      typeof callback_token !== 'string' ||
+      !callback_token
+    ) return;
 
     let cancelled = false;
     const processCallback = async () => {
@@ -37,7 +43,9 @@ export default function DigiLockerCallback() {
         setProgress(20);
         await new Promise(resolve => setTimeout(resolve, 600));
 
-        const response = await fetch(`/api/digilocker/mock/callback?consent_id=${encodeURIComponent(consent_id)}&action=approve`);
+        const response = await fetch(
+          `/api/digilocker/mock/callback?consent_id=${encodeURIComponent(consent_id)}&callback_token=${encodeURIComponent(callback_token)}&action=approve`,
+        );
         const data: CallbackResponse = await response.json();
         if (!response.ok || data.status !== 'success') {
           throw new Error(data.detail || 'Failed to complete DigiLocker callback');
@@ -68,11 +76,16 @@ export default function DigiLockerCallback() {
 
     processCallback();
     return () => { cancelled = true; };
-  }, [router, consent_id]);
+  }, [router, consent_id, callback_token]);
 
   if (!router.isReady) return null;
 
-  if (typeof consent_id !== 'string' || !consent_id) {
+  if (
+    typeof consent_id !== 'string' ||
+    !consent_id ||
+    typeof callback_token !== 'string' ||
+    !callback_token
+  ) {
     return (
       <>
         <Head>

@@ -89,6 +89,111 @@ export const EMPTY_SSP_FIELDS = {
   final_declaration_accepted: false,
 };
 
+const GOVBOT_SSP_APPLY_FIELDS = {
+  student_id: 'SSP-9632363213',
+  student_name: 'SHASHANK GOWDA T',
+  father_name: 'THIMME GOWDA',
+  mother_name: 'MANJULA T',
+  dob: '30/10/2006',
+  gender: 'Male',
+  mobile: '9632363213',
+  email: 'shashank.govda@example.com',
+  aadhaar_number: '123412341234',
+  religion: 'HINDU',
+  category: 'OBC',
+  caste: 'OBC',
+  subcaste: 'Vokkaliga',
+  caste_certificate_number: 'RD003467891234',
+  income_certificate_number: 'INC202526001234',
+  income: '25000',
+  disability_status: 'No',
+  domicile_state: 'Karnataka',
+  home_district: 'Bengaluru Urban',
+  home_taluka: 'Bengaluru North',
+  assembly_constituency: 'Yelahanka',
+  pincode: '560064',
+  permanent_address: 'No. 42, Vidyaranyapura, Bengaluru, Karnataka',
+  sslc_board: 'SSLC',
+  sslc_registration_number: 'SSLC2022001234',
+  sslc_pass_year: '2022',
+  college_name: 'Sri M Visvesvaraya Institute of Technology',
+  college_code: 'SMVIT001',
+  university_name: 'Visvesvaraya Technological University',
+  university_registration_number: '1MV23CS001',
+  course_name: 'B.E Computer Science',
+  course_discipline: 'Computer Science and Engineering',
+  course_year: 'SECOND',
+  academic_year: '2025-26',
+  admission_mode: 'CET',
+  counselling_number: 'CET2023009876',
+  counselling_admission_year: '2023',
+  previous_year_board: 'VTU',
+  previous_year_registration_number: '1MV23CS001',
+  previous_year_result_type: 'Passed',
+  previous_year_max_marks: '1000',
+  previous_year_marks_obtained: '875',
+  previous_year_percentage_or_cgpa: '87.5',
+  e_attestation_status: 'Verified',
+  e_attestation_reference: 'EA202526009876',
+  hostel_or_day_scholar: 'DayScholar',
+  hostel_name: '',
+  hostel_registration_reference: '',
+};
+
+const SSP_APPLY_ANIMATION_GROUPS = [
+  {
+    stepId: 'step-1',
+    title: 'Step 1 — Study / caste / personal details',
+    description: 'GovBot fills student identity, SSLC, caste, income, Aadhaar, and address fields.',
+    entries: [
+      { name: 'student_name', label: 'Student Name' },
+      { name: 'dob', label: 'Date of Birth' },
+      { name: 'aadhaar_number', label: 'Aadhaar Number' },
+      { name: 'category', label: 'Category' },
+      { name: 'income', label: 'Income' },
+      { name: 'sslc_registration_number', label: 'SSLC Registration Number' },
+    ],
+  },
+  {
+    stepId: 'step-2',
+    title: 'Step 2 — College / course details',
+    description: 'GovBot moves to the course form and fills college, university, marks, and academic year.',
+    entries: [
+      { name: 'college_name', label: 'College Name' },
+      { name: 'university_name', label: 'University' },
+      { name: 'course_name', label: 'Course Name' },
+      { name: 'course_year', label: 'Course Year' },
+      { name: 'previous_year_percentage_or_cgpa', label: 'Previous Year Marks' },
+    ],
+  },
+  {
+    stepId: 'step-3',
+    title: 'Step 3 — E-attestation documents',
+    description: 'GovBot attaches and verifies the e-attestation reference before continuing.',
+    entries: [
+      { name: 'e_attestation_status', label: 'E-Attestation Status' },
+      { name: 'e_attestation_reference', label: 'Reference Number' },
+    ],
+  },
+  {
+    stepId: 'step-4',
+    title: 'Step 4 — Hostel / day-scholar details',
+    description: 'GovBot fills the student residence section and confirms day-scholar status.',
+    entries: [
+      { name: 'hostel_or_day_scholar', label: 'Hostel or Day Scholar' },
+      { name: 'hostel_name', label: 'Hostel Name' },
+    ],
+  },
+  {
+    stepId: 'step-5',
+    title: 'Step 5 — Preview and final submit',
+    description: 'GovBot accepts the declaration and submits the SSP form for tracking.',
+    entries: [
+      { name: 'final_declaration_accepted', label: 'Declaration Accepted' },
+    ],
+  },
+];
+
 /**
  * @typedef {'en' | 'kn'} SSPLanguage
  */
@@ -126,6 +231,61 @@ export function mergeSSPPrefill(manualFields = {}, prefillFields = {}) {
   }
 
   return merged;
+}
+
+export function buildGovBotSSPApplyFields(fields = {}) {
+  return {
+    ...mergeSSPPrefill(fields, GOVBOT_SSP_APPLY_FIELDS),
+    final_declaration_accepted: true,
+  };
+}
+
+function pickFields(sourceFields, entries) {
+  return entries.reduce((pickedFields, entry) => {
+    pickedFields[entry.name] = sourceFields[entry.name];
+    return pickedFields;
+  }, {});
+}
+
+export function buildGovBotSSPApplyAnimationSteps(fields = {}) {
+  const finalFields = buildGovBotSSPApplyFields(fields);
+  return SSP_APPLY_ANIMATION_GROUPS.map((group) => ({
+    ...group,
+    fields: pickFields(finalFields, group.entries),
+    entries: group.entries.map((entry) => ({
+      ...entry,
+      value: finalFields[entry.name],
+    })),
+  }));
+}
+
+export function hasSSPApplySession(phone = '', token = '', loadError = '') {
+  const hasAuthValues = Boolean(String(phone || '').trim() && String(token || '').trim());
+  if (!hasAuthValues) return false;
+  return !/\b(401|403)\b/.test(String(loadError || ''));
+}
+
+const SSP_SHOWCASE_NOTICE_IGNORED_FIELDS = new Set(['final_declaration_accepted']);
+
+function hasApplicantSuppliedSSPValue(field, value) {
+  if (SSP_SHOWCASE_NOTICE_IGNORED_FIELDS.has(field)) return false;
+  if (value === null || value === undefined || value === false) return false;
+
+  const normalizedValue = String(value).trim();
+  if (!normalizedValue) return false;
+
+  if (field in EMPTY_SSP_FIELDS) {
+    const defaultValue = EMPTY_SSP_FIELDS[field];
+    if (String(defaultValue ?? '').trim() === normalizedValue) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function shouldShowSSPShowcaseFallbackNotice(fields = {}) {
+  return !Object.entries(fields || {}).some(([field, value]) => hasApplicantSuppliedSSPValue(field, value));
 }
 
 export function normalizeSSPLanguage(language) {

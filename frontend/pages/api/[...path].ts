@@ -1,11 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
-  buildBackendProxyUrl,
+  buildBackendUrl,
   buildBackendRequestHeaders,
+  resolveBackendProxyPath,
 } from '@/lib/backendApi.mjs';
+import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 const REQUEST_HEADER_SKIP_LIST = new Set([
   'connection',
+  'cookie',
   'content-length',
   'host',
   'transfer-encoding',
@@ -25,12 +28,13 @@ export const config = {
   },
 };
 
-function buildProxyUrl(req: NextApiRequest) {
+function buildProxyTarget(req: NextApiRequest) {
   const path = Array.isArray(req.query.path) ? req.query.path.join('/') : String(req.query.path || '');
-  const targetUrl = buildBackendProxyUrl(path);
-  if (!targetUrl) {
+  const backendPath = resolveBackendProxyPath(path);
+  if (!backendPath) {
     return null;
   }
+  const targetUrl = buildBackendUrl(backendPath);
 
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(req.query)) {
@@ -51,10 +55,13 @@ function buildProxyUrl(req: NextApiRequest) {
   }
 
   const queryString = searchParams.toString();
-  return queryString ? `${targetUrl}?${queryString}` : targetUrl;
+  return {
+    backendPath,
+    targetUrl: queryString ? `${targetUrl}?${queryString}` : targetUrl,
+  };
 }
 
-function buildProxyHeaders(req: NextApiRequest) {
+function buildProxyHeaders(req: NextApiRequest, backendPath: string) {
   const headers: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(req.headers)) {
@@ -65,19 +72,33 @@ function buildProxyHeaders(req: NextApiRequest) {
     headers[key] = Array.isArray(value) ? value.join(', ') : value;
   }
 
-  return buildBackendRequestHeaders(headers);
+  const proxyHeaders = buildBackendRequestHeaders(headers);
+  const sessionAuthorization = resolveSessionAuthorizationHeader({
+    req,
+    backendPath,
+    authorizationHeader: proxyHeaders.authorization || proxyHeaders.Authorization || '',
+  });
+
+  delete proxyHeaders.Authorization;
+  if (sessionAuthorization) {
+    proxyHeaders.authorization = sessionAuthorization;
+  } else {
+    delete proxyHeaders.authorization;
+  }
+
+  return proxyHeaders;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const targetUrl = buildProxyUrl(req);
-  if (!targetUrl) {
+  const target = buildProxyTarget(req);
+  if (!target) {
     return res.status(404).json({ error: 'Unknown API route' });
   }
 
   try {
     const requestInit: RequestInit & { duplex?: 'half' } = {
       method: req.method,
-      headers: buildProxyHeaders(req),
+      headers: buildProxyHeaders(req, target.backendPath),
     };
 
     if (req.method && !['GET', 'HEAD'].includes(req.method.toUpperCase())) {
@@ -85,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       requestInit.duplex = 'half';
     }
 
-    const response = await fetch(targetUrl, requestInit);
+    const response = await fetch(target.targetUrl, requestInit);
 
     for (const [key, value] of response.headers.entries()) {
       if (RESPONSE_HEADER_SKIP_LIST.has(key.toLowerCase())) {

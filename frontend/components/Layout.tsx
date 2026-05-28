@@ -52,6 +52,7 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   const handleLogout = () => {
+    void fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem('govbot_token');
     localStorage.removeItem('govbot_phone');
     setIsLoggedIn(false);

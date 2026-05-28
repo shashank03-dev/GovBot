@@ -1,14 +1,14 @@
 """
-Blockchain Credentials Router — Real Polygon Mumbai Integration
+Blockchain Credentials Router.
 
-Real blockchain integration for W3C Verifiable Credentials:
-- Issues credentials on Polygon Mumbai testnet
+Configurable blockchain integration for W3C Verifiable Credentials:
+- Issues credentials on the configured network
 - Stores credential metadata on IPFS via Pinata
 - Verifies credentials against blockchain
 
 Requires:
 - ALCHEMY_API_KEY (from alchemy.com)
-- POLYGON_PRIVATE_KEY (wallet with Mumbai MATIC)
+- POLYGON_PRIVATE_KEY (wallet for credential issuance)
 - PINATA_API_KEY (from pinata.cloud)
 """
 
@@ -18,6 +18,10 @@ import hashlib
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from gov_agent.credential_network import (
+    build_credential_explorer_url,
+    get_credential_network_name,
+)
 from gov_agent.db import supabase
 from gov_agent.config import BASE_URL
 
@@ -106,6 +110,8 @@ class CredentialResponse(BaseModel):
     confirmation_number: str
     blockchain_tx_hash: str
     polygonscan_url: str
+    explorer_url: str
+    network_name: str
     ipfs_hash: str | None
     issued_at: str
     qr_code_url: str
@@ -129,6 +135,15 @@ def _hash_credential(credential_json: dict) -> str:
     """Generate SHA256 hash of credential."""
     credential_str = json.dumps(credential_json, sort_keys=True, separators=(',', ':'))
     return hashlib.sha256(credential_str.encode()).hexdigest()
+
+
+def _serialize_credential_record(record: dict) -> dict:
+    serialized = dict(record)
+    explorer_url = build_credential_explorer_url(serialized.get("blockchain_tx_hash"))
+    serialized["explorer_url"] = explorer_url
+    serialized["polygonscan_url"] = explorer_url
+    serialized["network_name"] = get_credential_network_name()
+    return serialized
 
 
 async def _upload_to_ipfs(credential_data: dict) -> str | None:
@@ -175,7 +190,7 @@ async def _upload_to_ipfs(credential_data: dict) -> str | None:
 
 @router.post("/credentials/issue", response_model=CredentialResponse)
 async def issue_blockchain_credential(body: IssueCredentialRequest):
-    """Issue a verifiable credential on Polygon Mumbai."""
+    """Issue a verifiable credential on the configured blockchain network."""
     
     # Check if credential already exists
     existing = (
@@ -223,8 +238,7 @@ async def issue_blockchain_credential(body: IssueCredentialRequest):
     
     # Issue on blockchain (if Web3 available)
     tx_hash = "0x" + "0" * 64  # Mock transaction hash
-    polygonscan_url = f"https://mumbai.polygonscan.com/tx/{tx_hash}"
-    
+
     if WEB3_AVAILABLE:
         try:
             from gov_agent.config import POLYGON_RPC_URL, POLYGON_PRIVATE_KEY, CONTRACT_ADDRESS
@@ -254,23 +268,22 @@ async def issue_blockchain_credential(body: IssueCredentialRequest):
                 signed_tx = w3.eth.account.sign_transaction(tx, POLYGON_PRIVATE_KEY)
                 tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
                 tx_hash_hex = tx_hash.hex()
-                polygonscan_url = f"https://mumbai.polygonscan.com/tx/{tx_hash_hex}"
                 
                 logger.info(f"Credential issued on blockchain: {tx_hash_hex}")
             else:
                 logger.warning("Blockchain credentials not configured, using mock")
                 # Generate mock transaction hash
                 tx_hash_hex = f"0x{credential_hash[:64]}"
-                polygonscan_url = f"https://mumbai.polygonscan.com/tx/{tx_hash_hex}"
         except Exception as e:
             logger.error(f"Blockchain error: {e}")
             # Use mock hash
             tx_hash_hex = f"0x{credential_hash[:64]}"
-            polygonscan_url = f"https://mumbai.polygonscan.com/tx/{tx_hash_hex}"
     else:
         # Generate mock transaction hash
         tx_hash_hex = f"0x{credential_hash[:64]}"
-        polygonscan_url = f"https://mumbai.polygonscan.com/tx/{tx_hash_hex}"
+
+    explorer_url = build_credential_explorer_url(tx_hash_hex)
+    network_name = get_credential_network_name()
     
     # Store in database
     issued_at = datetime.now(timezone.utc).isoformat()
@@ -294,7 +307,9 @@ async def issue_blockchain_credential(body: IssueCredentialRequest):
         credential_id=credential_id,
         confirmation_number=body.confirmation_number,
         blockchain_tx_hash=tx_hash_hex,
-        polygonscan_url=polygonscan_url,
+        polygonscan_url=explorer_url,
+        explorer_url=explorer_url,
+        network_name=network_name,
         ipfs_hash=ipfs_hash,
         issued_at=issued_at,
         qr_code_url=qr_code_url,
@@ -339,7 +354,7 @@ async def verify_blockchain_credential(credential_id: str):
                     revoked=revoked,
                     issued_at=datetime.fromtimestamp(issued_at_unix, timezone.utc).isoformat() if issued_at_unix > 0 else None,
                     issuer=cred.get("credential_json", {}).get("issuer", {}).get("name"),
-                    message="Verified on Polygon Mumbai blockchain" if valid else "Verification failed"
+                    message=f"Verified on {get_credential_network_name()} blockchain" if valid else "Verification failed"
                 )
         except Exception as e:
             logger.error(f"Blockchain verification error: {e}")
@@ -354,6 +369,23 @@ async def verify_blockchain_credential(credential_id: str):
     )
 
 
+@router.get("/credentials/id/{credential_id}")
+async def get_credential_by_id(credential_id: str):
+    """Get a credential record by credential ID."""
+
+    result = (
+        supabase.table("verifiable_credentials")
+        .select("*")
+        .eq("credential_id", credential_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    return _serialize_credential_record(result.data[0])
+
+
 @router.get("/credentials/{phone}")
 async def get_user_credentials(phone: str):
     """Get all credentials for a user."""
@@ -366,10 +398,13 @@ async def get_user_credentials(phone: str):
         .execute()
     )
     
+    credentials = [_serialize_credential_record(record) for record in (result.data or [])]
+
     return {
         "phone": phone,
-        "credentials": result.data if result.data else [],
-        "total": len(result.data) if result.data else 0,
+        "credentials": credentials,
+        "total": len(credentials),
+        "network_name": get_credential_network_name(),
     }
 
 
@@ -387,4 +422,4 @@ async def get_credential_by_confirmation(confirmation_number: str):
     if not result.data:
         raise HTTPException(status_code=404, detail="No credential found for this confirmation number")
     
-    return result.data[0]
+    return _serialize_credential_record(result.data[0])

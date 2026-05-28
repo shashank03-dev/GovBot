@@ -49,9 +49,9 @@ export default function MinorityHome() {
         },
       ]}
       announcements={[
-        'Minority scholarship intake remains available for Academic Year 2025-26 demo runs through the GovBot application flow.',
+        'Minority scholarship intake remains available for Academic Year 2025-26 runs through the GovBot application flow.',
         'Income level, community, and marks should be checked together before moving into the final application step.',
-        'This page now matches the rest of the site visually so multi-scheme demos no longer feel fragmented.',
+        'This page now matches the rest of the site visually so multi-scheme journeys no longer feel fragmented.',
       ]}
       requirements={[
         'Community details relevant to the minority scholarship branch being applied for.',

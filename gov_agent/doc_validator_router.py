@@ -18,7 +18,8 @@ from gov_agent.document_vault import (
     update_user_document,
 )
 from gov_agent.models import DocumentEditRequest, DocumentUploadRequest
-from gov_agent.profile_router import _optional_jwt
+from gov_agent.user_auth import optional_jwt as _optional_jwt
+from gov_agent.user_auth import normalize_phone, require_phone_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,12 +69,10 @@ async def upload_document(
     req: DocumentUploadRequest,
     token_phone: Optional[str] = Depends(_optional_jwt),
 ):
-    resolved_phone = _require_token_phone(token_phone)
-    if resolved_phone != req.phone:
-        raise HTTPException(status_code=403, detail="Access denied")
+    resolved_phone = require_phone_access(req.phone, token_phone)
     try:
         return await ingest_document(
-            phone=req.phone,
+            phone=resolved_phone,
             doc_type=req.doc_type,
             source=req.source,
             image_b64=req.image_b64,
@@ -102,7 +101,7 @@ async def get_document_item(
     document = get_user_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if token_phone and token_phone != document.get("phone"):
+    if token_phone != normalize_phone(document.get("phone")):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
     return document
@@ -118,7 +117,7 @@ async def create_document_signed_url(
     document = get_user_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if token_phone and token_phone != document.get("phone"):
+    if token_phone != normalize_phone(document.get("phone")):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
     signed_url = create_signed_document_url(document["storage_path"])
@@ -144,7 +143,7 @@ async def create_document_view_url(
     document = get_user_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if token_phone and token_phone != document.get("phone"):
+    if token_phone != normalize_phone(document.get("phone")):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
     view_url = create_signed_document_url(document["storage_path"])
@@ -170,7 +169,7 @@ async def create_document_download_url(
     document = get_user_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if token_phone and token_phone != document.get("phone"):
+    if token_phone != normalize_phone(document.get("phone")):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
     download_url = create_signed_download_url(document["storage_path"])
@@ -197,7 +196,7 @@ async def update_document_item(
     document = get_user_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if token_phone and token_phone != document.get("phone"):
+    if token_phone != normalize_phone(document.get("phone")):
         raise HTTPException(status_code=403, detail="Access denied")
     _require_document_passkey(request, document["phone"])
     updated = update_user_document(document_id, req.extracted_data, custom_label=req.custom_label)
@@ -246,7 +245,5 @@ async def get_documents_for_phone(
     phone: str,
     token_phone: Optional[str] = Depends(_optional_jwt),
 ):
-    resolved_phone = _require_token_phone(token_phone)
-    if resolved_phone != phone:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return {"phone": phone, "documents": list_user_documents(phone)}
+    resolved_phone = require_phone_access(phone, token_phone)
+    return {"phone": resolved_phone, "documents": list_user_documents(resolved_phone)}

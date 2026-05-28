@@ -7,6 +7,17 @@ export const DOCUMENT_TYPE_OPTIONS = [
   { value: 'custom', label: 'Custom Document', icon: '🗂️', hint: 'Any other document with a custom name and summary' },
 ];
 
+const PORTAL_DOCUMENT_REQUIREMENTS = {
+  nsp: ['aadhaar', 'income_cert', 'marksheet'],
+  ssp: ['aadhaar', 'income_cert', 'caste_cert', 'marksheet'],
+};
+
+const DOCUMENT_TYPE_ALIASES = {
+  income_certificate: 'income_cert',
+  caste_certificate: 'caste_cert',
+  aadhaar_card: 'aadhaar',
+};
+
 function prettifyDocumentType(value = '') {
   return String(value || '')
     .split('_')
@@ -48,6 +59,67 @@ export function getDocumentUploadPrompt(docType = '', customLabel = '') {
     return `Choose ${label}`;
   }
   return `Choose your ${getDocumentLabel(docType, customLabel)}`;
+}
+
+export function normalizeDocumentType(docType = '') {
+  const normalized = String(docType || '').trim().toLowerCase();
+  return DOCUMENT_TYPE_ALIASES[normalized] || normalized;
+}
+
+function getPortalRequiredDocumentTypes(portal = 'nsp') {
+  const normalizedPortal = String(portal || 'nsp').trim().toLowerCase();
+  return PORTAL_DOCUMENT_REQUIREMENTS[normalizedPortal] || PORTAL_DOCUMENT_REQUIREMENTS.nsp;
+}
+
+function getDocumentChecklistStatus(document) {
+  if (!document) return 'missing';
+
+  const status = String(document.status || '').trim().toLowerCase();
+  const verificationStatus = String(document.verification_status || '').trim().toLowerCase();
+
+  if (['failed', 'invalid', 'rejected'].includes(status) || ['failed', 'invalid', 'rejected'].includes(verificationStatus)) {
+    return 'needs_review';
+  }
+
+  if (status === 'needs_review' || verificationStatus === 'unknown') {
+    return 'needs_review';
+  }
+
+  return 'ready';
+}
+
+export function buildPortalDocumentChecklist(portal = 'nsp', documents = []) {
+  const documentsByType = new Map();
+  for (const document of documents || []) {
+    const docType = normalizeDocumentType(document?.doc_type);
+    if (!docType || documentsByType.has(docType)) continue;
+    documentsByType.set(docType, document);
+  }
+
+  const items = getPortalRequiredDocumentTypes(portal).map((docType) => {
+    const document = documentsByType.get(docType) || null;
+    const status = getDocumentChecklistStatus(document);
+    return {
+      docType,
+      label: getDocumentLabel(docType),
+      required: true,
+      status,
+      document,
+    };
+  });
+
+  const missingRequiredDocuments = items.filter((item) => item.status === 'missing');
+  const reviewRequiredDocuments = items.filter((item) => item.status === 'needs_review');
+  const readyRequiredDocuments = items.filter((item) => item.status === 'ready');
+
+  return {
+    portal: String(portal || 'nsp').trim().toLowerCase(),
+    items,
+    missingRequiredDocuments,
+    reviewRequiredDocuments,
+    readyRequiredDocuments,
+    isComplete: missingRequiredDocuments.length === 0 && reviewRequiredDocuments.length === 0,
+  };
 }
 
 export function getFocusedDocumentId(asPath = '') {

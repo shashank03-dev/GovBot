@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -43,20 +43,15 @@ export default function DigiLockerReviewPage() {
   const [submitting, setSubmitting] = useState<'use' | 'edit' | 'save' | null>(null);
   const [error, setError] = useState('');
 
-  const phone = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem('govbot_phone') || '';
-  }, []);
-
   useEffect(() => {
-    if (!router.isReady || typeof sessionId !== 'string' || !phone) return;
+    if (!router.isReady || typeof sessionId !== 'string') return;
 
     let cancelled = false;
     const loadReview = async () => {
       setLoading(true);
       setError('');
       try {
-        const res = await fetch(`/api/digilocker/review/${encodeURIComponent(sessionId)}?phone=${encodeURIComponent(phone)}`);
+        const res = await fetch(`/api/digilocker/review/${encodeURIComponent(sessionId)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to load DigiLocker review');
         if (!cancelled) setReview(data);
@@ -69,17 +64,17 @@ export default function DigiLockerReviewPage() {
 
     loadReview();
     return () => { cancelled = true; };
-  }, [router.isReady, sessionId, phone]);
+  }, [router.isReady, sessionId]);
 
   const submitDecision = async (decision: 'use' | 'edit' | 'save') => {
-    if (!review || !phone || typeof sessionId !== 'string') return;
+    if (!review || typeof sessionId !== 'string') return;
     setSubmitting(decision);
     setError('');
     try {
       const res = await fetch(`/api/digilocker/review/${encodeURIComponent(sessionId)}/decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, decision }),
+        body: JSON.stringify({ decision }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Failed to apply review decision');
