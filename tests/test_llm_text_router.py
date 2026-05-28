@@ -97,6 +97,52 @@ class LLMTextRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "fallback")
         self.assertGreater(router._provider_state["groq-1"].cooldown_until, 0)
 
+    async def test_interactive_text_can_fall_back_through_three_providers(self):
+        router = LLMTextRouter(
+            providers=[
+                ProviderConfig(
+                    name="groq-1",
+                    provider="groq",
+                    model="llama-3.1-8b-instant",
+                    api_key="groq-key",
+                    enabled=True,
+                    weight=3,
+                ),
+                ProviderConfig(
+                    name="mistral-1",
+                    provider="mistral",
+                    model="mistral-small-latest",
+                    api_key="mistral-key",
+                    enabled=True,
+                    weight=2,
+                ),
+                ProviderConfig(
+                    name="gemini-1",
+                    provider="gemini",
+                    model="gemini-2.5-flash",
+                    api_key="gemini-key",
+                    enabled=True,
+                    weight=1,
+                ),
+            ],
+            provider_clients={
+                "groq-1": _FakeProvider(
+                    error=ProviderCallError("rate limit", kind="rate_limited")
+                ),
+                "mistral-1": _FakeProvider(
+                    error=ProviderCallError("rate limit", kind="rate_limited")
+                ),
+                "gemini-1": _FakeProvider(text="gemini fallback"),
+            },
+        )
+
+        result = await router.generate_text("hello", task="interactive")
+
+        self.assertEqual(result, "gemini fallback")
+        self.assertEqual(router._provider_clients["groq-1"].calls, 1)
+        self.assertEqual(router._provider_clients["mistral-1"].calls, 1)
+        self.assertEqual(router._provider_clients["gemini-1"].calls, 1)
+
     async def test_exact_match_cache_avoids_second_upstream_call(self):
         client = _FakeProvider(text="cached")
         router = LLMTextRouter(

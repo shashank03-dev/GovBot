@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import base64
+import logging
 from typing import Any
 
 from google import genai
 from google.genai import types
 
-from gov_agent.config import GEMINI_API_KEY
+from gov_agent.config import GEMINI_API_KEY, GEMINI_GENERATION_MODELS
 
-DEFAULT_GENERATION_MODEL = "gemini-2.0-flash"
+DEFAULT_GENERATION_MODEL = "gemini-2.5-flash"
+GENERATION_MODEL_FALLBACKS = ("gemini-2.0-flash",)
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+
+logger = logging.getLogger(__name__)
 
 _client: genai.Client | None = None
 
@@ -36,6 +40,33 @@ def inline_data_part(*, data_b64: str, mime_type: str) -> types.Part:
     )
 
 
+def _split_generation_models(raw_models: str) -> list[str]:
+    models: list[str] = []
+    for raw_model in raw_models.split(","):
+        model = raw_model.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def _generation_models_for_request(model: str) -> list[str]:
+    configured_models = _split_generation_models(GEMINI_GENERATION_MODELS)
+    if configured_models:
+        candidates = (
+            configured_models
+            if model == DEFAULT_GENERATION_MODEL
+            else [model, *configured_models]
+        )
+    else:
+        candidates = [model, *GENERATION_MODEL_FALLBACKS]
+
+    deduped: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
+
+
 def generate_text(
     contents: Any,
     *,
@@ -55,12 +86,31 @@ def generate_text(
     if max_output_tokens is not None:
         config_kwargs["max_output_tokens"] = max_output_tokens
 
-    response = get_gemini_client().models.generate_content(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
-    )
-    return (response.text or "").strip()
+    client = get_gemini_client()
+    models = _generation_models_for_request(model)
+    last_exc: Exception | None = None
+
+    for index, candidate_model in enumerate(models):
+        try:
+            response = client.models.generate_content(
+                model=candidate_model,
+                contents=contents,
+                config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
+            )
+            return (response.text or "").strip()
+        except Exception as exc:
+            last_exc = exc
+            if index < len(models) - 1:
+                logger.warning(
+                    "Gemini model %s failed; trying fallback model %s: %s",
+                    candidate_model,
+                    models[index + 1],
+                    exc,
+                )
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("No Gemini generation models configured")
 
 
 def embed_text(
