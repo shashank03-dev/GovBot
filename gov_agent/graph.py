@@ -1,6 +1,7 @@
 from typing import TypedDict, List
 from datetime import datetime
 from langgraph.graph import StateGraph, END
+from gov_agent.application_store import save_latest_application
 from gov_agent import portal_agent
 import asyncio
 import hashlib
@@ -101,19 +102,19 @@ async def execute_application(state: ApplicationState) -> ApplicationState:
             {"step": "Disbursed",    "icon": "💰", "date": None,                       "est_date": fmt(today + timedelta(days=21)), "done": False},
         ]
 
-        # Save to Supabase applications table
-        supabase.table("applications").insert({
-            "phone": state.get("phone") or state.get("media_id", "unknown"),
-            "confirmation_number": confirmation,
-            "service": "NSP Scholarship",
-            "status": "submitted",
-            "portal": "nsp",
-            "timeline_steps": timeline_steps,
-        }).execute()
+        saved_application = save_latest_application(
+            phone=state.get("phone") or state.get("media_id", "unknown"),
+            portal="nsp",
+            service="NSP Scholarship",
+            status="submitted",
+            timeline_steps=timeline_steps,
+            confirmation_number_factory=lambda: confirmation,
+            db_client=supabase,
+        )
 
         state["submission_result"] = {
             "status": "success",
-            "confirmation_number": confirmation
+            "confirmation_number": saved_application["confirmation_number"]
         }
     except Exception as e:
         state["error"] = str(e)

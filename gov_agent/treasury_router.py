@@ -25,7 +25,7 @@ async def create_treasury_release(
     body: ReleaseRequest,
     official: dict[str, str] = Depends(require_official_auth),
 ):
-    return treasury_release.record_release(
+    return await treasury_release.record_release(
         official=official,
         tx_hash=body.tx_hash,
         wallet_address=body.wallet_address,

@@ -32,6 +32,8 @@ create table if not exists applications (
     submitted_at        timestamptz not null default now()
 );
 create index if not exists applications_phone_idx on applications(phone);
+create index if not exists applications_phone_portal_submitted_idx
+    on applications(phone, portal, submitted_at desc);
 
 -- ------------------------------------------------------------
 -- 3. otp_codes — one-time passwords (stored hashed)
@@ -389,6 +391,71 @@ create table if not exists verifiable_credentials (
 create index if not exists verifiable_credentials_phone_idx on verifiable_credentials(phone);
 create index if not exists verifiable_credentials_confirmation_idx on verifiable_credentials(confirmation_number);
 create index if not exists verifiable_credentials_tx_hash_idx on verifiable_credentials(blockchain_tx_hash);
+
+-- ------------------------------------------------------------
+-- 15b. applications de-duplication — one active application per phone+portal
+--      Keeps the latest submitted_at row and rewires dependent records.
+-- ------------------------------------------------------------
+with ranked_applications as (
+    select
+        id,
+        phone,
+        portal,
+        confirmation_number,
+        row_number() over (
+            partition by phone, portal
+            order by submitted_at desc, id desc
+        ) as rn,
+        first_value(confirmation_number) over (
+            partition by phone, portal
+            order by submitted_at desc, id desc
+        ) as keep_confirmation_number
+    from applications
+)
+update disbursement_tracking
+set confirmation_number = ranked_applications.keep_confirmation_number
+from ranked_applications
+where ranked_applications.rn > 1
+  and disbursement_tracking.confirmation_number = ranked_applications.confirmation_number;
+
+with ranked_applications as (
+    select
+        id,
+        phone,
+        portal,
+        confirmation_number,
+        row_number() over (
+            partition by phone, portal
+            order by submitted_at desc, id desc
+        ) as rn,
+        first_value(confirmation_number) over (
+            partition by phone, portal
+            order by submitted_at desc, id desc
+        ) as keep_confirmation_number
+    from applications
+)
+update verifiable_credentials
+set confirmation_number = ranked_applications.keep_confirmation_number
+from ranked_applications
+where ranked_applications.rn > 1
+  and verifiable_credentials.confirmation_number = ranked_applications.confirmation_number;
+
+with ranked_applications as (
+    select
+        id,
+        row_number() over (
+            partition by phone, portal
+            order by submitted_at desc, id desc
+        ) as rn
+    from applications
+)
+delete from applications
+where id in (
+    select id from ranked_applications where rn > 1
+);
+
+create unique index if not exists applications_phone_portal_unique_idx
+    on applications(phone, portal);
 
 -- ------------------------------------------------------------
 -- 17. citizen_profiles — persistent citizen profile (source of truth for auto-fill)

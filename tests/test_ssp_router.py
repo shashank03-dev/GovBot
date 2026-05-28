@@ -22,6 +22,9 @@ class _FakeTable:
         self._limit: int | None = None
         self._insert_payload = None
         self._upsert_payload = None
+        self._update_payload = None
+        self._order_field: str | None = None
+        self._order_desc = False
         self._mode = "select"
 
     def select(self, *_args, **_kwargs):
@@ -38,8 +41,18 @@ class _FakeTable:
         self._upsert_payload = payload
         return self
 
+    def update(self, payload):
+        self._mode = "update"
+        self._update_payload = payload
+        return self
+
     def eq(self, field, value):
         self._filters.append((field, value))
+        return self
+
+    def order(self, field, desc=False):
+        self._order_field = field
+        self._order_desc = desc
         return self
 
     def limit(self, value):
@@ -65,6 +78,21 @@ class _FakeTable:
             rows.append(payload)
             return _FakeResult([payload])
 
+        if self._mode == "update":
+            payload = dict(self._update_payload)
+            updated = []
+            for index, row in enumerate(rows):
+                if all(row.get(field) == value for field, value in self._filters):
+                    rows[index] = {**row, **payload}
+                    updated.append(rows[index])
+            return _FakeResult(updated)
+
+        if self._order_field:
+            filtered = sorted(
+                filtered,
+                key=lambda row: str(row.get(self._order_field) or ""),
+                reverse=self._order_desc,
+            )
         if self._limit is not None:
             filtered = filtered[: self._limit]
         return _FakeResult(filtered)
@@ -201,6 +229,47 @@ class SSPRouterTests(unittest.TestCase):
         self.assertEqual(payload["status"], "success")
         self.assertTrue(payload["confirmation_number"].startswith("SSP2026"))
         self.assertEqual(fake_supabase.storage["applications"][0]["portal"], "ssp")
+
+    def test_submit_ssp_updates_existing_application_for_same_phone_and_portal(self):
+        fake_supabase = _FakeSupabase()
+        fake_supabase.storage["applications"].append(
+            {
+                "id": "app-existing",
+                "phone": "919999999999",
+                "confirmation_number": "SSP2026EXISTING",
+                "service": "SSP Scholarship",
+                "status": "submitted",
+                "portal": "ssp",
+                "timeline_steps": [],
+                "submitted_at": "2026-05-27T12:00:00+00:00",
+            }
+        )
+        client = _build_client()
+
+        with patch.object(ssp_router, "supabase", fake_supabase):
+            response = client.post(
+                "/api/ssp/draft/919999999999/submit",
+                headers=_auth_headers("919999999999"),
+                json={
+                    "current_step": "step-5",
+                    "language": "en",
+                    "fields": {
+                        "student_name": "Updated User",
+                        "dob": "30-10-2006",
+                        "aadhaar_number": "123412341234",
+                        "college_name": "SMVIT",
+                        "course_name": "BE",
+                        "final_declaration_accepted": True,
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["confirmation_number"], "SSP2026EXISTING")
+        self.assertEqual(len(fake_supabase.storage["applications"]), 1)
+        self.assertEqual(fake_supabase.storage["applications"][0]["confirmation_number"], "SSP2026EXISTING")
+        self.assertEqual(fake_supabase.storage["applications"][0]["status"], "submitted")
 
 
 if __name__ == "__main__":

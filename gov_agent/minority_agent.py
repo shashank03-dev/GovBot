@@ -3,6 +3,7 @@ from datetime import datetime
 from langgraph.graph import StateGraph, END
 import random
 import string
+from gov_agent.application_store import save_latest_application
 from gov_agent.db import supabase
 
 
@@ -61,18 +62,19 @@ async def execute_application(state: MinorityState) -> MinorityState:
             {"step": "Disbursed",    "icon": "💰", "date": None,                             "est_date": fmt(today + timedelta(days=21)),  "done": False},
         ]
 
-        supabase.table("applications").insert({
-            "phone": state.get("phone", "unknown"),
-            "confirmation_number": confirmation,
-            "service": "Minority Scholarship",
-            "status": "submitted",
-            "portal": "minority",
-            "timeline_steps": timeline_steps,
-        }).execute()
+        saved_application = save_latest_application(
+            phone=state.get("phone", "unknown"),
+            portal="minority",
+            service="Minority Scholarship",
+            status="submitted",
+            timeline_steps=timeline_steps,
+            confirmation_number_factory=lambda: confirmation,
+            db_client=supabase,
+        )
 
         state["submission_result"] = {
             "status": "success",
-            "confirmation_number": confirmation
+            "confirmation_number": saved_application["confirmation_number"]
         }
     except Exception as e:
         state["error"] = str(e)

@@ -16,6 +16,7 @@ class LiveDashboardSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 "service": "SSP Scholarship",
                 "status": "pending",
                 "confirmation_number": None,
+                "portal": "ssp",
                 "submitted_at": "2026-05-21T13:30:00+00:00",
             },
             {
@@ -23,6 +24,7 @@ class LiveDashboardSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 "service": "NSP Scholarship",
                 "status": "submitted",
                 "confirmation_number": "NSP2026ABC123",
+                "portal": "nsp",
                 "submitted_at": "2026-05-21T12:00:00+00:00",
             },
         ]
@@ -49,6 +51,40 @@ class LiveDashboardSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 {"event": "Bank verified", "timestamp": "2026-05-21T12:05:00+00:00"},
             ],
         )
+
+    async def test_get_dashboard_snapshot_hides_older_duplicate_applications(self):
+        applications_chain = MagicMock()
+        applications_query = applications_chain.select.return_value
+        applications_query.eq.return_value.order.return_value.execute.return_value.data = [
+            {
+                "id": "app-new",
+                "phone": "919876543210",
+                "service": "NSP Scholarship",
+                "status": "processing",
+                "confirmation_number": "NSP2026NEW",
+                "portal": "nsp",
+                "submitted_at": "2026-05-28T12:00:00+00:00",
+            },
+            {
+                "id": "app-old",
+                "phone": "919876543210",
+                "service": "NSP Scholarship",
+                "status": "submitted",
+                "confirmation_number": "NSP2026OLD",
+                "portal": "nsp",
+                "submitted_at": "2026-05-27T12:00:00+00:00",
+            },
+        ]
+        activity_chain = MagicMock()
+        activity_chain.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+        supabase_mock = MagicMock()
+        supabase_mock.table.side_effect = [applications_chain, activity_chain]
+
+        with patch.object(live_router, "supabase", supabase_mock):
+            snapshot = await live_router.get_dashboard_snapshot("919876543210", token_phone="919876543210")
+
+        self.assertEqual(snapshot["summary"], {"total": 1, "submitted": 0, "pending": 0, "failed": 0})
+        self.assertEqual([app["confirmation_number"] for app in snapshot["applications"]], ["NSP2026NEW"])
 
     async def test_get_dashboard_snapshot_rejects_mismatched_token(self):
         with self.assertRaises(HTTPException) as ctx:

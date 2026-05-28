@@ -6,6 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from gov_agent.application_store import save_latest_application
 from gov_agent.db import supabase
 from gov_agent.digilocker_router import get_latest_review_session_for_phone
 from gov_agent.user_auth import optional_jwt as _optional_jwt
@@ -267,17 +268,16 @@ async def submit_ssp_draft(phone: str, body: SSPDraftRequest, token_phone: Optio
             detail={"error": "Missing required fields", "missing_fields": missing_fields},
         )
 
-    confirmation_number = _build_confirmation_number()
-    supabase.table("applications").insert(
-        {
-            "phone": phone,
-            "confirmation_number": confirmation_number,
-            "service": "SSP Scholarship",
-            "status": "submitted",
-            "portal": "ssp",
-            "timeline_steps": _build_timeline(),
-        }
-    ).execute()
+    saved_application = save_latest_application(
+        phone=phone,
+        portal="ssp",
+        service="SSP Scholarship",
+        status="submitted",
+        timeline_steps=_build_timeline(),
+        confirmation_number_factory=_build_confirmation_number,
+        db_client=supabase,
+    )
+    confirmation_number = str(saved_application["confirmation_number"])
 
     draft = {
         "current_step": body.current_step,
