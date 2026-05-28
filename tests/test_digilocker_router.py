@@ -178,6 +178,9 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("review_url", result)
         stored_doc_types = [row["doc_type"] for row in fake_supabase.storage["digilocker_docs"]]
         self.assertEqual(stored_doc_types, ["aadhaar", "income_certificate"])
+        review = fake_supabase.storage["sessions"][0]["collected_data"]["digilocker_review_sessions"][result["review_session_id"]]
+        self.assertEqual(review["imported_fields"]["income"], 98000)
+        self.assertEqual(review["imported_fields"]["income_certificate_number"], "RD1218190096391")
 
     async def test_review_and_decision_endpoints_round_trip(self):
         fake_supabase = _FakeSupabase()
@@ -228,6 +231,49 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision_response.json()["decision"], "use")
         self.assertIn("/nsp/apply?review_session=", decision_response.json()["next_url"])
         self.assertEqual(unauthorized_response.status_code, 401)
+
+    async def test_income_and_caste_use_same_mock_source_document(self):
+        fake_supabase = _FakeSupabase()
+        fake_supabase.storage["sessions"].append({"phone": "919999999999", "state": "greeting", "collected_data": {}})
+        with patch.object(digilocker_router, "supabase", fake_supabase):
+            consent = await digilocker_router.create_mock_consent(
+                digilocker_router.CreateConsentRequest(
+                    phone="919999999999",
+                    portal="nsp",
+                    channel="web",
+                    return_to="/nsp/apply",
+                    selected_optional_docs=["caste_certificate"],
+                ),
+                token_phone="919999999999",
+            )
+
+        callback_token = parse_qs(urlparse(consent.redirect_url).query)["callback_token"][0]
+
+        with patch.object(digilocker_router, "supabase", fake_supabase), patch.object(
+            digilocker_router,
+            "ingest_document",
+            new=AsyncMock(return_value={"status": "ready"}),
+        ):
+            result = await digilocker_router.mock_callback(
+                consent.consent_id,
+                callback_token=callback_token,
+                token_phone="919999999999",
+            )
+
+        self.assertEqual(result["documents_fetched"], 2)
+        self.assertEqual(
+            [doc["name"] for doc in result["documents"]],
+            ["Aadhaar Card", "Income and Caste Certificate"],
+        )
+        stored_docs = {row["doc_type"]: row for row in fake_supabase.storage["digilocker_docs"]}
+        self.assertEqual(
+            stored_docs["income_certificate"]["digilocker_uri"],
+            stored_docs["caste_certificate"]["digilocker_uri"],
+        )
+        self.assertEqual(
+            stored_docs["income_certificate"]["raw_data"],
+            stored_docs["caste_certificate"]["raw_data"],
+        )
 
 
 if __name__ == "__main__":

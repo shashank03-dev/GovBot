@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from gov_agent.config import FRONTEND_URL, MOCK_DIGILOCKER
 from gov_agent.db import supabase
+from gov_agent.demo_documents import load_demo_document_asset
 from gov_agent.digilocker_agent import (
     build_portal_prefill,
     extract_prefill_data_from_documents,
@@ -64,23 +65,23 @@ MOCK_DOCUMENTS = [
     },
     {
         "doctype": "income_certificate",
-        "name": "Income Certificate",
-        "uri": "digilocker://mock/income/5678",
+        "name": "Income and Caste Certificate",
+        "uri": "digilocker://mock/income-caste/RD1218190096391",
         "size": 18432,
         "mime_type": "application/pdf",
         "data": "JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PAovVHlwZSAvUGFnZQo+PgplbmRvYmoK",
     },
     {
         "doctype": "caste_certificate",
-        "name": "Caste Certificate",
-        "uri": "digilocker://mock/caste/9012",
-        "size": 16384,
+        "name": "Income and Caste Certificate",
+        "uri": "digilocker://mock/income-caste/RD1218190096391",
+        "size": 18432,
         "mime_type": "application/pdf",
         "data": "JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PAovVHlwZSAvUGFnZQo+PgplbmRvYmoK",
     },
     {
         "doctype": "marksheet",
-        "name": "Marksheet 2024",
+        "name": "Marksheet 2025",
         "uri": "digilocker://mock/marksheet/4455",
         "size": 17220,
         "mime_type": "application/pdf",
@@ -186,6 +187,26 @@ def get_portal_doc_plan(portal: str) -> dict[str, Any]:
         "optional_docs": list(rules["optional_docs"]),
         "next_url": rules["next_url"],
     }
+
+
+def _materialize_mock_document(doc: dict[str, Any]) -> dict[str, Any]:
+    materialized = dict(doc)
+    asset = load_demo_document_asset(str(doc.get("doctype") or ""))
+    if asset:
+        materialized.update(asset)
+    return materialized
+
+
+def _dedupe_visible_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    visible: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for doc in documents:
+        key = str(doc.get("uri") or doc.get("name") or doc.get("doc_type") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        visible.append(doc)
+    return visible
 
 
 @router.get("/digilocker/portal-config/{portal}")
@@ -345,10 +366,28 @@ def format_review_summary(review: dict[str, Any]) -> str:
         "aadhaar_number": "Aadhaar",
         "gender": "Gender",
         "caste": "Caste",
+        "caste_name": "Caste Name",
+        "income_certificate_number": "Income Certificate",
+        "caste_certificate_number": "Caste Certificate",
         "marks_pct": "Marks",
+        "marks_obtained": "Marks Obtained",
+        "max_marks": "Max Marks",
     }
     imported_lines = []
-    for key in ("name", "dob", "income", "aadhaar_number", "gender", "caste", "marks_pct"):
+    for key in (
+        "name",
+        "dob",
+        "income",
+        "income_certificate_number",
+        "aadhaar_number",
+        "gender",
+        "caste",
+        "caste_name",
+        "caste_certificate_number",
+        "marks_pct",
+        "marks_obtained",
+        "max_marks",
+    ):
         value = imported.get(key)
         if value in (None, "", []):
             continue
@@ -491,7 +530,9 @@ async def mock_callback(
     await asyncio.sleep(1)
 
     fetched_documents: list[dict[str, Any]] = []
-    for doc in MOCK_DOCUMENTS:
+    materialized_documents = [_materialize_mock_document(doc) for doc in MOCK_DOCUMENTS]
+    materialized_by_type = {str(doc["doctype"]): doc for doc in materialized_documents}
+    for doc in materialized_documents:
         if doc["doctype"] not in scope:
             continue
 
@@ -511,6 +552,7 @@ async def mock_callback(
             "doc_type": doc["doctype"],
             "name": doc["name"],
             "mime_type": doc["mime_type"],
+            "uri": doc["uri"],
         })
 
         vault_type = _VAULT_TYPE_MAP.get(doc["doctype"])
@@ -521,7 +563,7 @@ async def mock_callback(
                     doc_type=vault_type,
                     source="digilocker",
                     image_b64=doc["data"],
-                    file_name=doc["name"].lower().replace(" ", "-") + ".pdf",
+                    file_name=doc.get("file_name") or doc["name"].lower().replace(" ", "-") + ".pdf",
                     mime_type=doc["mime_type"],
                 )
             except Exception as exc:
@@ -531,18 +573,19 @@ async def mock_callback(
         [
             {
                 "doc_type": doc["doc_type"],
-                "raw_data": next(item["data"] for item in MOCK_DOCUMENTS if item["doctype"] == doc["doc_type"]),
+                "raw_data": materialized_by_type[doc["doc_type"]]["data"],
             }
             for doc in fetched_documents
         ]
     )
+    visible_documents = _dedupe_visible_documents(fetched_documents)
     review = _build_review_payload(
         phone=phone,
         consent_id=consent_id,
         portal=portal,
         channel=channel,
         return_to=return_to,
-        documents=fetched_documents,
+        documents=visible_documents,
         imported_fields=imported_fields,
     )
     _store_review_session(phone, review["review_session_id"], review)
@@ -550,7 +593,7 @@ async def mock_callback(
 
     supabase.table("digilocker_consents").update({
         "status": "completed",
-        "documents_fetched": len(fetched_documents),
+        "documents_fetched": len(visible_documents),
         "updated_at": _utcnow_iso(),
     }).eq("consent_id", consent_id).execute()
 
@@ -561,8 +604,8 @@ async def mock_callback(
     return {
         "status": "success",
         "consent_id": consent_id,
-        "documents_fetched": len(fetched_documents),
-        "documents": fetched_documents,
+        "documents_fetched": len(visible_documents),
+        "documents": visible_documents,
         "review_session_id": review["review_session_id"],
         "review_url": review_url,
         "message": "DigiLocker connected successfully",

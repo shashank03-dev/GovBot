@@ -17,6 +17,8 @@ test('normal NSP demo autofill covers every visible field in the typing sequence
   assert.ok(stepFields.includes('email'));
   assert.ok(stepFields.includes('confirmAccountNo'));
   assert.ok(stepFields.includes('branch'));
+  assert.equal(NSP_DEMO_DATA.income, '98000');
+  assert.equal(NSP_DEMO_DATA.category, 'obc');
 });
 
 test('buildNspDemoDataFromFillValues merges analyzed profile values into the normal demo template', () => {

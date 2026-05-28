@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 from gov_agent.db import supabase
+from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
 from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
 logger = logging.getLogger(__name__)
@@ -93,26 +94,26 @@ def extract_aadhaar_data(doc_data: str) -> dict:
 
 def extract_income_certificate_data(doc_data: str) -> dict:
     """Extract income certificate data."""
-    
-    # Mock extraction for demo
+
     return {
-        "annual_income": 25000,
-        "income_category": "Below 2.5 Lakh",
-        "certificate_number": "INC-2024-5678",
-        "issue_date": "2024-01-15",
-        "valid_until": "2025-01-15",
+        "annual_income": INCOME_CASTE_CERTIFICATE["annual_income"],
+        "income_category": INCOME_CASTE_CERTIFICATE["income_category"],
+        "certificate_number": INCOME_CASTE_CERTIFICATE["certificate_number"],
+        "issue_date": INCOME_CASTE_CERTIFICATE["issue_date"],
+        "valid_until": INCOME_CASTE_CERTIFICATE["valid_until"],
     }
 
 
 def extract_caste_certificate_data(doc_data: str) -> dict:
     """Extract caste certificate data."""
-    
-    # Mock extraction for demo
+
     return {
-        "caste": "SC",
-        "category": "Scheduled Caste",
-        "certificate_number": "CST-2024-9012",
-        "issue_date": "2024-02-20",
+        "caste": "OBC",
+        "caste_name": INCOME_CASTE_CERTIFICATE["caste"],
+        "category": INCOME_CASTE_CERTIFICATE["category"],
+        "certificate_number": INCOME_CASTE_CERTIFICATE["certificate_number"],
+        "issue_date": INCOME_CASTE_CERTIFICATE["issue_date"],
+        "valid_until": INCOME_CASTE_CERTIFICATE["valid_until"],
     }
 
 
@@ -120,10 +121,13 @@ def extract_marksheet_data(doc_data: str) -> dict:
     """Extract previous-year marksheet data."""
 
     return {
-        "student_name": "SHASHANK GOWDA T",
-        "board": "Karnataka School Examination and Assessment Board",
-        "percentage": 95.5,
-        "year": "2025",
+        "student_name": MARKSHEET["student_name"],
+        "board": MARKSHEET["board"],
+        "percentage": MARKSHEET["percentage"],
+        "year": MARKSHEET["year"],
+        "register_number": MARKSHEET["register_number"],
+        "marks_obtained": MARKSHEET["marks_obtained"],
+        "max_marks": MARKSHEET["max_marks"],
     }
 
 
@@ -171,6 +175,8 @@ def extract_prefill_data_from_documents(documents: list[dict[str, Any]]) -> dict
             prefill_data.update({
                 "caste": caste_data.get("caste"),
                 "category": caste_data.get("category"),
+                "caste_name": caste_data.get("caste_name"),
+                "caste_certificate_number": caste_data.get("certificate_number"),
             })
 
         elif doc_type == "marksheet":
@@ -179,6 +185,9 @@ def extract_prefill_data_from_documents(documents: list[dict[str, Any]]) -> dict
                 "marks_pct": marksheet_data.get("percentage"),
                 "board": marksheet_data.get("board"),
                 "year": marksheet_data.get("year"),
+                "register_number": marksheet_data.get("register_number"),
+                "marks_obtained": marksheet_data.get("marks_obtained"),
+                "max_marks": marksheet_data.get("max_marks"),
             })
 
     return prefill_data
@@ -205,6 +214,10 @@ def build_portal_prefill(portal: str, imported: dict[str, Any], phone: str | Non
         "marks": "" if marks_pct in (None, "") else str(marks_pct),
         "board": str(imported.get("board") or ""),
         "year": str(imported.get("year") or ""),
+        "incomeCertificateNumber": str(imported.get("income_certificate_number") or ""),
+        "casteCertificateNumber": str(imported.get("caste_certificate_number") or ""),
+        "previousYearMarksObtained": str(imported.get("marks_obtained") or ""),
+        "previousYearMaxMarks": str(imported.get("max_marks") or ""),
     }
     prefill.update(_derive_location_fields(imported.get("address")))
 

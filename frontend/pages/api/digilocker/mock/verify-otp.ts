@@ -9,9 +9,9 @@ const MOCK_PROFILE = {
   gender: 'Male',
   aadhaar: '6634 0835 5424',
   email: 'frshashank7447@gmail.com',
-  category: 'general',
+  category: 'obc',
   religion: 'hindu',
-  income: '25000',
+  income: '98000',
   domicile: 'Karnataka',
   district: 'Bengaluru North',
   institute: 'Sir M Vishveswraya Institute of Technology',
@@ -26,7 +26,7 @@ const MOCK_PROFILE = {
   confirmAccountNo: '325671904812',
   ifsc: 'SBIN0012345',
   branch: 'HMT Layout',
-  docs: ['Aadhaar Card', 'Income Certificate', 'Caste Certificate', 'Marksheet 2024'],
+  docs: ['Aadhaar Card', 'Income and Caste Certificate', 'Marksheet 2025'],
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

@@ -16,6 +16,7 @@ from gov_agent.config import (
     WHATSAPP_TOKEN,
 )
 from gov_agent.db import supabase
+from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
 from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,13 @@ CASTE_PROFILE_VALUES = {
     "obc": "obc",
     "other backward class": "obc",
     "other backward classes": "obc",
+    "backward class": "obc",
+    "backward classes": "obc",
+    "category iii a": "obc",
+    "category iii a backward classes": "obc",
+    "iii a": "obc",
+    "iiia": "obc",
+    "vokkaligaru": "obc",
     "sc": "sc",
     "scheduled caste": "sc",
     "scheduled castes": "sc",
@@ -198,8 +206,14 @@ def _parse_number(value: Any, *, integer: bool = False) -> Optional[int | float]
 def _normalize_profile_caste(value: Any) -> Optional[str]:
     if not _filled(value):
         return None
-    normalized = re.sub(r"\s+", " ", str(value).strip().lower())
-    return CASTE_PROFILE_VALUES.get(normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value).strip().lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    direct = CASTE_PROFILE_VALUES.get(normalized)
+    if direct:
+        return direct
+    if "backward class" in normalized or "iii a" in normalized:
+        return "obc"
+    return None
 
 
 def _document_caste_values(value: Any) -> Optional[tuple[str, str]]:
@@ -396,6 +410,7 @@ def format_sensitive_document_reply(
         "income_cert": [
             ("Certificate Number", "certificate_number"),
             ("Annual Income", "annual_income"),
+            ("Income Category", "income_category"),
             ("Issue Date", "issue_date"),
             ("Valid Until", "valid_until"),
         ],
@@ -404,12 +419,17 @@ def format_sensitive_document_reply(
             ("Caste", "caste"),
             ("Category", "category"),
             ("Issue Date", "issue_date"),
+            ("Valid Until", "valid_until"),
         ],
         "marksheet": [
             ("Student Name", "student_name"),
             ("Roll Number", "roll_number"),
             ("Year", "year"),
+            ("Board", "board"),
             ("Percentage", "percentage"),
+            ("Marks Obtained", "marks_obtained"),
+            ("Max Marks", "max_marks"),
+            ("Class Obtained", "class_obtained"),
             ("Issue Date", "issue_date"),
         ],
     }.get(requested_type, [])
@@ -575,23 +595,40 @@ def _extract_fallback(doc_type: str) -> tuple[dict[str, Any], float, str]:
             ),
         },
         "income_cert": {
-            "certificate_number": "INC-2024-5678",
-            "annual_income": 25000,
-            "issue_date": "2024-01-15",
-            "valid_until": "2025-01-15",
+            "certificate_number": INCOME_CASTE_CERTIFICATE["certificate_number"],
+            "annual_income": INCOME_CASTE_CERTIFICATE["annual_income"],
+            "income_category": INCOME_CASTE_CERTIFICATE["income_category"],
+            "issue_date": INCOME_CASTE_CERTIFICATE["issue_date"],
+            "valid_until": INCOME_CASTE_CERTIFICATE["valid_until"],
+            "student_name": INCOME_CASTE_CERTIFICATE["student_name"],
+            "father_name": INCOME_CASTE_CERTIFICATE["father_name"],
+            "mother_name": INCOME_CASTE_CERTIFICATE["mother_name"],
+            "district": INCOME_CASTE_CERTIFICATE["district"],
+            "taluk": INCOME_CASTE_CERTIFICATE["taluk"],
         },
         "caste_cert": {
-            "certificate_number": "CST-2024-9012",
-            "caste": "SC",
-            "category": "Scheduled Caste",
-            "issue_date": "2024-02-20",
+            "certificate_number": INCOME_CASTE_CERTIFICATE["certificate_number"],
+            "caste": INCOME_CASTE_CERTIFICATE["caste"],
+            "category": INCOME_CASTE_CERTIFICATE["category"],
+            "issue_date": INCOME_CASTE_CERTIFICATE["issue_date"],
+            "valid_until": INCOME_CASTE_CERTIFICATE["valid_until"],
+            "student_name": INCOME_CASTE_CERTIFICATE["student_name"],
+            "father_name": INCOME_CASTE_CERTIFICATE["father_name"],
+            "mother_name": INCOME_CASTE_CERTIFICATE["mother_name"],
+            "district": INCOME_CASTE_CERTIFICATE["district"],
+            "taluk": INCOME_CASTE_CERTIFICATE["taluk"],
         },
         "marksheet": {
-            "student_name": "SHASHANK GOWDA T",
-            "roll_number": "MS-2024-1122",
-            "year": "2024",
-            "percentage": 95.5,
-            "issue_date": "2024-03-15",
+            "student_name": MARKSHEET["student_name"],
+            "roll_number": MARKSHEET["roll_number"],
+            "register_number": MARKSHEET["register_number"],
+            "year": MARKSHEET["year"],
+            "board": MARKSHEET["board"],
+            "percentage": MARKSHEET["percentage"],
+            "marks_obtained": MARKSHEET["marks_obtained"],
+            "max_marks": MARKSHEET["max_marks"],
+            "class_obtained": MARKSHEET["class_obtained"],
+            "issue_date": MARKSHEET["issue_date"],
         },
     }
     extracted = mock_map.get(doc_type, {}).copy()
@@ -792,7 +829,6 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
 
     if not has_gemini_client():
         flags: list[str] = []
-        issue_date_obj = None
         if doc_type == "aadhaar":
             return {
                 "valid": True,
@@ -802,6 +838,37 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
                 "flags": flags,
                 "message": "Document validated using fallback rules.",
                 "verification_status": "valid",
+            }
+        extracted, confidence, _ = _extract_fallback(doc_type)
+        if extracted and confidence >= 0.6:
+            issue_date_obj = _parse_date(extracted.get("issue_date"))
+            expiry = _parse_date(extracted.get("valid_until"))
+            if not expiry and issue_date_obj:
+                expiry = _expiry_date(issue_date_obj, doc_type)
+
+            today = date.today()
+            if issue_date_obj and issue_date_obj > today:
+                flags.append("future_date")
+            if expiry and today > expiry:
+                flags.append("expired")
+
+            valid = not flags
+            verification_status = "valid" if valid else "invalid"
+            if "expired" in flags:
+                message = f"{doc_type.replace('_', ' ').title()} has expired and may be rejected by portal."
+            elif "future_date" in flags:
+                message = "Document issue date is in the future — please check."
+            else:
+                message = "Document validated using fallback rules."
+
+            return {
+                "valid": valid,
+                "doc_type": doc_type,
+                "issue_date": issue_date_obj.strftime("%d/%m/%Y") if issue_date_obj else None,
+                "expiry_date": expiry.strftime("%d/%m/%Y") if expiry else None,
+                "flags": flags,
+                "message": message,
+                "verification_status": verification_status,
             }
         return {
             "valid": False,

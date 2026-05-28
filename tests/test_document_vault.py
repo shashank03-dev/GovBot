@@ -5,8 +5,10 @@ from gov_agent.document_vault import (
     DocumentVaultError,
     _materialize_document,
     _record_status,
+    analyze_document_validity,
     build_document_updates_from_profile,
     build_profile_updates,
+    extract_document_data,
     list_user_documents,
     mask_document_for_list,
     merge_extracted_data,
@@ -98,6 +100,14 @@ class ProfileMappingTests(unittest.TestCase):
             build_profile_updates("marksheet", {"student_name": "Asha Singh", "percentage": "95.5"}),
             {"full_name": "Asha Singh", "marks_pct": 95.5},
         )
+
+    def test_build_profile_updates_maps_karnataka_category_iiia_to_obc(self):
+        updates = build_profile_updates(
+            "caste_cert",
+            {"caste": "Vokkaligaru", "category": "Category III A (Backward Classes)"},
+        )
+
+        self.assertEqual(updates, {"caste": "obc"})
 
     def test_build_document_updates_from_profile_targets_overlapping_vault_fields(self):
         updates = build_document_updates_from_profile(
@@ -194,6 +204,62 @@ class SensitiveReplyTests(unittest.TestCase):
         self.assertIn("Domicile Certificate", text)
         self.assertIn("Confirms residence in Bengaluru Urban district.", text)
         self.assertIn("Residence proof", text)
+
+
+class DemoFallbackExtractionTests(unittest.TestCase):
+    def test_extracts_2026_income_and_caste_certificate_fallback_values(self):
+        with patch("gov_agent.document_vault.has_gemini_client", return_value=False):
+            income, income_confidence, _ = extract_document_data(
+                "income_cert",
+                image_b64="demo",
+                mime_type="image/jpeg",
+            )
+            caste, caste_confidence, _ = extract_document_data(
+                "caste_cert",
+                image_b64="demo",
+                mime_type="image/jpeg",
+            )
+
+        self.assertEqual(income_confidence, 0.91)
+        self.assertEqual(caste_confidence, 0.91)
+        self.assertEqual(income["certificate_number"], "RD1218190096391")
+        self.assertEqual(income["annual_income"], 98000)
+        self.assertEqual(income["issue_date"], "2026-01-29")
+        self.assertEqual(income["valid_until"], "2031-01-29")
+        self.assertEqual(caste["certificate_number"], "RD1218190096391")
+        self.assertEqual(caste["caste"], "Vokkaligaru")
+        self.assertEqual(caste["category"], "Category III A (Backward Classes)")
+
+    def test_extracts_2025_marksheet_fallback_values(self):
+        with patch("gov_agent.document_vault.has_gemini_client", return_value=False):
+            marksheet, confidence, _ = extract_document_data(
+                "marksheet",
+                image_b64="demo",
+                mime_type="image/jpeg",
+            )
+
+        self.assertEqual(confidence, 0.91)
+        self.assertEqual(marksheet["student_name"], "SHASHANK GOWDA T")
+        self.assertEqual(marksheet["roll_number"], "20259115638")
+        self.assertEqual(marksheet["year"], "2025")
+        self.assertEqual(marksheet["percentage"], 95.5)
+        self.assertEqual(marksheet["marks_obtained"], 573)
+        self.assertEqual(marksheet["max_marks"], 600)
+
+    def test_validates_demo_non_aadhaar_documents_without_gemini(self):
+        with patch("gov_agent.document_vault.has_gemini_client", return_value=False):
+            income = analyze_document_validity("income_cert", "demo")
+            caste = analyze_document_validity("caste_cert", "demo")
+            marksheet = analyze_document_validity("marksheet", "demo")
+
+        self.assertTrue(income["valid"])
+        self.assertEqual(income["verification_status"], "valid")
+        self.assertEqual(income["issue_date"], "29/01/2026")
+        self.assertEqual(income["expiry_date"], "29/01/2031")
+        self.assertTrue(caste["valid"])
+        self.assertEqual(caste["verification_status"], "valid")
+        self.assertTrue(marksheet["valid"])
+        self.assertEqual(marksheet["verification_status"], "valid")
 
 
 class DownloadUrlHelperTests(unittest.TestCase):

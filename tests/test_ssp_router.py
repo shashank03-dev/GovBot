@@ -187,7 +187,15 @@ class SSPRouterTests(unittest.TestCase):
         with patch.object(ssp_router, "supabase", fake_supabase), patch.object(
             ssp_router,
             "get_latest_review_session_for_phone",
-            return_value={"imported_fields": {"aadhaar_number": "123412341234"}},
+            return_value={
+                "imported_fields": {
+                    "aadhaar_number": "123412341234",
+                    "income_certificate_number": "RD1218190096391",
+                    "caste_certificate_number": "RD1218190096391",
+                    "marks_obtained": 573,
+                    "max_marks": 600,
+                }
+            },
         ):
             response = client.post(
                 "/api/ssp/draft/919999999999/sync-profile",
@@ -200,6 +208,10 @@ class SSPRouterTests(unittest.TestCase):
         self.assertGreaterEqual(payload["updated_count"], 4)
         self.assertEqual(payload["draft"]["fields"]["student_name"], "Synced Student")
         self.assertEqual(payload["draft"]["fields"]["aadhaar_number"], "123412341234")
+        self.assertEqual(payload["draft"]["fields"]["income_certificate_number"], "RD1218190096391")
+        self.assertEqual(payload["draft"]["fields"]["caste_certificate_number"], "RD1218190096391")
+        self.assertEqual(payload["draft"]["fields"]["previous_year_marks_obtained"], 573)
+        self.assertEqual(payload["draft"]["fields"]["previous_year_max_marks"], 600)
         self.assertEqual(payload["draft"]["fields"]["hostel_name"], "Legacy Hostel")
 
     def test_submit_ssp_creates_application_when_required_fields_exist(self):

@@ -125,7 +125,11 @@ def _review_to_ssp_fields(review: dict[str, Any] | None) -> dict[str, Any]:
         "caste": imported.get("caste") or portal_prefill.get("category") or "",
         "mobile": portal_prefill.get("mobile") or "",
         "previous_year_percentage_or_cgpa": imported.get("marks_pct") or portal_prefill.get("marks") or "",
+        "previous_year_marks_obtained": imported.get("marks_obtained") or portal_prefill.get("previousYearMarksObtained") or "",
+        "previous_year_max_marks": imported.get("max_marks") or portal_prefill.get("previousYearMaxMarks") or "",
         "sslc_board": imported.get("board") or portal_prefill.get("board") or "",
+        "income_certificate_number": imported.get("income_certificate_number") or portal_prefill.get("incomeCertificateNumber") or "",
+        "caste_certificate_number": imported.get("caste_certificate_number") or portal_prefill.get("casteCertificateNumber") or "",
     }
 
 
