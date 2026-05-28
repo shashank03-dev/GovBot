@@ -145,6 +145,70 @@ def ensure_profile_passkey(phone: str, pin: Optional[str]) -> None:
     )
 
 
+CASTE_PROFILE_VALUES = {
+    "general": "general",
+    "gen": "general",
+    "obc": "obc",
+    "other backward class": "obc",
+    "other backward classes": "obc",
+    "sc": "sc",
+    "scheduled caste": "sc",
+    "scheduled castes": "sc",
+    "st": "st",
+    "scheduled tribe": "st",
+    "scheduled tribes": "st",
+    "ews": "ews",
+    "economically weaker section": "ews",
+    "economically weaker sections": "ews",
+}
+
+CASTE_DOCUMENT_VALUES = {
+    "general": ("General", "General"),
+    "obc": ("OBC", "Other Backward Class"),
+    "sc": ("SC", "Scheduled Caste"),
+    "st": ("ST", "Scheduled Tribe"),
+    "ews": ("EWS", "Economically Weaker Section"),
+}
+
+
+def _filled(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _first_filled(*values: Any) -> Optional[Any]:
+    for value in values:
+        if _filled(value):
+            return value
+    return None
+
+
+def _parse_number(value: Any, *, integer: bool = False) -> Optional[int | float]:
+    if not _filled(value):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if integer else float(value)
+    normalized = re.sub(r"[,\s₹]", "", str(value))
+    try:
+        parsed = float(normalized)
+    except ValueError:
+        return None
+    return int(parsed) if integer else parsed
+
+
+def _normalize_profile_caste(value: Any) -> Optional[str]:
+    if not _filled(value):
+        return None
+    normalized = re.sub(r"\s+", " ", str(value).strip().lower())
+    return CASTE_PROFILE_VALUES.get(normalized)
+
+
+def _document_caste_values(value: Any) -> Optional[tuple[str, str]]:
+    normalized = _normalize_profile_caste(value)
+    if not normalized:
+        return None
+    return CASTE_DOCUMENT_VALUES[normalized]
+
+
 def build_profile_updates(doc_type: str, extracted_data: dict[str, Any]) -> dict[str, Any]:
     if doc_type == "pan":
         return {
@@ -163,7 +227,59 @@ def build_profile_updates(doc_type: str, extracted_data: dict[str, Any]) -> dict
         if digits:
             updates["aadhaar_last4"] = digits[-4:]
         return updates
+    if doc_type == "income_cert":
+        income = _parse_number(
+            _first_filled(extracted_data.get("annual_income"), extracted_data.get("income")),
+            integer=True,
+        )
+        return {"income": income} if income is not None else {}
+    if doc_type == "caste_cert":
+        caste = _normalize_profile_caste(
+            _first_filled(extracted_data.get("caste"), extracted_data.get("category")),
+        )
+        return {"caste": caste} if caste else {}
+    if doc_type == "marksheet":
+        updates: dict[str, Any] = {}
+        student_name = _first_filled(extracted_data.get("student_name"), extracted_data.get("full_name"))
+        if student_name:
+            updates["full_name"] = str(student_name).strip()
+        marks_pct = _parse_number(
+            _first_filled(extracted_data.get("percentage"), extracted_data.get("marks_pct")),
+        )
+        if marks_pct is not None:
+            updates["marks_pct"] = marks_pct
+        return updates
     return {}
+
+
+def build_document_updates_from_profile(profile_updates: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    document_updates: dict[str, dict[str, Any]] = {}
+
+    def add(doc_type: str, field: str, value: Any) -> None:
+        if not _filled(value):
+            return
+        document_updates.setdefault(doc_type, {})[field] = value
+
+    full_name = profile_updates.get("full_name")
+    add("aadhaar", "full_name", full_name)
+    add("pan", "full_name", full_name)
+    add("marksheet", "student_name", full_name)
+
+    add("aadhaar", "dob", profile_updates.get("dob"))
+    add("pan", "dob", profile_updates.get("dob"))
+    add("aadhaar", "gender", profile_updates.get("gender"))
+    add("aadhaar", "address", profile_updates.get("address"))
+    add("pan", "father_name", profile_updates.get("father_name"))
+    add("income_cert", "annual_income", profile_updates.get("income"))
+    add("marksheet", "percentage", profile_updates.get("marks_pct"))
+
+    caste_values = _document_caste_values(profile_updates.get("caste"))
+    if caste_values:
+        caste, category = caste_values
+        add("caste_cert", "caste", caste)
+        add("caste_cert", "category", category)
+
+    return document_updates
 
 
 def merge_extracted_data(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -1052,6 +1168,35 @@ def update_user_document(
         logger.warning("Profile merge failed after edit for %s: %s", document_id, exc)
 
     return _materialize_document(updated)
+
+
+def sync_profile_updates_to_documents(phone: str, profile_updates: dict[str, Any]) -> list[str]:
+    """Mirror user-edited profile fields into overlapping latest vault documents."""
+    document_updates = build_document_updates_from_profile(profile_updates)
+    synced_doc_types: list[str] = []
+
+    for doc_type, extracted_updates in document_updates.items():
+        document = get_latest_user_document(phone, doc_type)
+        if not document:
+            continue
+
+        ocr_data = document.get("ocr_extracted_data") or document.get("extracted_data") or {}
+        merged_corrections = merge_extracted_data(document.get("user_corrected_data") or {}, extracted_updates)
+        merged_data = merge_extracted_data(ocr_data, merged_corrections)
+        payload = {
+            "ocr_extracted_data": ocr_data,
+            "user_corrected_data": merged_corrections,
+            "extracted_data": merged_data,
+            "status": "ready",
+            "status_reason": "Synced from citizen profile.",
+            "edited_by_user": True,
+            "edited_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        supabase.table("user_documents").update(payload).eq("id", document["id"]).execute()
+        synced_doc_types.append(doc_type)
+
+    return synced_doc_types
 
 
 async def ingest_document(

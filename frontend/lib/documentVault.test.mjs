@@ -99,3 +99,19 @@ test('buildPortalDocumentChecklist asks users to review unreadable fetched docum
     ['income_cert', 'marksheet'],
   );
 });
+
+test('buildPortalDocumentChecklist accepts user-reviewed ready documents with inconclusive secondary verification', () => {
+  const checklist = buildPortalDocumentChecklist('ssp', [
+    { id: 'doc-aadhaar', doc_type: 'aadhaar', status: 'ready', verification_status: 'unknown' },
+    { id: 'doc-income', doc_type: 'income_cert', status: 'ready', verification_status: 'unknown', edited_by_user: true },
+    { id: 'doc-caste', doc_type: 'caste_cert', status: 'ready', verification_status: 'unknown', edited_by_user: true },
+    { id: 'doc-marks', doc_type: 'marksheet', status: 'ready', verification_status: 'unknown', edited_by_user: true },
+  ]);
+
+  assert.equal(checklist.isComplete, true);
+  assert.deepEqual(checklist.reviewRequiredDocuments, []);
+  assert.deepEqual(
+    checklist.readyRequiredDocuments.map((item) => item.docType),
+    ['aadhaar', 'income_cert', 'caste_cert', 'marksheet'],
+  );
+});

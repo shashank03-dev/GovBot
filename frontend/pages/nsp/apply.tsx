@@ -22,6 +22,7 @@ type VaultDocument = {
   source?: string;
   status?: string;
   verification_status?: string;
+  expiry_date?: string | null;
 };
 type DocumentChecklistItem = {
   docType: string;
@@ -48,6 +49,10 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 function formatDocumentNames(items: DocumentChecklistItem[]) {
   return items.map((item) => item.label).join(', ');
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const TABS = ['Applicant Details', 'Academic Details', 'Bank Details', 'Documents & Submit'];
@@ -196,6 +201,15 @@ export default function NSPApply() {
     () => buildPortalDocumentChecklist(portalId, vaultDocuments) as PortalDocumentChecklist,
     [portalId, vaultDocuments],
   );
+  const aadhaarChecklistItem = documentChecklist.items.find((item) => item.docType === 'aadhaar');
+  const aadhaarSlotState: 'idle' | 'loading' | 'valid' | 'warning' =
+    demoState === 'uploading'
+      ? 'loading'
+      : demoState === 'done' || (demoState === 'needs_documents' && aadhaarChecklistItem?.status === 'ready')
+        ? 'valid'
+        : demoState === 'needs_documents' && aadhaarChecklistItem?.status === 'needs_review'
+          ? 'warning'
+          : 'idle';
 
   // ── Load DigiLocker profile from review session or localStorage ──
   useEffect(() => {
@@ -305,6 +319,71 @@ export default function NSPApply() {
     }
   }, []);
 
+  const updateDocumentSlotsFromChecklist = useCallback((checklist: PortalDocumentChecklist, phase: 'loading' | 'resolved') => {
+    setDocSlots((currentSlots) => currentSlots.map((slot) => {
+      const item = checklist.items.find((checklistItem) => checklistItem.docType === slot.docType);
+      if (!item) return slot;
+
+      if (phase === 'loading') {
+        return {
+          ...slot,
+          status: 'loading',
+          message: 'Fetching reviewed document from GovBot vault...',
+          expiryDate: null,
+          flags: [],
+        };
+      }
+
+      if (item.status === 'ready') {
+        return {
+          ...slot,
+          status: 'valid',
+          message: 'Fetched reviewed document from GovBot vault.',
+          expiryDate: item.document?.expiry_date || null,
+          flags: [],
+        };
+      }
+
+      if (item.status === 'needs_review') {
+        return {
+          ...slot,
+          status: 'warning',
+          message: 'Review this document in the vault before final submit.',
+          expiryDate: item.document?.expiry_date || null,
+          flags: ['needs_review'],
+        };
+      }
+
+      return {
+        ...slot,
+        status: 'idle',
+        message: '',
+        expiryDate: null,
+        flags: ['missing'],
+      };
+    }));
+  }, []);
+
+  const animateVaultDocumentUpload = useCallback(async (checklist: PortalDocumentChecklist) => {
+    setActiveTab(3);
+    updateDocumentSlotsFromChecklist(checklist, 'loading');
+    setStepLog((prev) => [
+      ...prev,
+      { label: 'Opening GovBot vault document packet', done: true },
+    ]);
+    await wait(650);
+    updateDocumentSlotsFromChecklist(checklist, 'resolved');
+    setStepLog((prev) => [
+      ...prev,
+      ...checklist.items.map((item) => ({
+        label: item.status === 'ready'
+          ? `${item.label} uploaded from vault`
+          : `${item.label} requires user action`,
+        done: item.status === 'ready',
+      })),
+    ]);
+  }, [updateDocumentSlotsFromChecklist]);
+
   useEffect(() => {
     if (!router.isReady) return;
     void loadVaultDocuments();
@@ -356,8 +435,11 @@ export default function NSPApply() {
       const submitApplication = async () => {
         try {
           setDocumentGateMessage('');
+          setActiveTab(3);
+          setProgress(88);
           const latestDocuments = await loadVaultDocuments();
           const latestChecklist = buildPortalDocumentChecklist(portalId, latestDocuments) as PortalDocumentChecklist;
+          await animateVaultDocumentUpload(latestChecklist);
           if (!latestChecklist.isComplete) {
             const missingNames = formatDocumentNames(latestChecklist.missingRequiredDocuments);
             const reviewNames = formatDocumentNames(latestChecklist.reviewRequiredDocuments);
@@ -430,7 +512,7 @@ export default function NSPApply() {
       void submitApplication();
     }, 2500);
     return () => clearTimeout(fakeUpload);
-  }, [demoState, loadVaultDocuments, portalId]);
+  }, [animateVaultDocumentUpload, demoState, loadVaultDocuments, portalId]);
 
   const startDemo = useCallback(() => {
     clearTimeouts();
@@ -534,6 +616,7 @@ export default function NSPApply() {
     setDocumentGateMessage('');
     setConfirmNumber('');
     setCurrentTypeTarget('');
+    setDocSlots(INITIAL_DOC_SLOTS);
     setActiveTab(0);
     stepIndexRef.current = 0;
   };
@@ -701,18 +784,20 @@ export default function NSPApply() {
                   <div
                     className="border-2 border-dashed p-4 flex items-center justify-between transition-all"
                     style={{
-                      borderColor: demoState === 'uploading' || demoState === 'done' ? '#4CAF50' : '#BDBDBD',
-                      backgroundColor: demoState === 'uploading' || demoState === 'done' ? '#F1F8E9' : '#FAFAFA',
+                      borderColor: aadhaarSlotState === 'valid' ? '#4CAF50' : aadhaarSlotState === 'warning' ? '#FB8C00' : aadhaarSlotState === 'loading' ? '#4CAF50' : '#BDBDBD',
+                      backgroundColor: aadhaarSlotState === 'valid' || aadhaarSlotState === 'loading' ? '#F1F8E9' : aadhaarSlotState === 'warning' ? '#FFF3E0' : '#FAFAFA',
                     }}
                   >
                     <div>
                       <div className="text-[13px] font-semibold text-[#424242]">Aadhaar Card<span className="text-red-500 ml-0.5">*</span></div>
                       <div className="text-[11px] text-gray-400 mt-0.5">JPG/PNG/PDF, max 2MB</div>
                     </div>
-                    {demoState === 'uploading' ? (
+                    {aadhaarSlotState === 'loading' ? (
                       <div className="flex items-center gap-2 text-[#C2185B] text-sm"><span className="animate-spin">⟳</span> Uploading...</div>
-                    ) : demoState === 'done' ? (
+                    ) : aadhaarSlotState === 'valid' ? (
                       <span className="text-green-600 font-bold text-sm">✅ Uploaded</span>
+                    ) : aadhaarSlotState === 'warning' ? (
+                      <span className="text-amber-600 font-bold text-sm">⚠ Review</span>
                     ) : (
                       <button className="border border-[#C2185B] text-[#C2185B] text-[12px] px-3 py-1.5 hover:bg-[#C2185B] hover:text-white transition-colors">Choose File</button>
                     )}

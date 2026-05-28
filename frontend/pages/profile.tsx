@@ -58,6 +58,7 @@ type ProfileApiResponse = {
   profile?: Profile;
   completeness_pct?: number;
   missing_fields?: string[];
+  vault_synced_documents?: string[];
   detail?: string;
 };
 
@@ -361,13 +362,19 @@ export default function ProfilePage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(dirty),
       }));
+      const data: ProfileApiResponse = await res.json().catch(() => ({}));
       if (res.ok) {
-        applyProfileData(await res.json());
+        applyProfileData(data);
         setSavedSection(activeSection);
-        showToast('Changes saved!');
+        const syncedCount = Array.isArray(data.vault_synced_documents) ? data.vault_synced_documents.length : 0;
+        showToast(
+          syncedCount > 0
+            ? `Changes saved and ${syncedCount} vault document${syncedCount === 1 ? '' : 's'} updated.`
+            : 'Changes saved!',
+        );
         setTimeout(() => setSavedSection(null), 2000);
       } else {
-        showToast('Failed to save', 'error');
+        showToast(data.detail || 'Failed to save', 'error');
       }
     } catch { showToast('Failed to save', 'error'); }
     setSavingSection(false);

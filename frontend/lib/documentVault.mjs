@@ -77,7 +77,15 @@ function getDocumentChecklistStatus(document) {
   const status = String(document.status || '').trim().toLowerCase();
   const verificationStatus = String(document.verification_status || '').trim().toLowerCase();
 
-  if (['failed', 'invalid', 'rejected'].includes(status) || ['failed', 'invalid', 'rejected'].includes(verificationStatus)) {
+  if (['failed', 'invalid', 'rejected'].includes(verificationStatus)) {
+    return 'needs_review';
+  }
+
+  if (status === 'ready') {
+    return 'ready';
+  }
+
+  if (['failed', 'invalid', 'rejected'].includes(status)) {
     return 'needs_review';
   }
 

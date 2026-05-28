@@ -170,6 +170,16 @@ export default function SSPDashboardPage() {
   const checkDocumentsBeforeSubmit = async () => {
     const latestDocuments = await loadVaultDocuments();
     const latestChecklist = buildPortalDocumentChecklist('ssp', latestDocuments) as PortalDocumentChecklist;
+    setAnimationLog((currentLog) => [
+      ...currentLog,
+      ...latestChecklist.items.map((item) => ({
+        title: item.status === 'ready'
+          ? `${item.label} uploaded from vault`
+          : `${item.label} requires user action`,
+        done: item.status === 'ready',
+      })),
+    ]);
+    await wait(500);
     if (latestChecklist.isComplete) {
       setDocumentGateMessage('');
       return true;
@@ -403,14 +413,14 @@ export default function SSPDashboardPage() {
                         {demoState === 'submitting'
                           ? localize(language, 'Final declaration accepted. Sending to SSP...', 'ಅಂತಿಮ ಘೋಷಣೆ ಸ್ವೀಕರಿಸಲಾಗಿದೆ. SSP ಗೆ ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ...')
                           : demoState === 'needs_documents'
-                            ? localize(language, 'Required documents are missing before final submit.', 'ಅಂತಿಮ ಸಲ್ಲಿಕೆಗೆ ಮೊದಲು ಅಗತ್ಯ ದಾಖಲೆಗಳು ಕಾಣೆಯಾಗಿವೆ.')
+                            ? localize(language, 'Required documents need attention before final submit.', 'ಅಂತಿಮ ಸಲ್ಲಿಕೆಗೆ ಮೊದಲು ಅಗತ್ಯ ದಾಖಲೆಗಳಿಗೆ ಗಮನ ಬೇಕು.')
                             : currentAnimationStep?.title || localize(language, 'Application submitted', 'ಅರ್ಜಿ ಸಲ್ಲಿಸಲಾಗಿದೆ')}
                       </div>
                       <p className="mt-1 text-sm text-[#62727d]">
                         {demoState === 'submitting'
                           ? localize(language, 'GovBot is creating the confirmation number and dashboard tracking row.', 'GovBot ದೃಢೀಕರಣ ಸಂಖ್ಯೆ ಮತ್ತು ಡ್ಯಾಶ್‌ಬೋರ್ಡ್ ಟ್ರ್ಯಾಕಿಂಗ್ ಸಾಲನ್ನು ರಚಿಸುತ್ತಿದೆ.')
                           : demoState === 'needs_documents'
-                            ? localize(language, 'Ask the user to upload or correct the missing documents, then submit again.', 'ಬಳಕೆದಾರರಿಗೆ ಕಾಣೆಯಾದ ದಾಖಲೆಗಳನ್ನು ಅಪ್‌ಲೋಡ್ ಅಥವಾ ಸರಿಪಡಿಸಲು ಹೇಳಿ, ನಂತರ ಮತ್ತೆ ಸಲ್ಲಿಸಿ.')
+                            ? localize(language, 'Ask the user to upload or correct the flagged documents, then submit again.', 'ಬಳಕೆದಾರರಿಗೆ ಗುರುತಿಸಲಾದ ದಾಖಲೆಗಳನ್ನು ಅಪ್‌ಲೋಡ್ ಅಥವಾ ಸರಿಪಡಿಸಲು ಹೇಳಿ, ನಂತರ ಮತ್ತೆ ಸಲ್ಲಿಸಿ.')
                             : currentAnimationStep?.description || localize(language, 'Tracking is ready for this SSP application.', 'ಈ SSP ಅರ್ಜಿಗೆ ಟ್ರ್ಯಾಕಿಂಗ್ ಸಿದ್ಧವಾಗಿದೆ.')}
                       </p>
                     </div>
