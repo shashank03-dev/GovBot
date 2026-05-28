@@ -75,7 +75,7 @@ class LLMTextRouter:
         if not candidates:
             raise RuntimeError("No text providers configured")
 
-        max_attempts = 2 if task == "interactive" else len(candidates)
+        max_attempts = len(candidates)
         last_error: Exception | None = None
         for attempt_index, provider in enumerate(candidates[:max_attempts], start=1):
             started_at = time.monotonic()

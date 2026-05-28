@@ -4,7 +4,61 @@ from unittest.mock import AsyncMock, patch
 from gov_agent import whatsapp_sender
 
 
+class WhatsAppPayloadLoggingTests(unittest.TestCase):
+    def test_redacts_template_otp_from_log_payload(self):
+        payload = whatsapp_sender._build_otp_template_payload("919999999999", "123456")
+
+        redacted = whatsapp_sender._redact_payload_for_log(payload)
+
+        self.assertNotIn("123456", repr(redacted))
+        self.assertEqual(
+            redacted["template"]["components"][0]["parameters"][0]["text"],
+            "[REDACTED]",
+        )
+
+    def test_redacts_text_message_body_from_log_payload(self):
+        payload = whatsapp_sender._build_text_payload(
+            "919999999999",
+            "Your GovBot OTP is: 123456\nValid for 10 minutes.",
+        )
+
+        redacted = whatsapp_sender._redact_payload_for_log(payload)
+
+        self.assertNotIn("123456", repr(redacted))
+        self.assertEqual(redacted["text"]["body"], "[REDACTED]")
+
+
+class _FakeWhatsAppResponse:
+    status_code = 200
+    text = '{"messages":[]}'
+
+
+class _FakeWhatsAppClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return None
+
+    async def post(self, *args, **kwargs):
+        return _FakeWhatsAppResponse()
+
+
 class SendOtpMessageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_post_whatsapp_payload_does_not_log_otp(self):
+        payload = whatsapp_sender._build_otp_template_payload("919999999999", "123456")
+
+        with (
+            patch.object(whatsapp_sender.httpx, "AsyncClient", return_value=_FakeWhatsAppClient()),
+            self.assertLogs(whatsapp_sender.logger, level="INFO") as captured_logs,
+        ):
+            result = await whatsapp_sender._post_whatsapp_payload(payload)
+
+        self.assertEqual(result, {"ok": True})
+        log_output = "\n".join(captured_logs.output)
+        self.assertNotIn("123456", log_output)
+        self.assertIn("[REDACTED]", log_output)
+
     async def test_uses_template_message_when_configured(self):
         with (
             patch.object(whatsapp_sender, "WHATSAPP_OTP_TEMPLATE_NAME", "govbot_login_otp"),

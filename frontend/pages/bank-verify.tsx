@@ -157,7 +157,7 @@ export default function BankVerifyPage() {
       const res = await fetch('/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: canonicalPhone }),
+        body: JSON.stringify({ phone: canonicalPhone, purpose: 'bank_verify' }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -185,7 +185,7 @@ export default function BankVerifyPage() {
       const verifyRes = await fetch('/api/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: canonicalPhone, code: otp.trim() }),
+        body: JSON.stringify({ phone: canonicalPhone, code: otp.trim(), purpose: 'bank_verify' }),
       });
       const verifyData = await verifyRes.json().catch(() => ({}));
       if (!verifyRes.ok || !verifyData.valid) {

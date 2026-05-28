@@ -45,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       buildBackendRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code: otp }),
+        body: JSON.stringify({ phone, code: otp, purpose: 'digilocker' }),
       }),
     );
 

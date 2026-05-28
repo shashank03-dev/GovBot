@@ -11,6 +11,8 @@ as configurable constants for the application.
 - SUPABASE_URL: The endpoint URL for the Supabase project database.
 - SUPABASE_KEY: The API key for authenticating with the Supabase project.
 - GEMINI_API_KEY: The API key for accessing Google's Gemini AI services.
+- GEMINI_GENERATION_MODELS: Optional comma-separated Gemini text/vision
+  generation fallback order.
 
 Call ``validate_config()`` at application startup to assert all required vars
 are present. Importing this module never raises, making test/CI imports safe.
@@ -36,6 +38,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_DOCUMENTS_BUCKET = os.getenv("SUPABASE_DOCUMENTS_BUCKET", "user-documents")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_GENERATION_MODELS = os.getenv("GEMINI_GENERATION_MODELS", "")
 SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
 OFFICIAL_USERNAME = os.getenv("OFFICIAL_USERNAME", "")
 OFFICIAL_PASSWORD = os.getenv("OFFICIAL_PASSWORD", "")

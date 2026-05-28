@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from gov_agent.application_store import latest_applications_by_phone_portal
 from gov_agent.db import supabase
 from gov_agent.official_auth import require_official_auth
 
@@ -36,15 +37,18 @@ async def get_analytics_overview():
     """Get high-level dashboard metrics."""
     
     try:
-        # Total applications
-        apps_result = supabase.table("applications").select("*", count="exact").execute()
-        total_applications = apps_result.count or 0
+        apps_result = (
+            supabase.table("applications")
+            .select("phone, portal, status, submitted_at")
+            .order("submitted_at", desc=True)
+            .execute()
+        )
+        applications = latest_applications_by_phone_portal(apps_result.data or [])
+        total_applications = len(applications)
         
-        # Applications by status
         status_counts = {}
         for status in ["submitted", "approved", "rejected", "processing"]:
-            result = supabase.table("applications").select("*", count="exact").eq("status", status).execute()
-            status_counts[status] = result.count or 0
+            status_counts[status] = sum(1 for app in applications if app.get("status") == status)
         
         # Total credentials issued
         creds_result = supabase.table("verifiable_credentials").select("*", count="exact").execute()
@@ -69,13 +73,9 @@ async def get_analytics_overview():
         
         # Today's applications
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        today_result = (
-            supabase.table("applications")
-            .select("*", count="exact")
-            .gte("submitted_at", today_start)
-            .execute()
+        today_applications = sum(
+            1 for app in applications if str(app.get("submitted_at") or "") >= today_start
         )
-        today_applications = today_result.count or 0
         
         return {
             "total_applications": total_applications,
@@ -102,14 +102,16 @@ async def get_application_timeline(days: int = 30):
         
         result = (
             supabase.table("applications")
-            .select("submitted_at, status")
+            .select("phone, portal, submitted_at, status")
             .gte("submitted_at", start_date)
+            .order("submitted_at", desc=True)
             .execute()
         )
+        applications = latest_applications_by_phone_portal(result.data or [])
         
         # Group by date
         timeline = {}
-        for app in (result.data or []):
+        for app in applications:
             date = app["submitted_at"][:10]  # YYYY-MM-DD
             if date not in timeline:
                 timeline[date] = {"total": 0, "approved": 0, "rejected": 0, "pending": 0}
@@ -246,17 +248,19 @@ async def get_regional_analytics():
         # Get all applications with session data (contains location info if collected)
         # For demo, we'll use phone area codes or mock regional data
         
-        # Group by portal as proxy for region/type
+        apps_result = (
+            supabase.table("applications")
+            .select("phone, portal, status, submitted_at")
+            .order("submitted_at", desc=True)
+            .execute()
+        )
+        applications = latest_applications_by_phone_portal(apps_result.data or [])
+
         portal_counts = {}
         for portal in ["nsp", "ssp", "csss", "minority"]:
-            result = (
-                supabase.table("applications")
-                .select("*", count="exact")
-                .eq("portal", portal)
-                .execute()
-            )
+            portal_rows = [app for app in applications if app.get("portal") == portal]
             portal_counts[portal] = {
-                "count": result.count or 0,
+                "count": len(portal_rows),
                 "name": {
                     "nsp": "National Scholarship",
                     "ssp": "State Scholarship Portal",
@@ -267,15 +271,9 @@ async def get_regional_analytics():
         
         # By status for each portal
         for portal in portal_counts:
+            portal_rows = [app for app in applications if app.get("portal") == portal]
             for status in ["submitted", "approved", "rejected"]:
-                result = (
-                    supabase.table("applications")
-                    .select("*", count="exact")
-                    .eq("portal", portal)
-                    .eq("status", status)
-                    .execute()
-                )
-                portal_counts[portal][status] = result.count or 0
+                portal_counts[portal][status] = sum(1 for app in portal_rows if app.get("status") == status)
         
         return {
             "by_portal": portal_counts,
@@ -296,10 +294,12 @@ async def get_realtime_stats():
         hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         hour_result = (
             supabase.table("applications")
-            .select("*", count="exact")
+            .select("phone, portal, submitted_at")
             .gte("submitted_at", hour_ago)
+            .order("submitted_at", desc=True)
             .execute()
         )
+        last_hour_applications = latest_applications_by_phone_portal(hour_result.data or [])
         
         # Active sessions (last 15 minutes)
         fifteen_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -319,7 +319,7 @@ async def get_realtime_stats():
         )
         
         return {
-            "last_hour_applications": hour_result.count or 0,
+            "last_hour_applications": len(last_hour_applications),
             "active_sessions": sessions_result.count or 0,
             "pending_disbursements": pending_result.count or 0,
             "timestamp": datetime.now(timezone.utc).isoformat(),

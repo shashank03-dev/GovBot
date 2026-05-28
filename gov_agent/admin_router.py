@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from gov_agent.application_store import latest_applications_by_phone_portal
 from gov_agent.db import supabase
 from gov_agent.official_auth import require_official_auth
 
@@ -28,7 +29,7 @@ async def get_admin_dashboard():
         )
 
         return {
-            "applications": applications_result.data or [],
+            "applications": latest_applications_by_phone_portal(applications_result.data or []),
             "fraud_flags": fraud_result.data or [],
         }
     except Exception as exc:

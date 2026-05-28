@@ -32,6 +32,15 @@ _OTP_MAX_REQUESTS = 3
 _OTP_MAX_VERIFY_ATTEMPTS = 5
 _OTP_TTL_MINUTES = 10
 _MISSING_RATE_LIMIT_TABLE = object()
+_OTP_PURPOSE_LOGIN = "login"
+_ALLOWED_OTP_PURPOSES = frozenset({_OTP_PURPOSE_LOGIN, "digilocker", "bank_verify"})
+
+
+def _normalize_otp_purpose(purpose: str | None) -> str:
+    normalized = str(purpose or _OTP_PURPOSE_LOGIN).strip().lower().replace("-", "_")
+    if normalized not in _ALLOWED_OTP_PURPOSES:
+        raise HTTPException(status_code=400, detail="Unsupported OTP purpose")
+    return normalized
 
 
 def _coerce_utc_datetime(value: str | None) -> datetime:
@@ -98,6 +107,7 @@ def _skip_missing_rate_limit_table(exc: Exception, table_name: str, phone: str) 
 def _load_rate_limit_row(
     table_name: str,
     phone: str,
+    purpose: str,
     *,
     fail_open_missing_table: bool = False,
 ) -> dict | object | None:
@@ -106,6 +116,7 @@ def _load_rate_limit_row(
             supabase.table(table_name)
             .select("request_count, window_start")
             .eq("phone", phone)
+            .eq("purpose", purpose)
             .limit(1)
             .execute()
         )
@@ -120,7 +131,7 @@ def _load_rate_limit_row(
     return result.data[0]
 
 
-def _check_rate_limit(phone: str) -> None:
+def _check_rate_limit(phone: str, purpose: str) -> None:
     """Raise HTTP 429 if phone has exceeded OTP request quota.
 
     State is stored in the Supabase `otp_rate_limits` table so the limit is
@@ -128,12 +139,13 @@ def _check_rate_limit(phone: str) -> None:
     """
     now = datetime.now(timezone.utc)
     window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
-    row = _load_rate_limit_row("otp_rate_limits", phone)
+    row = _load_rate_limit_row("otp_rate_limits", phone, purpose)
 
     try:
         if not row:
             supabase.table("otp_rate_limits").insert({
                 "phone": phone,
+                "purpose": purpose,
                 "request_count": 1,
                 "window_start": now.isoformat(),
             }).execute()
@@ -146,7 +158,7 @@ def _check_rate_limit(phone: str) -> None:
             supabase.table("otp_rate_limits").update({
                 "request_count": 1,
                 "window_start": now.isoformat(),
-            }).eq("phone", phone).execute()
+            }).eq("phone", phone).eq("purpose", purpose).execute()
             return
 
         if count >= _OTP_MAX_REQUESTS:
@@ -157,7 +169,7 @@ def _check_rate_limit(phone: str) -> None:
 
         supabase.table("otp_rate_limits").update({
             "request_count": count + 1,
-        }).eq("phone", phone).execute()
+        }).eq("phone", phone).eq("purpose", purpose).execute()
     except HTTPException:
         raise
     except Exception as exc:
@@ -165,13 +177,13 @@ def _check_rate_limit(phone: str) -> None:
         raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
 
 
-def _check_verify_rate_limit(phone: str) -> None:
+def _check_verify_rate_limit(phone: str, purpose: str) -> None:
     now = datetime.now(timezone.utc)
     window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
     row = _load_rate_limit_row(
         "otp_verify_rate_limits",
         phone,
-        fail_open_missing_table=True,
+        purpose,
     )
     if row is _MISSING_RATE_LIMIT_TABLE or not row:
         return
@@ -184,7 +196,7 @@ def _check_verify_rate_limit(phone: str) -> None:
             supabase.table("otp_verify_rate_limits").update({
                 "request_count": 0,
                 "window_start": now.isoformat(),
-            }).eq("phone", phone).execute()
+            }).eq("phone", phone).eq("purpose", purpose).execute()
         except Exception as exc:
             if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
                 return
@@ -199,13 +211,13 @@ def _check_verify_rate_limit(phone: str) -> None:
         )
 
 
-def _record_verify_failure(phone: str) -> None:
+def _record_verify_failure(phone: str, purpose: str) -> None:
     now = datetime.now(timezone.utc)
     window_cutoff = now - timedelta(minutes=_OTP_WINDOW_MINUTES)
     row = _load_rate_limit_row(
         "otp_verify_rate_limits",
         phone,
-        fail_open_missing_table=True,
+        purpose,
     )
     if row is _MISSING_RATE_LIMIT_TABLE:
         return
@@ -214,6 +226,7 @@ def _record_verify_failure(phone: str) -> None:
         if not row:
             supabase.table("otp_verify_rate_limits").insert({
                 "phone": phone,
+                "purpose": purpose,
                 "request_count": 1,
                 "window_start": now.isoformat(),
             }).execute()
@@ -225,7 +238,7 @@ def _record_verify_failure(phone: str) -> None:
         supabase.table("otp_verify_rate_limits").update({
             "request_count": next_count,
             "window_start": now.isoformat() if window_start < window_cutoff else row.get("window_start"),
-        }).eq("phone", phone).execute()
+        }).eq("phone", phone).eq("purpose", purpose).execute()
     except Exception as exc:
         if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
             return
@@ -233,17 +246,32 @@ def _record_verify_failure(phone: str) -> None:
         raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
 
 
-def _clear_verify_failures(phone: str) -> None:
+def _clear_verify_failures(phone: str, purpose: str) -> None:
     try:
         supabase.table("otp_verify_rate_limits").update({
             "request_count": 0,
             "window_start": datetime.now(timezone.utc).isoformat(),
-        }).eq("phone", phone).execute()
+        }).eq("phone", phone).eq("purpose", purpose).execute()
     except Exception as exc:
         if _skip_missing_rate_limit_table(exc, "otp_verify_rate_limits", phone):
             return
         logger.error("OTP verify rate-limit clear failed for %s: %s", phone, exc)
         raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+
+
+def _consume_valid_otp(phone: str, code: str, purpose: str, now_iso: str) -> bool:
+    result = (
+        supabase.table("otp_codes")
+        .update({"used": True})
+        .eq("phone", phone)
+        .eq("purpose", purpose)
+        .eq("code", _hash_otp(code))
+        .eq("used", False)
+        .gt("expires_at", now_iso)
+        .select("id")
+        .execute()
+    )
+    return bool(result.data)
 
 
 def _hash_otp(code: str) -> str:
@@ -259,11 +287,13 @@ def _normalize_phone(phone: str) -> str:
 
 class SendOTPRequest(BaseModel):
     phone: str | None = None
+    purpose: str | None = None
 
 
 class VerifyOTPRequest(BaseModel):
     phone: str | None = None
     code: str | None = None
+    purpose: str | None = None
 
 
 class ExchangeHandoffRequest(BaseModel):
@@ -297,16 +327,25 @@ async def send_otp(body: SendOTPRequest):
         raise HTTPException(status_code=400, detail="phone is required")
 
     phone = _normalize_phone(body.phone)
-    _check_rate_limit(phone)
+    purpose = _normalize_otp_purpose(body.purpose)
+    _check_rate_limit(phone, purpose)
 
     code = f"{secrets.randbelow(900_000) + 100_000:06d}"
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=_OTP_TTL_MINUTES)
 
     try:
-        supabase.table("otp_codes").update({"used": True}).eq("phone", phone).eq("used", False).execute()
+        (
+            supabase.table("otp_codes")
+            .update({"used": True})
+            .eq("phone", phone)
+            .eq("purpose", purpose)
+            .eq("used", False)
+            .execute()
+        )
         supabase.table("otp_codes").insert({
             "phone": phone,
+            "purpose": purpose,
             "code": _hash_otp(code),
             "expires_at": expires_at.isoformat(),
             "used": False,
@@ -334,36 +373,33 @@ async def verify_otp(body: VerifyOTPRequest):
         raise HTTPException(status_code=400, detail="phone and code are required")
 
     phone = _normalize_phone(body.phone)
+    purpose = _normalize_otp_purpose(body.purpose)
     now_iso = datetime.now(timezone.utc).isoformat()
-    _check_verify_rate_limit(phone)
+    _check_verify_rate_limit(phone, purpose)
 
-    # Fetch a valid, unused, non-expired OTP row (compare hashed code)
-    result = (
-        supabase.table("otp_codes")
-        .select("id")
-        .eq("phone", phone)
-        .eq("code", _hash_otp(body.code))
-        .eq("used", False)
-        .gt("expires_at", now_iso)
-        .limit(1)
-        .execute()
-    )
-
-    if not result.data:
-        _record_verify_failure(phone)
+    # Atomically consume the valid OTP row. A concurrent replay only succeeds
+    # for the request that updates the unused row first.
+    if not _consume_valid_otp(phone, body.code, purpose, now_iso):
+        _record_verify_failure(phone, purpose)
         return {"valid": False, "error": "Invalid or expired OTP"}
 
-    # Mark all active OTPs for the phone as consumed so older codes cannot be replayed.
-    row_id = result.data[0]["id"]
-    supabase.table("otp_codes").update({"used": True}).eq("phone", phone).eq("used", False).execute()
-    supabase.table("otp_codes").update({"used": True}).eq("id", row_id).execute()
-    _clear_verify_failures(phone)
+    # Mark all active OTPs for this phone and purpose as consumed so older codes cannot be replayed.
+    (
+        supabase.table("otp_codes")
+        .update({"used": True})
+        .eq("phone", phone)
+        .eq("purpose", purpose)
+        .eq("used", False)
+        .execute()
+    )
+    _clear_verify_failures(phone, purpose)
 
     token = issue_citizen_token(phone)
 
     logger.info("JWT issued for %s", phone)
-    await _send_web_connection_confirmation(phone)
-    return {"valid": True, "token": token, "phone": phone}
+    if purpose == _OTP_PURPOSE_LOGIN:
+        await _send_web_connection_confirmation(phone)
+    return {"valid": True, "token": token, "phone": phone, "purpose": purpose}
 
 
 @router.post("/exchange-handoff")

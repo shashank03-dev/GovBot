@@ -8,6 +8,7 @@ from gov_agent import profile_router
 from gov_agent.auth_router import _normalize_phone
 from gov_agent.config import SECRET_KEY
 from gov_agent.profile_router import (
+    ProfileUpsert,
     _collect_vault_profile_updates,
     _merge_profile_fields,
     _optional_jwt,
@@ -57,6 +58,32 @@ class ProfileRouteAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.phone, "919876543210")
         profile_query.eq.assert_called_once_with("phone", "919876543210")
 
+    async def test_upsert_profile_syncs_overlapping_fields_to_vault_documents(self):
+        profile_table = MagicMock()
+        profile_table.upsert.return_value.execute.return_value.data = []
+        profile_query = profile_table.select.return_value
+        profile_query.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"phone": "919876543210", "caste": "sc", "income": 25000}
+        ]
+
+        fake_supabase = MagicMock()
+        fake_supabase.table.return_value = profile_table
+
+        with patch.object(profile_router, "supabase", fake_supabase), patch.object(
+            profile_router,
+            "sync_profile_updates_to_documents",
+            return_value=["income_cert", "caste_cert"],
+        ) as sync_mock:
+            response = await profile_router.upsert_profile(
+                "09876543210",
+                ProfileUpsert(caste="sc", income=25000),
+                token_phone="919876543210",
+            )
+
+        self.assertEqual(response.phone, "919876543210")
+        self.assertEqual(response.vault_synced_documents, ["income_cert", "caste_cert"])
+        sync_mock.assert_called_once_with("919876543210", {"income": 25000, "caste": "sc"})
+
 
 class ProfileVaultFillTests(unittest.TestCase):
     def test_collect_vault_profile_updates_prefers_latest_document_values(self):
@@ -81,6 +108,18 @@ class ProfileVaultFillTests(unittest.TestCase):
                         "pan_number": "ABCDE1234F",
                     },
                 },
+                {
+                    "doc_type": "income_cert",
+                    "extracted_data": {"annual_income": "25000"},
+                },
+                {
+                    "doc_type": "caste_cert",
+                    "extracted_data": {"category": "Scheduled Caste"},
+                },
+                {
+                    "doc_type": "marksheet",
+                    "extracted_data": {"student_name": "Asha Singh", "percentage": "95.5"},
+                },
             ]
         )
 
@@ -93,6 +132,9 @@ class ProfileVaultFillTests(unittest.TestCase):
                 "address": "Bengaluru, Karnataka",
                 "aadhaar_last4": "9012",
                 "father_name": "Rakesh Singh",
+                "income": 25000,
+                "caste": "sc",
+                "marks_pct": 95.5,
             },
         )
 

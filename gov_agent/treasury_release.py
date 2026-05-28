@@ -8,7 +8,8 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from gov_agent import config
+from gov_agent import config, whatsapp_sender
+from gov_agent.application_store import latest_applications_by_phone_portal
 from gov_agent.db import supabase
 from gov_agent.npci_agent import _demo_amount_for_portal, ensure_disbursement_ready
 
@@ -102,11 +103,11 @@ def save_ledger(data: dict[str, Any]) -> None:
 def _list_applications() -> list[dict[str, Any]]:
     result = (
         supabase.table("applications")
-        .select("confirmation_number, phone, portal, submitted_at, status")
+        .select("confirmation_number, phone, portal, submitted_at, status, timeline_steps")
         .order("submitted_at", desc=True)
         .execute()
     )
-    return list(result.data or [])
+    return latest_applications_by_phone_portal(list(result.data or []))
 
 
 def _verified_phones() -> set[str]:
@@ -133,6 +134,177 @@ def _mark_disbursement_processing(confirmation_number: str) -> None:
     supabase.table("disbursement_tracking").update(
         {"status": "processing", "updated_at": _now_iso()}
     ).eq("confirmation_number", confirmation_number).execute()
+
+
+def _timeline_date(value: str | None) -> str:
+    parsed = _parse_iso(value)
+    if parsed is None:
+        parsed = datetime.now(timezone.utc)
+    return parsed.date().isoformat()
+
+
+def _find_timeline_step(steps: list[dict[str, Any]], step_name: str) -> dict[str, Any]:
+    normalized_name = step_name.strip().lower()
+    for step in steps:
+        if str(step.get("step") or "").strip().lower() == normalized_name:
+            return dict(step)
+    return {}
+
+
+def _build_timeline_step(
+    existing_steps: list[dict[str, Any]],
+    step_name: str,
+    icon: str,
+    *,
+    done: bool,
+    fallback_date: str,
+    fallback_est_date: str | None = None,
+) -> dict[str, Any]:
+    existing = _find_timeline_step(existing_steps, step_name)
+    existing_done = bool(existing.get("done"))
+    is_done = done or existing_done
+    return {
+        "step": step_name,
+        "icon": str(existing.get("icon") or icon),
+        "date": existing.get("date") or (fallback_date if is_done else None),
+        "est_date": existing.get("est_date") or fallback_est_date,
+        "done": is_done,
+    }
+
+
+def _build_release_timeline(
+    current_steps: list[dict[str, Any]] | None,
+    *,
+    released_at: str | None,
+    bank_verified: bool,
+) -> list[dict[str, Any]]:
+    steps = [dict(step) for step in (current_steps or []) if isinstance(step, dict)]
+    release_date = _timeline_date(released_at)
+    next_steps = [
+        _build_timeline_step(
+            steps,
+            "Applied",
+            "A",
+            done=True,
+            fallback_date=release_date,
+            fallback_est_date=release_date,
+        ),
+        _build_timeline_step(
+            steps,
+            "Under Review",
+            "R",
+            done=True,
+            fallback_date=release_date,
+            fallback_est_date=release_date,
+        ),
+        _build_timeline_step(
+            steps,
+            "Approved",
+            "V",
+            done=True,
+            fallback_date=release_date,
+            fallback_est_date=release_date,
+        ),
+        _build_timeline_step(
+            steps,
+            "Funds Released",
+            "F",
+            done=True,
+            fallback_date=release_date,
+            fallback_est_date=release_date,
+        ),
+    ]
+    if not bank_verified:
+        next_steps.append(
+            _build_timeline_step(
+                steps,
+                "Bank Verification Needed",
+                "B",
+                done=False,
+                fallback_date=release_date,
+                fallback_est_date=None,
+            )
+        )
+    disbursed = _find_timeline_step(steps, "Disbursed")
+    disbursed_done = bool(disbursed.get("done"))
+    next_steps.append(
+        {
+            "step": "Disbursed",
+            "icon": str(disbursed.get("icon") or "D"),
+            "date": disbursed.get("date") if disbursed_done else None,
+            "est_date": disbursed.get("est_date"),
+            "done": disbursed_done,
+        }
+    )
+    return next_steps
+
+
+def _update_application_release_tracking(
+    row: dict[str, Any],
+    release: dict[str, Any],
+    bank_verified: bool,
+) -> None:
+    confirmation_number = str(row.get("confirmation_number") or "").strip()
+    if not confirmation_number:
+        return
+    timeline_steps = _build_release_timeline(
+        row.get("timeline_steps") or [],
+        released_at=str(release.get("released_at") or ""),
+        bank_verified=bank_verified,
+    )
+    supabase.table("applications").update(
+        {
+            "status": "processing" if bank_verified else "submitted",
+            "timeline_steps": timeline_steps,
+        }
+    ).eq("confirmation_number", confirmation_number).execute()
+
+
+def _build_release_notification_message(
+    row: dict[str, Any],
+    release: dict[str, Any],
+    bank_verified: bool,
+) -> str:
+    scheme = _scheme_label(str(row.get("portal") or release.get("scheme") or ""))
+    confirmation_number = str(row.get("confirmation_number") or "").strip()
+    release_date = _timeline_date(str(release.get("released_at") or ""))
+    proof_url = str(release.get("explorer_url") or "").strip()
+
+    header = (
+        "🏛️ *Scholarship Funds Released*\n\n"
+        f"Scheme: {scheme}\n"
+        f"Application: {confirmation_number}\n"
+        f"Release date: {release_date}\n\n"
+    )
+    proof_line = f"\n\nRelease proof: {proof_url}" if proof_url else ""
+    if bank_verified:
+        return (
+            header
+            + "Your bank account is verified, so payout processing has started. "
+            + "The bank transaction may take a few working days. "
+            + "GovBot will update you when the credit status changes."
+            + proof_line
+        )
+
+    verify_url = f"{str(config.FRONTEND_URL).rstrip('/')}/bank-verify"
+    return (
+        header
+        + "Funds have been released for your scholarship, but your bank verification is still pending. "
+        + "Please verify your bank details so the payment can be processed.\n\n"
+        + f"Verify bank details: {verify_url}"
+        + proof_line
+    )
+
+
+async def _send_release_notification(
+    *,
+    phone: str,
+    row: dict[str, Any],
+    release: dict[str, Any],
+    bank_verified: bool,
+) -> bool:
+    message = _build_release_notification_message(row, release, bank_verified)
+    return await whatsapp_sender.send_message(phone, message)
 
 
 def _release_cutoff_by_scheme(releases: list[dict[str, Any]]) -> dict[str, datetime]:
@@ -254,7 +426,7 @@ def _candidate_rows_for_scheme(scheme: str) -> tuple[list[dict[str, Any]], set[s
     return pending_by_scheme.get(scheme, []), verified_phones, ledger
 
 
-def record_release(official: dict[str, str], tx_hash: str, wallet_address: str, scheme: str) -> dict[str, Any]:
+async def record_release(official: dict[str, str], tx_hash: str, wallet_address: str, scheme: str) -> dict[str, Any]:
     normalized_scheme = _normalize_scheme(scheme)
     normalized_wallet = str(wallet_address or "").strip().lower()
     normalized_tx_hash = str(tx_hash or "").strip()
@@ -296,22 +468,33 @@ def record_release(official: dict[str, str], tx_hash: str, wallet_address: str, 
         "official_username": official["username"],
         "authority": "Department Release Wallet",
     }
+    release_with_proof = {**release, "explorer_url": _build_explorer_url(normalized_tx_hash)}
 
     for row in candidates:
         phone = str(row.get("phone") or "")
         confirmation_number = str(row.get("confirmation_number") or "")
-        if phone in verified_phones:
+        bank_verified = phone in verified_phones
+        if bank_verified:
             ensure_disbursement_ready(phone)
             _mark_disbursement_processing(confirmation_number)
             _record_activity(phone, "🏛️ Scholarship funds released. Bank credit is now processing.")
         else:
             _record_activity(phone, "🏛️ Scholarship funds released. Verify your bank details now to receive payment.")
+        _update_application_release_tracking(row, release, bank_verified)
+        try:
+            await _send_release_notification(
+                phone=phone,
+                row=row,
+                release=release_with_proof,
+                bank_verified=bank_verified,
+            )
+        except Exception as exc:
+            logger.warning("Release WhatsApp notification failed for %s: %s", phone, exc)
 
     ledger["releases"].append(release)
     save_ledger(ledger)
 
-    release["explorer_url"] = _build_explorer_url(normalized_tx_hash)
-    return release
+    return release_with_proof
 
 
 def build_public_release_feed() -> dict[str, Any]:

@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from gov_agent.application_store import latest_applications_by_phone_portal
 from gov_agent.db import supabase
 from gov_agent.user_auth import optional_jwt as _optional_jwt
 from gov_agent.user_auth import require_authenticated_phone, require_phone_access
@@ -126,12 +127,12 @@ async def get_dashboard_snapshot(phone: str, token_phone: Optional[str] = Depend
     try:
         applications_resp = (
             supabase.table("applications")
-            .select("id, service, status, confirmation_number, submitted_at")
+            .select("id, phone, portal, service, status, confirmation_number, submitted_at")
             .eq("phone", phone)
             .order("submitted_at", desc=True)
             .execute()
         )
-        applications = applications_resp.data or []
+        applications = latest_applications_by_phone_portal(applications_resp.data or [])
 
         activity_resp = (
             supabase.table("activity_feed")

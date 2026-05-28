@@ -14,9 +14,10 @@ import uuid
 import asyncio
 import hashlib
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from gov_agent.db import supabase
+from gov_agent.user_auth import optional_jwt as _optional_jwt, require_phone_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -247,11 +248,15 @@ async def mock_npci_webhook(payload: dict):
 
 
 @router.post("/bank/mock/ready")
-async def mark_bank_ready(body: BankReadyRequest):
+async def mark_bank_ready(
+    body: BankReadyRequest,
+    token_phone: str | None = Depends(_optional_jwt),
+):
     """Mark a verified bank as payout-ready after OTP confirmation."""
     from gov_agent.npci_agent import ensure_disbursement_ready
 
-    return ensure_disbursement_ready(body.phone)
+    phone = require_phone_access(body.phone, token_phone)
+    return ensure_disbursement_ready(phone)
 
 
 @router.post("/bank/mock/reset/{phone}")

@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gov_agent.db import supabase
-from gov_agent.document_vault import build_profile_updates, list_user_documents
+from gov_agent.document_vault import build_profile_updates, list_user_documents, sync_profile_updates_to_documents
 from gov_agent.user_auth import optional_jwt as _optional_jwt
 from gov_agent.user_auth import require_phone_access
 
@@ -86,6 +86,7 @@ class ProfileResponse(BaseModel):
     profile: dict[str, Any]
     completeness_pct: int
     missing_fields: list[str]
+    vault_synced_documents: list[str] = Field(default_factory=list)
 
 
 _PROFILE_MUTABLE_FIELDS = set(ProfileUpsert.model_fields.keys())
@@ -160,12 +161,21 @@ async def upsert_profile(phone: str, body: ProfileUpsert, token_phone: Optional[
         if not updates:
             raise HTTPException(status_code=400, detail="No fields provided")
 
+        profile_updates = dict(updates)
         updates["phone"] = phone
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         supabase.table("citizen_profiles").upsert(updates, on_conflict="phone").execute()
 
-        return await get_profile(phone, token_phone=token_phone)
+        synced_documents: list[str] = []
+        try:
+            synced_documents = sync_profile_updates_to_documents(phone, profile_updates)
+        except Exception as exc:
+            logger.warning("profile to vault sync failed for %s: %s", phone, exc)
+
+        response = await get_profile(phone, token_phone=token_phone)
+        response.vault_synced_documents = synced_documents
+        return response
     except HTTPException:
         raise
     except Exception as e:

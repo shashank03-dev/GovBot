@@ -5,6 +5,7 @@ from gov_agent.document_vault import (
     DocumentVaultError,
     _materialize_document,
     _record_status,
+    build_document_updates_from_profile,
     build_profile_updates,
     list_user_documents,
     mask_document_for_list,
@@ -83,6 +84,41 @@ class ProfileMappingTests(unittest.TestCase):
         self.assertEqual(updates["aadhaar_last4"], "9012")
         self.assertEqual(updates["full_name"], "Asha Singh")
         self.assertNotIn("aadhaar_number", updates)
+
+    def test_build_profile_updates_for_scholarship_documents(self):
+        self.assertEqual(
+            build_profile_updates("income_cert", {"annual_income": "25000"}),
+            {"income": 25000},
+        )
+        self.assertEqual(
+            build_profile_updates("caste_cert", {"caste": "Scheduled Caste", "category": "SC"}),
+            {"caste": "sc"},
+        )
+        self.assertEqual(
+            build_profile_updates("marksheet", {"student_name": "Asha Singh", "percentage": "95.5"}),
+            {"full_name": "Asha Singh", "marks_pct": 95.5},
+        )
+
+    def test_build_document_updates_from_profile_targets_overlapping_vault_fields(self):
+        updates = build_document_updates_from_profile(
+            {
+                "full_name": "Asha Singh",
+                "dob": "1998-05-15",
+                "gender": "Female",
+                "address": "Bengaluru, Karnataka",
+                "income": 25000,
+                "caste": "sc",
+                "marks_pct": 95.5,
+            }
+        )
+
+        self.assertEqual(updates["aadhaar"]["full_name"], "Asha Singh")
+        self.assertEqual(updates["aadhaar"]["dob"], "1998-05-15")
+        self.assertEqual(updates["income_cert"]["annual_income"], 25000)
+        self.assertEqual(updates["caste_cert"]["caste"], "SC")
+        self.assertEqual(updates["caste_cert"]["category"], "Scheduled Caste")
+        self.assertEqual(updates["marksheet"]["student_name"], "Asha Singh")
+        self.assertEqual(updates["marksheet"]["percentage"], 95.5)
 
 
 class SensitiveReplyTests(unittest.TestCase):
