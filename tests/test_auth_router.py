@@ -151,6 +151,44 @@ def _build_fake_supabase_with_lost_otp_race(row_id: int = 7):
     return fake_supabase
 
 
+def _build_fake_supabase_for_send():
+    otp_table = MagicMock()
+    rate_table = MagicMock()
+
+    rate_select_query = MagicMock()
+    rate_select_query.eq.return_value = rate_select_query
+    rate_select_query.limit.return_value = rate_select_query
+    rate_select_query.execute.return_value = SimpleNamespace(data=[])
+
+    rate_insert_query = MagicMock()
+    rate_insert_query.execute.return_value = SimpleNamespace(data=[{"phone": "919876543210"}])
+
+    rate_table.select.return_value = rate_select_query
+    rate_table.insert.return_value = rate_insert_query
+
+    otp_update_query = MagicMock()
+    otp_update_query.eq.return_value = otp_update_query
+    otp_update_query.execute.return_value = SimpleNamespace(data=[])
+
+    otp_insert_query = MagicMock()
+    otp_insert_query.execute.return_value = SimpleNamespace(data=[{"id": 7}])
+
+    otp_table.update.return_value = otp_update_query
+    otp_table.insert.return_value = otp_insert_query
+
+    fake_supabase = MagicMock()
+
+    def _table(name: str):
+        if name == "otp_codes":
+            return otp_table
+        if name == "otp_rate_limits":
+            return rate_table
+        raise AssertionError(f"Unexpected table requested: {name}")
+
+    fake_supabase.table.side_effect = _table
+    return fake_supabase, otp_table, rate_table
+
+
 class VerifyOtpTests(unittest.TestCase):
     def test_coerce_utc_datetime_parses_supabase_trimmed_fractional_timestamp(self):
         parsed = auth_router._coerce_utc_datetime("2026-05-27T18:32:10.58782+00:00")
@@ -261,6 +299,60 @@ class VerifyOtpTests(unittest.TestCase):
         self.assertFalse(payload["valid"])
         self.assertEqual(payload["error"], "Invalid or expired OTP")
         self.assertNotIn("token", payload)
+        send_message.assert_not_awaited()
+
+    def test_send_otp_scopes_active_code_and_rate_limit_to_purpose(self):
+        client = _build_client()
+        fake_supabase, otp_table, rate_table = _build_fake_supabase_for_send()
+
+        with (
+            patch.object(auth_router, "supabase", fake_supabase),
+            patch.object(auth_router.whatsapp_sender, "send_otp_message", new=AsyncMock(return_value=True)),
+        ):
+            response = client.post(
+                "/auth/send-otp",
+                json={"phone": "9876543210", "purpose": "digilocker"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"message": "OTP sent"})
+
+        otp_update_query = otp_table.update.return_value
+        self.assertIn(("purpose", "digilocker"), [call.args for call in otp_update_query.eq.call_args_list])
+        otp_insert_payload = otp_table.insert.call_args.args[0]
+        self.assertEqual(otp_insert_payload["phone"], "919876543210")
+        self.assertEqual(otp_insert_payload["purpose"], "digilocker")
+
+        rate_select_query = rate_table.select.return_value
+        self.assertIn(("purpose", "digilocker"), [call.args for call in rate_select_query.eq.call_args_list])
+        rate_insert_payload = rate_table.insert.call_args.args[0]
+        self.assertEqual(rate_insert_payload["purpose"], "digilocker")
+
+    def test_verify_otp_uses_purpose_and_skips_login_confirmation_for_digilocker(self):
+        client = _build_client()
+        fake_supabase = _build_fake_supabase_for_verify()
+
+        with (
+            patch.object(auth_router, "supabase", fake_supabase),
+            patch.object(
+                auth_router.whatsapp_sender,
+                "send_message",
+                new=AsyncMock(return_value=True),
+            ) as send_message,
+        ):
+            response = client.post(
+                "/auth/verify-otp",
+                json={"phone": "9876543210", "code": "123456", "purpose": "digilocker"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["phone"], "919876543210")
+        self.assertEqual(payload["purpose"], "digilocker")
+
+        update_query = fake_supabase.table.return_value.update.return_value
+        self.assertIn(("purpose", "digilocker"), [call.args for call in update_query.eq.call_args_list])
         send_message.assert_not_awaited()
 
 

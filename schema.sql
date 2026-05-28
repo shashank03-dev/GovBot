@@ -41,11 +41,32 @@ create index if not exists applications_phone_portal_submitted_idx
 create table if not exists otp_codes (
     id          uuid        primary key default gen_random_uuid(),
     phone       text        not null,
+    purpose     text        not null default 'login'
+        check (purpose in ('login', 'digilocker', 'bank_verify')),
     code        text        not null,   -- SHA-256 hex digest
     expires_at  timestamptz not null,
     used        boolean     not null default false
 );
 create index if not exists otp_codes_phone_idx on otp_codes(phone);
+alter table if exists otp_codes
+    add column if not exists purpose text not null default 'login';
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'otp_codes_purpose_check'
+            and conrelid = 'otp_codes'::regclass
+    ) then
+        alter table otp_codes
+            add constraint otp_codes_purpose_check
+            check (purpose in ('login', 'digilocker', 'bank_verify'));
+    end if;
+end $$;
+create index if not exists otp_codes_phone_purpose_idx on otp_codes(phone, purpose);
+create index if not exists otp_codes_active_lookup_idx
+    on otp_codes(phone, purpose, code, expires_at)
+    where used = false;
 
 -- ------------------------------------------------------------
 -- 4. eligibility_checks — screener audit log
@@ -252,19 +273,62 @@ create index if not exists renewal_reminders_due_idx on renewal_reminders(renewa
 
 -- ------------------------------------------------------------
 -- 10. otp_rate_limits — cross-worker OTP rate limiting
---     One row per phone. window_start resets when > 10 min old.
+--     One row per phone + purpose. window_start resets when > 10 min old.
 -- ------------------------------------------------------------
 create table if not exists otp_rate_limits (
-    phone         text        primary key,
+    phone         text        not null,
+    purpose       text        not null default 'login'
+        check (purpose in ('login', 'digilocker', 'bank_verify')),
     request_count integer     not null default 0,
-    window_start  timestamptz not null default now()
+    window_start  timestamptz not null default now(),
+    primary key (phone, purpose)
 );
 
 create table if not exists otp_verify_rate_limits (
-    phone         text        primary key,
+    phone         text        not null,
+    purpose       text        not null default 'login'
+        check (purpose in ('login', 'digilocker', 'bank_verify')),
     request_count integer     not null default 0,
-    window_start  timestamptz not null default now()
+    window_start  timestamptz not null default now(),
+    primary key (phone, purpose)
 );
+
+alter table if exists otp_rate_limits
+    add column if not exists purpose text not null default 'login';
+alter table if exists otp_verify_rate_limits
+    add column if not exists purpose text not null default 'login';
+alter table if exists otp_rate_limits
+    drop constraint if exists otp_rate_limits_pkey;
+alter table if exists otp_rate_limits
+    add constraint otp_rate_limits_pkey primary key (phone, purpose);
+alter table if exists otp_verify_rate_limits
+    drop constraint if exists otp_verify_rate_limits_pkey;
+alter table if exists otp_verify_rate_limits
+    add constraint otp_verify_rate_limits_pkey primary key (phone, purpose);
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'otp_rate_limits_purpose_check'
+            and conrelid = 'otp_rate_limits'::regclass
+    ) then
+        alter table otp_rate_limits
+            add constraint otp_rate_limits_purpose_check
+            check (purpose in ('login', 'digilocker', 'bank_verify'));
+    end if;
+
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'otp_verify_rate_limits_purpose_check'
+            and conrelid = 'otp_verify_rate_limits'::regclass
+    ) then
+        alter table otp_verify_rate_limits
+            add constraint otp_verify_rate_limits_purpose_check
+            check (purpose in ('login', 'digilocker', 'bank_verify'));
+    end if;
+end $$;
 
 create table if not exists login_handoffs (
     id          uuid        primary key default gen_random_uuid(),
