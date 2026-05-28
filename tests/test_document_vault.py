@@ -1,5 +1,7 @@
+import asyncio
+import base64
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, MagicMock, patch
 
 from gov_agent.document_vault import (
     DocumentVaultError,
@@ -9,6 +11,7 @@ from gov_agent.document_vault import (
     build_document_updates_from_profile,
     build_profile_updates,
     extract_document_data,
+    ingest_document,
     list_user_documents,
     mask_document_for_list,
     merge_extracted_data,
@@ -246,6 +249,67 @@ class DemoFallbackExtractionTests(unittest.TestCase):
         self.assertEqual(marksheet["marks_obtained"], 573)
         self.assertEqual(marksheet["max_marks"], 600)
 
+    def test_extracts_marksheet_from_mistral_ocr_when_gemini_is_unavailable(self):
+        ocr_text = """
+        Register No.: 20259115638
+        Year: 2025
+        Candidate's Name : SHASHANK GOWDA T
+        Father's Name : THIMMARAJU T
+        Mother's Name : ANUSOOYA
+        Total Marks 600 573
+        Class Obtained: DISTINCTION
+        """
+
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=False),
+            patch("gov_agent.document_vault.has_mistral_ocr_client", return_value=True),
+            patch("gov_agent.document_vault.extract_ocr_markdown", return_value=ocr_text) as ocr_mock,
+        ):
+            marksheet, confidence, raw_text = extract_document_data(
+                "marksheet",
+                image_b64="demo",
+                mime_type="image/jpeg",
+            )
+
+        ocr_mock.assert_called_once()
+        self.assertGreaterEqual(confidence, 0.8)
+        self.assertEqual(raw_text, ocr_text)
+        self.assertEqual(marksheet["student_name"], "SHASHANK GOWDA T")
+        self.assertEqual(marksheet["roll_number"], "20259115638")
+        self.assertEqual(marksheet["year"], "2025")
+        self.assertEqual(marksheet["marks_obtained"], 573)
+        self.assertEqual(marksheet["max_marks"], 600)
+        self.assertEqual(marksheet["percentage"], 95.5)
+
+    def test_extracts_income_certificate_from_mistral_ocr_after_gemini_failure(self):
+        ocr_text = """
+        INCOME AND CASTE CERTIFICATE
+        Certificate No: RD1218190096391
+        Certified that Kumar Shashank Gowda T belongs to caste Vokkaligaru of Category III A.
+        His family annual income is Rs. 98000.
+        This certificate is valid for fiveyear.
+        Date: 29/01/2026
+        """
+
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=True),
+            patch("gov_agent.document_vault.generate_text", side_effect=RuntimeError("429 RESOURCE_EXHAUSTED")),
+            patch("gov_agent.document_vault.has_mistral_ocr_client", return_value=True),
+            patch("gov_agent.document_vault.extract_ocr_markdown", return_value=ocr_text),
+        ):
+            income, confidence, raw_text = extract_document_data(
+                "income_cert",
+                image_b64="demo",
+                mime_type="image/jpeg",
+            )
+
+        self.assertGreaterEqual(confidence, 0.8)
+        self.assertEqual(raw_text, ocr_text)
+        self.assertEqual(income["certificate_number"], "RD1218190096391")
+        self.assertEqual(income["annual_income"], 98000)
+        self.assertEqual(income["issue_date"], "2026-01-29")
+        self.assertEqual(income["valid_until"], "2031-01-29")
+
     def test_validates_demo_non_aadhaar_documents_without_gemini(self):
         with patch("gov_agent.document_vault.has_gemini_client", return_value=False):
             income = analyze_document_validity("income_cert", "demo")
@@ -260,6 +324,108 @@ class DemoFallbackExtractionTests(unittest.TestCase):
         self.assertEqual(caste["verification_status"], "valid")
         self.assertTrue(marksheet["valid"])
         self.assertEqual(marksheet["verification_status"], "valid")
+
+    def test_validates_aadhaar_without_spending_gemini_vision_call(self):
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=True),
+            patch("gov_agent.document_vault.generate_text") as generate_text_mock,
+        ):
+            result = analyze_document_validity("aadhaar", "demo")
+
+        generate_text_mock.assert_not_called()
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["verification_status"], "valid")
+
+    def test_validates_from_extracted_dates_without_spending_gemini_vision_call(self):
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=True),
+            patch("gov_agent.document_vault.GEMINI_VISION_VALIDATION", False),
+            patch("gov_agent.document_vault.generate_text") as generate_text_mock,
+        ):
+            result = analyze_document_validity(
+                "income_cert",
+                "demo",
+                extracted_data={
+                    "issue_date": "2026-01-29",
+                    "valid_until": "2031-01-29",
+                },
+            )
+
+        generate_text_mock.assert_not_called()
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["issue_date"], "29/01/2026")
+        self.assertEqual(result["expiry_date"], "29/01/2031")
+        self.assertEqual(result["verification_status"], "valid")
+
+    def test_validates_from_extracted_dates_even_when_vision_validation_is_enabled(self):
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=True),
+            patch("gov_agent.document_vault.GEMINI_VISION_VALIDATION", True),
+            patch("gov_agent.document_vault.generate_text") as generate_text_mock,
+        ):
+            result = analyze_document_validity(
+                "marksheet",
+                "demo",
+                extracted_data={
+                    "student_name": "SHASHANK GOWDA T",
+                    "issue_date": "2025-01-01",
+                },
+            )
+
+        generate_text_mock.assert_not_called()
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["issue_date"], "01/01/2025")
+        self.assertEqual(result["verification_status"], "valid")
+
+    def test_ingest_passes_extracted_values_to_document_validation(self):
+        extracted_data = {
+            "student_name": "SHASHANK GOWDA T",
+            "roll_number": "20259115638",
+            "percentage": 95.5,
+            "issue_date": "2025-01-01",
+        }
+        validation = {
+            "valid": True,
+            "doc_type": "marksheet",
+            "issue_date": "01/01/2025",
+            "expiry_date": "31/12/2029",
+            "flags": [],
+            "message": "Document validated using extracted fields.",
+            "verification_status": "valid",
+        }
+        supabase_mock = MagicMock()
+        supabase_mock.table.return_value.insert.return_value.execute.return_value.data = [
+            {
+                "id": "doc-marksheet",
+                "phone": "919999999999",
+                "doc_type": "marksheet",
+                "ocr_extracted_data": extracted_data,
+                "user_corrected_data": {},
+                "extracted_data": extracted_data,
+            }
+        ]
+
+        with (
+            patch("gov_agent.document_vault.supabase", supabase_mock),
+            patch("gov_agent.document_vault._upload_file"),
+            patch("gov_agent.document_vault.list_documents_by_type", return_value=[]),
+            patch("gov_agent.document_vault.extract_document_data", return_value=(extracted_data, 0.98, "api")),
+            patch("gov_agent.document_vault.analyze_document_validity", return_value=validation) as analyze_mock,
+            patch("gov_agent.document_vault._persist_document_check_audit"),
+            patch("gov_agent.document_vault._merge_profile_updates"),
+        ):
+            asyncio.run(
+                ingest_document(
+                    phone="919999999999",
+                    doc_type="marksheet",
+                    source="web",
+                    image_b64=base64.b64encode(b"\xff\xd8\xffdemo").decode("ascii"),
+                    mime_type="image/jpeg",
+                    file_name="marksheet.jpg",
+                )
+            )
+
+        analyze_mock.assert_called_once_with("marksheet", ANY, extracted_data=extracted_data)
 
 
 class DownloadUrlHelperTests(unittest.TestCase):
@@ -323,6 +489,35 @@ class EditMergeTests(unittest.TestCase):
         self.assertEqual(materialized["ocr_extracted_data"]["full_name"], "OCR Name")
         self.assertEqual(materialized["user_corrected_data"]["full_name"], "Corrected Name")
         self.assertEqual(materialized["extracted_data"]["full_name"], "Corrected Name")
+
+    def test_materialize_document_recovers_stale_failed_status_when_extracted_dates_validate(self):
+        materialized = _materialize_document(
+            {
+                "doc_type": "marksheet",
+                "status": "failed",
+                "verification_status": "unknown",
+                "issue_date": None,
+                "expiry_date": None,
+                "status_reason": "Document could not be read.",
+                "source_confidence": 0.98,
+                "ocr_extracted_data": {
+                    "student_name": "SHASHANK GOWDA T",
+                    "roll_number": "20259115638",
+                    "issue_date": "2025-01-01",
+                },
+                "user_corrected_data": {},
+                "extracted_data": {
+                    "student_name": "SHASHANK GOWDA T",
+                    "roll_number": "20259115638",
+                    "issue_date": "2025-01-01",
+                },
+            }
+        )
+
+        self.assertEqual(materialized["status"], "ready")
+        self.assertEqual(materialized["verification_status"], "valid")
+        self.assertEqual(materialized["issue_date"], "2025-01-01")
+        self.assertEqual(materialized["expiry_date"], "2029-12-31")
 
 
 class ListMaskingTests(unittest.TestCase):

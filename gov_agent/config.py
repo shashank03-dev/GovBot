@@ -13,6 +13,9 @@ as configurable constants for the application.
 - GEMINI_API_KEY: The API key for accessing Google's Gemini AI services.
 - GEMINI_GENERATION_MODELS: Optional comma-separated Gemini text/vision
   generation fallback order.
+- GEMINI_VISION_VALIDATION: Optional flag for a second Gemini image check
+  after OCR extraction. Disabled by default to conserve free-tier quota.
+- MISTRAL_API_KEY / MISTRAL_API_KEY_1: Optional Mistral key for Document AI OCR.
 
 Call ``validate_config()`` at application startup to assert all required vars
 are present. Importing this module never raises, making test/CI imports safe.
@@ -39,6 +42,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_DOCUMENTS_BUCKET = os.getenv("SUPABASE_DOCUMENTS_BUCKET", "user-documents")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_GENERATION_MODELS = os.getenv("GEMINI_GENERATION_MODELS", "")
+GEMINI_VISION_VALIDATION = os.getenv("GEMINI_VISION_VALIDATION", "false").lower() == "true"
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY") or os.getenv("MISTRAL_API_KEY_1", "")
+MISTRAL_OCR_MODEL = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest")
+MISTRAL_OCR_ENABLED = os.getenv("MISTRAL_OCR_ENABLED", "true").lower() == "true"
 SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
 OFFICIAL_USERNAME = os.getenv("OFFICIAL_USERNAME", "")
 OFFICIAL_PASSWORD = os.getenv("OFFICIAL_PASSWORD", "")

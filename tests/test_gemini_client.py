@@ -33,6 +33,52 @@ class GeminiClientFallbackTests(unittest.TestCase):
         self.assertEqual(text, "fallback response")
         self.assertEqual(calls, ["gemini-2.5-flash", "gemini-2.0-flash"])
 
+    def test_generate_text_does_not_fallback_after_rate_limit_error(self):
+        calls = []
+
+        class _FakeModels:
+            def generate_content(self, *, model, contents, config=None):
+                calls.append(model)
+                raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
+
+        fake_client = types.SimpleNamespace(models=_FakeModels())
+
+        with (
+            patch.object(gemini_client, "get_gemini_client", return_value=fake_client),
+            patch.object(
+                gemini_client,
+                "GEMINI_GENERATION_MODELS",
+                "gemini-2.5-flash,gemini-2.0-flash",
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                gemini_client.generate_text("hello", model="gemini-2.5-flash")
+
+        self.assertEqual(calls, ["gemini-2.5-flash"])
+
+    def test_generate_text_does_not_fallback_after_invalid_image_error(self):
+        calls = []
+
+        class _FakeModels:
+            def generate_content(self, *, model, contents, config=None):
+                calls.append(model)
+                raise RuntimeError("400 INVALID_ARGUMENT Unable to process input image")
+
+        fake_client = types.SimpleNamespace(models=_FakeModels())
+
+        with (
+            patch.object(gemini_client, "get_gemini_client", return_value=fake_client),
+            patch.object(
+                gemini_client,
+                "GEMINI_GENERATION_MODELS",
+                "gemini-2.5-flash,gemini-2.0-flash",
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                gemini_client.generate_text("hello", model="gemini-2.5-flash")
+
+        self.assertEqual(calls, ["gemini-2.5-flash"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,11 @@ from gov_agent.config import GEMINI_API_KEY, GEMINI_GENERATION_MODELS
 DEFAULT_GENERATION_MODEL = "gemini-2.5-flash"
 GENERATION_MODEL_FALLBACKS = ("gemini-2.0-flash",)
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+NON_RETRIABLE_GENERATION_ERROR_MARKERS = (
+    "RESOURCE_EXHAUSTED",
+    "INVALID_ARGUMENT",
+    "UNABLE TO PROCESS INPUT IMAGE",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,11 @@ def _generation_models_for_request(model: str) -> list[str]:
     return deduped
 
 
+def _should_stop_generation_fallback(exc: Exception) -> bool:
+    message = f"{type(exc).__name__}: {exc}".upper()
+    return any(marker in message for marker in NON_RETRIABLE_GENERATION_ERROR_MARKERS)
+
+
 def generate_text(
     contents: Any,
     *,
@@ -100,6 +110,13 @@ def generate_text(
             return (response.text or "").strip()
         except Exception as exc:
             last_exc = exc
+            if _should_stop_generation_fallback(exc):
+                logger.warning(
+                    "Gemini model %s failed with a non-retriable error; not trying fallback models: %s",
+                    candidate_model,
+                    exc,
+                )
+                break
             if index < len(models) - 1:
                 logger.warning(
                     "Gemini model %s failed; trying fallback model %s: %s",

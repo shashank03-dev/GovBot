@@ -12,12 +12,14 @@ from typing import Any, Optional
 import httpx
 
 from gov_agent.config import (
+    GEMINI_VISION_VALIDATION,
     SUPABASE_DOCUMENTS_BUCKET,
     WHATSAPP_TOKEN,
 )
 from gov_agent.db import supabase
 from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
 from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
+from gov_agent.mistral_ocr_client import extract_ocr_markdown, has_mistral_ocr_client
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +314,41 @@ def _effective_extracted_data(document: dict[str, Any]) -> dict[str, Any]:
     return merge_extracted_data(ocr_data, corrected)
 
 
+def _recover_stale_validation_status(materialized: dict[str, Any], effective: dict[str, Any]) -> None:
+    doc_type = str(materialized.get("doc_type") or "")
+    status = str(materialized.get("status") or "").lower()
+    verification_status = str(materialized.get("verification_status") or "").lower()
+    if doc_type not in VALIDATION_DOC_TYPES:
+        return
+    if status not in {"failed", "needs_review"}:
+        return
+    if verification_status not in {"", "unknown"}:
+        return
+    if not _has_extracted_validation_dates(effective):
+        return
+
+    try:
+        confidence = float(materialized.get("source_confidence") or materialized.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence < 0.6:
+        return
+
+    validation = _fallback_document_validation(doc_type, effective)
+    if not validation.get("valid") or validation.get("verification_status") != "valid":
+        return
+
+    issue_date = _parse_date(validation.get("issue_date"))
+    expiry_date = _parse_date(validation.get("expiry_date"))
+    materialized["status"] = "ready"
+    materialized["verification_status"] = "valid"
+    materialized["status_reason"] = validation.get("message") or "Document validated using fallback rules."
+    if issue_date:
+        materialized["issue_date"] = issue_date.isoformat()
+    if expiry_date:
+        materialized["expiry_date"] = expiry_date.isoformat()
+
+
 def _materialize_document(document: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if not document:
         return None
@@ -338,6 +375,7 @@ def _materialize_document(document: Optional[dict[str, Any]]) -> Optional[dict[s
             materialized["custom_label"] = custom_label
     if materialized.get("source_confidence") is None:
         materialized["source_confidence"] = materialized.get("confidence", 0)
+    _recover_stale_validation_status(materialized, effective)
     return materialized
 
 
@@ -728,6 +766,167 @@ def _custom_extraction_prompt(custom_label: str) -> tuple[str, dict[str, Any]]:
     return prompt, fallback
 
 
+def _regex_first(pattern: str, text: str, *, flags: int = re.IGNORECASE) -> Optional[str]:
+    match = re.search(pattern, text, flags)
+    if not match:
+        return None
+    return str(match.group(1)).strip()
+
+
+def _clean_ocr_value(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip(" :-|\t\r\n"))
+
+
+def _add_years(value: date, years: int) -> date:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        return value.replace(month=2, day=28, year=value.year + years)
+
+
+def _ocr_label_value(text: str, label_pattern: str) -> str:
+    value = _regex_first(
+        rf"{label_pattern}\s*[:\-]\s*([^\n|]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _clean_ocr_value(value)
+
+
+def _ocr_issue_date(text: str) -> Optional[date]:
+    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}-\d{1,2}-\d{1,2})"
+    for pattern in (
+        rf"\bissue\s+date\s*[:\-]?\s*{date_pattern}",
+        rf"\bdate\s*[:\-]?\s*{date_pattern}",
+    ):
+        parsed = _parse_date(_regex_first(pattern, text))
+        if parsed:
+            return parsed
+    return _parse_date(_regex_first(date_pattern, text))
+
+
+def _ocr_valid_until(text: str, issue_date_obj: Optional[date]) -> Optional[date]:
+    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}-\d{1,2}-\d{1,2})"
+    parsed = _parse_date(
+        _regex_first(rf"\bvalid\s+(?:until|upto|up\s+to)\s*[:\-]?\s*{date_pattern}", text)
+    )
+    if parsed:
+        return parsed
+    if issue_date_obj and re.search(r"valid\s+for\s+(?:five|5)\s*years?|valid\s+for\s+fiveyear", text, re.I):
+        return _add_years(issue_date_obj, 5)
+    return None
+
+
+def _extract_income_or_caste_from_ocr_text(doc_type: str, text: str) -> dict[str, Any]:
+    issue_date_obj = _ocr_issue_date(text)
+    valid_until = _ocr_valid_until(text, issue_date_obj)
+    certificate_number = _regex_first(r"\b(?:certificate\s*(?:no|number)\.?\s*:?\s*)([A-Z]{1,5}\d{6,})", text)
+    certificate_number = certificate_number or _regex_first(r"\b(RD\d{6,})\b", text)
+
+    extracted: dict[str, Any] = {
+        "certificate_number": certificate_number or "",
+        "issue_date": issue_date_obj.isoformat() if issue_date_obj else "",
+        "valid_until": valid_until.isoformat() if valid_until else "",
+    }
+    if doc_type == "income_cert":
+        income_raw = _regex_first(
+            r"(?:family\s+annual\s+income|annual\s+income)[^0-9]{0,80}(?:rs\.?|inr|₹)?\s*([0-9][0-9,\s]*)",
+            text,
+        )
+        income = _parse_number(income_raw, integer=True)
+        extracted["annual_income"] = income or 0
+        return extracted
+
+    caste = _regex_first(r"\bcaste\s+([A-Za-z][A-Za-z\s]+?)\s+(?:of|and|,|belong|category|\.)", text)
+    if not caste and re.search(r"\bVokkaligaru\b", text, re.I):
+        caste = "Vokkaligaru"
+    category = _regex_first(r"\b(Category\s+[IVX]+\s*[A-Z]?(?:\s*\([^)]+\))?)", text)
+    extracted["caste"] = _clean_ocr_value(caste)
+    extracted["category"] = _clean_ocr_value(category)
+    return extracted
+
+
+def _extract_marksheet_from_ocr_text(text: str) -> dict[str, Any]:
+    one_line = _clean_ocr_value(text)
+    roll_number = _regex_first(r"\b(?:register|registration|roll)\s+no\.?\s*[:\-]?\s*(\d{6,})", text)
+    year = _regex_first(r"\bYear\s*[:\-]?\s*(20\d{2})", text)
+    student_name = _ocr_label_value(text, r"Candidate'?s\s+Name")
+    father_name = _ocr_label_value(text, r"Father'?s\s+Name")
+    mother_name = _ocr_label_value(text, r"Mother'?s\s+Name")
+    class_obtained = _ocr_label_value(text, r"Class\s+Obtained")
+
+    marks_obtained: Optional[int] = None
+    max_marks: Optional[int] = None
+    total_match = re.search(
+        r"Total\s+Marks(?:\s+Obtained)?[^0-9]{0,60}(\d{2,4})\s+(\d{2,4})",
+        one_line,
+        re.I,
+    )
+    if total_match:
+        max_marks = int(total_match.group(1))
+        marks_obtained = int(total_match.group(2))
+    percentage = round((marks_obtained / max_marks) * 100, 2) if marks_obtained and max_marks else 0.0
+
+    return {
+        "student_name": student_name,
+        "roll_number": roll_number or "",
+        "register_number": roll_number or "",
+        "year": year or "",
+        "board": "Karnataka School Examination and Assessment Board" if "Karnataka" in text else "",
+        "percentage": percentage,
+        "marks_obtained": marks_obtained or 0,
+        "max_marks": max_marks or 0,
+        "class_obtained": class_obtained,
+        "father_name": father_name,
+        "mother_name": mother_name,
+    }
+
+
+def _extract_document_data_from_ocr_text(doc_type: str, text: str) -> dict[str, Any]:
+    if doc_type == "pan":
+        return {
+            "pan_number": _regex_first(r"\b([A-Z]{5}\d{4}[A-Z])\b", text) or "",
+            "full_name": _ocr_label_value(text, r"(?:Name|Full\s+Name)"),
+            "father_name": _ocr_label_value(text, r"Father'?s\s+Name"),
+            "dob": (_ocr_issue_date(text).isoformat() if _ocr_issue_date(text) else ""),
+        }
+    if doc_type == "aadhaar":
+        return {
+            "aadhaar_number": _regex_first(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text) or "",
+            "full_name": _ocr_label_value(text, r"(?:Name|Full\s+Name)"),
+            "dob": _ocr_label_value(text, r"(?:DOB|Date\s+of\s+Birth)"),
+            "address": _ocr_label_value(text, r"Address"),
+            "gender": _regex_first(r"\b(Male|Female|Other)\b", text) or "",
+        }
+    if doc_type in {"income_cert", "caste_cert"}:
+        return _extract_income_or_caste_from_ocr_text(doc_type, text)
+    if doc_type == "marksheet":
+        return _extract_marksheet_from_ocr_text(text)
+    return {}
+
+
+def _extract_with_mistral_ocr(
+    doc_type: str,
+    *,
+    image_b64: str,
+    mime_type: Optional[str],
+) -> Optional[tuple[dict[str, Any], float, str]]:
+    if not has_mistral_ocr_client():
+        return None
+    try:
+        raw_text = extract_ocr_markdown(
+            data_b64=_normalize_base64(image_b64),
+            mime_type=mime_type or "image/jpeg",
+        )
+    except Exception as exc:
+        logger.warning("Mistral OCR failed for %s: %s", doc_type, exc)
+        return None
+    extracted = _extract_document_data_from_ocr_text(doc_type, raw_text)
+    if not any(_filled(value) for value in extracted.values()):
+        return None
+    return extracted, 0.84, raw_text
+
+
 def extract_document_data(
     doc_type: str,
     *,
@@ -769,6 +968,9 @@ def extract_document_data(
             return _custom_extraction_fallback(label)
 
     if not has_gemini_client() or mime_type == "application/pdf":
+        mistral_result = _extract_with_mistral_ocr(doc_type, image_b64=image_b64, mime_type=mime_type)
+        if mistral_result:
+            return mistral_result
         return _extract_fallback(doc_type)
 
     prompt, fallback = _extraction_prompt(doc_type)
@@ -786,6 +988,9 @@ def extract_document_data(
         return extracted, confidence, raw_text
     except Exception as exc:
         logger.warning("Gemini extraction failed for %s: %s", doc_type, exc)
+        mistral_result = _extract_with_mistral_ocr(doc_type, image_b64=image_b64, mime_type=mime_type)
+        if mistral_result:
+            return mistral_result
         extracted, confidence, raw_text = _extract_fallback(doc_type)
         if extracted:
             return extracted, confidence, raw_text
@@ -815,7 +1020,87 @@ def _expiry_date(issue: date, doc_type: str) -> Optional[date]:
     return issue + timedelta(days=days)
 
 
-def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
+def _fallback_document_validation(
+    doc_type: str,
+    extracted_data: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    flags: list[str] = []
+    if doc_type == "aadhaar":
+        return {
+            "valid": True,
+            "doc_type": doc_type,
+            "issue_date": None,
+            "expiry_date": None,
+            "flags": flags,
+            "message": "Document validated using fallback rules.",
+            "verification_status": "valid",
+        }
+
+    extracted = dict(extracted_data or {})
+    confidence = 1.0 if extracted else 0.0
+    if not extracted:
+        extracted, confidence, _ = _extract_fallback(doc_type)
+
+    if extracted and confidence >= 0.6:
+        issue_date_obj = _parse_date(extracted.get("issue_date"))
+        expiry = _parse_date(_first_filled(extracted.get("valid_until"), extracted.get("expiry_date")))
+        if not expiry and issue_date_obj:
+            expiry = _expiry_date(issue_date_obj, doc_type)
+
+        today = date.today()
+        if issue_date_obj and issue_date_obj > today:
+            flags.append("future_date")
+        if expiry and today > expiry:
+            flags.append("expired")
+
+        valid = not flags
+        verification_status = "valid" if valid else "invalid"
+        if "expired" in flags:
+            message = f"{doc_type.replace('_', ' ').title()} has expired and may be rejected by portal."
+        elif "future_date" in flags:
+            message = "Document issue date is in the future — please check."
+        else:
+            message = "Document validated using fallback rules."
+
+        return {
+            "valid": valid,
+            "doc_type": doc_type,
+            "issue_date": issue_date_obj.strftime("%d/%m/%Y") if issue_date_obj else None,
+            "expiry_date": expiry.strftime("%d/%m/%Y") if expiry else None,
+            "flags": flags,
+            "message": message,
+            "verification_status": verification_status,
+        }
+
+    return {
+        "valid": False,
+        "doc_type": doc_type,
+        "issue_date": None,
+        "expiry_date": None,
+        "flags": ["unreadable"],
+        "message": "Document validation unavailable: image validation is disabled or unavailable.",
+        "verification_status": "unknown",
+    }
+
+
+def _has_extracted_validation_dates(extracted_data: Optional[dict[str, Any]]) -> bool:
+    if not extracted_data:
+        return False
+    return bool(
+        _first_filled(
+            extracted_data.get("issue_date"),
+            extracted_data.get("valid_until"),
+            extracted_data.get("expiry_date"),
+        )
+    )
+
+
+def analyze_document_validity(
+    doc_type: str,
+    image_b64: str,
+    *,
+    extracted_data: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     if doc_type == "pan":
         return {
             "valid": True,
@@ -827,58 +1112,11 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
             "verification_status": "not_applicable",
         }
 
-    if not has_gemini_client():
-        flags: list[str] = []
-        if doc_type == "aadhaar":
-            return {
-                "valid": True,
-                "doc_type": doc_type,
-                "issue_date": None,
-                "expiry_date": None,
-                "flags": flags,
-                "message": "Document validated using fallback rules.",
-                "verification_status": "valid",
-            }
-        extracted, confidence, _ = _extract_fallback(doc_type)
-        if extracted and confidence >= 0.6:
-            issue_date_obj = _parse_date(extracted.get("issue_date"))
-            expiry = _parse_date(extracted.get("valid_until"))
-            if not expiry and issue_date_obj:
-                expiry = _expiry_date(issue_date_obj, doc_type)
+    if _has_extracted_validation_dates(extracted_data):
+        return _fallback_document_validation(doc_type, extracted_data)
 
-            today = date.today()
-            if issue_date_obj and issue_date_obj > today:
-                flags.append("future_date")
-            if expiry and today > expiry:
-                flags.append("expired")
-
-            valid = not flags
-            verification_status = "valid" if valid else "invalid"
-            if "expired" in flags:
-                message = f"{doc_type.replace('_', ' ').title()} has expired and may be rejected by portal."
-            elif "future_date" in flags:
-                message = "Document issue date is in the future — please check."
-            else:
-                message = "Document validated using fallback rules."
-
-            return {
-                "valid": valid,
-                "doc_type": doc_type,
-                "issue_date": issue_date_obj.strftime("%d/%m/%Y") if issue_date_obj else None,
-                "expiry_date": expiry.strftime("%d/%m/%Y") if expiry else None,
-                "flags": flags,
-                "message": message,
-                "verification_status": verification_status,
-            }
-        return {
-            "valid": False,
-            "doc_type": doc_type,
-            "issue_date": None,
-            "expiry_date": None,
-            "flags": ["unreadable"],
-            "message": "Document validation unavailable: GEMINI_API_KEY not configured",
-            "verification_status": "unknown",
-        }
+    if doc_type == "aadhaar" or not GEMINI_VISION_VALIDATION or not has_gemini_client():
+        return _fallback_document_validation(doc_type, extracted_data)
 
     prompt = (
         f"This is a scanned {doc_type.replace('_', ' ')} document image.\n"
@@ -910,7 +1148,7 @@ def analyze_document_validity(doc_type: str, image_b64: str) -> dict[str, Any]:
         issue_date_obj = _parse_date(result.get("issue_date"))
     except Exception as exc:
         logger.warning("Gemini validation failed for %s: %s", doc_type, exc)
-        flags.append("unreadable")
+        return _fallback_document_validation(doc_type, extracted_data)
 
     today = date.today()
     expiry: Optional[date] = None
@@ -1324,7 +1562,11 @@ async def ingest_document(
 
     if doc_type in VALIDATION_DOC_TYPES:
         try:
-            validation = analyze_document_validity(doc_type, payload_b64)
+            validation = analyze_document_validity(
+                doc_type,
+                payload_b64,
+                extracted_data=extracted_data,
+            )
         except Exception as exc:
             logger.warning("Document validation failed for %s: %s", doc_type, exc)
             validation = {
