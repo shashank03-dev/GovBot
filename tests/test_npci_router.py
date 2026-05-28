@@ -2,6 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import HTTPException
+
 from gov_agent import npci_agent, npci_router
 
 
@@ -101,3 +103,37 @@ class DisbursementReadyTests(unittest.TestCase):
         self.assertEqual(payload["confirmation_number"], "NSP2026ABC123")
         self.assertEqual(payload["bank_verification_id"], "ver-1")
         self.assertEqual(payload["status"], "pending")
+
+
+class BankReadyRouteAuthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mark_bank_ready_requires_authenticated_phone(self):
+        with self.assertRaises(HTTPException) as ctx:
+            await npci_router.mark_bank_ready(
+                npci_router.BankReadyRequest(phone="919632363213"),
+                token_phone=None,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    async def test_mark_bank_ready_rejects_different_phone(self):
+        with self.assertRaises(HTTPException) as ctx:
+            await npci_router.mark_bank_ready(
+                npci_router.BankReadyRequest(phone="919632363213"),
+                token_phone="919999999999",
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    async def test_mark_bank_ready_uses_authenticated_phone(self):
+        with patch.object(
+            npci_agent,
+            "ensure_disbursement_ready",
+            return_value={"ready": True, "phone": "919632363213"},
+        ) as ensure_ready:
+            result = await npci_router.mark_bank_ready(
+                npci_router.BankReadyRequest(phone="9632363213"),
+                token_phone="919632363213",
+            )
+
+        self.assertEqual(result["ready"], True)
+        ensure_ready.assert_called_once_with("919632363213")

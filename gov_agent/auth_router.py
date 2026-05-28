@@ -171,7 +171,6 @@ def _check_verify_rate_limit(phone: str) -> None:
     row = _load_rate_limit_row(
         "otp_verify_rate_limits",
         phone,
-        fail_open_missing_table=True,
     )
     if row is _MISSING_RATE_LIMIT_TABLE or not row:
         return
@@ -205,7 +204,6 @@ def _record_verify_failure(phone: str) -> None:
     row = _load_rate_limit_row(
         "otp_verify_rate_limits",
         phone,
-        fail_open_missing_table=True,
     )
     if row is _MISSING_RATE_LIMIT_TABLE:
         return
@@ -244,6 +242,20 @@ def _clear_verify_failures(phone: str) -> None:
             return
         logger.error("OTP verify rate-limit clear failed for %s: %s", phone, exc)
         raise HTTPException(status_code=503, detail="OTP service temporarily unavailable") from exc
+
+
+def _consume_valid_otp(phone: str, code: str, now_iso: str) -> bool:
+    result = (
+        supabase.table("otp_codes")
+        .update({"used": True})
+        .eq("phone", phone)
+        .eq("code", _hash_otp(code))
+        .eq("used", False)
+        .gt("expires_at", now_iso)
+        .select("id")
+        .execute()
+    )
+    return bool(result.data)
 
 
 def _hash_otp(code: str) -> str:
@@ -337,26 +349,14 @@ async def verify_otp(body: VerifyOTPRequest):
     now_iso = datetime.now(timezone.utc).isoformat()
     _check_verify_rate_limit(phone)
 
-    # Fetch a valid, unused, non-expired OTP row (compare hashed code)
-    result = (
-        supabase.table("otp_codes")
-        .select("id")
-        .eq("phone", phone)
-        .eq("code", _hash_otp(body.code))
-        .eq("used", False)
-        .gt("expires_at", now_iso)
-        .limit(1)
-        .execute()
-    )
-
-    if not result.data:
+    # Atomically consume the valid OTP row. A concurrent replay only succeeds
+    # for the request that updates the unused row first.
+    if not _consume_valid_otp(phone, body.code, now_iso):
         _record_verify_failure(phone)
         return {"valid": False, "error": "Invalid or expired OTP"}
 
     # Mark all active OTPs for the phone as consumed so older codes cannot be replayed.
-    row_id = result.data[0]["id"]
     supabase.table("otp_codes").update({"used": True}).eq("phone", phone).eq("used", False).execute()
-    supabase.table("otp_codes").update({"used": True}).eq("id", row_id).execute()
     _clear_verify_failures(phone)
 
     token = issue_citizen_token(phone)

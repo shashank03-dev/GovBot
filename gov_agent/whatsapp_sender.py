@@ -51,6 +51,20 @@ def _build_otp_template_payload(to: str, code: str) -> dict:
     }
 
 
+def _redact_payload_for_log(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if key in {"body", "text"} and isinstance(item, str):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redact_payload_for_log(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_payload_for_log(item) for item in value]
+    return value
+
+
 def _build_media_payload(to: str, media: dict[str, Any]) -> dict[str, Any]:
     mime_type = str(media.get("mime_type") or "")
     link = str(media["link"])
@@ -90,7 +104,7 @@ async def _post_whatsapp_payload(payload: dict) -> dict:
 
     logger.info(
         "WhatsApp API request - URL: %s, to: %s, type: %s, payload: %s",
-        url, payload.get("to"), payload.get("type"), payload,
+        url, payload.get("to"), payload.get("type"), _redact_payload_for_log(payload),
     )
 
     last_error: str = "unknown error"

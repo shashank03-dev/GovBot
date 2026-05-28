@@ -40,7 +40,9 @@ test('resolveBackendProxyPath maps frontend api paths to backend targets', () =>
 test('bank ready api relay exists and targets the backend ready endpoint', () => {
   const routeSource = readFileSync(new URL('../pages/api/bank/ready.ts', import.meta.url), 'utf8');
 
-  assert.match(routeSource, /buildBackendUrl\('\/api\/bank\/mock\/ready'\)/);
+  assert.match(routeSource, /const backendPath = '\/api\/bank\/mock\/ready'/);
+  assert.match(routeSource, /buildBackendUrl\(backendPath\)/);
+  assert.match(routeSource, /resolveSessionAuthorizationHeader/);
   assert.match(routeSource, /return res\.status\(405\)\.json\(\{ error: 'Method not allowed' \}\)/);
 });
 
