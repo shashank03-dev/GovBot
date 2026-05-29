@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node --test lib/*.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "video": "remotion studio remotion/index.ts",
+    "video:render": "remotion render remotion/index.ts GovBotShowcase ../gov_agent/docs/govbot-showcase.mp4",
+    "video:gif": "remotion render remotion/index.ts GovBotShowcase ../gov_agent/docs/govbot-showcase.gif --codec=gif --every-nth-frame=3 --scale=0.5"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.1",
@@ -23,6 +26,7 @@
     "react-dom": "19.2.3"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.468",
     "@tailwindcss/postcss": "^4",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
@@ -33,6 +37,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "remotion": "^4.0.468",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

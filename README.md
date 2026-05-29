@@ -1,245 +1,279 @@
 # GovBot
 
-WhatsApp-first government service automation for India.
+<p align="center">
+  <strong>Government services, from paper trail to proof trail.</strong>
+</p>
 
-GovBot brings citizen onboarding, document handling, eligibility checks, form filling, tracking, and officer-side monitoring into one flow. The repo combines a FastAPI backend, a Next.js web app, LangGraph-driven workflow orchestration, Gemini-powered extraction and mapping, and Supabase-backed state.
+<p align="center">
+  GovBot is a WhatsApp-first public-service assistant for India. It helps citizens onboard once, store documents once, check schemes, fill forms, track applications, verify payouts, and carry proof forward.
+</p>
 
-> One citizen profile. One secured document vault. Multiple public-service workflows from the same guided surface.
+<p align="center">
+  <a href="https://govbot-fawn.vercel.app"><strong>Live Demo</strong></a>
+  ·
+  <a href="#quick-start"><strong>Quick Start</strong></a>
+  ·
+  <a href="#demo-routes"><strong>Demo Routes</strong></a>
+  ·
+  <a href="#read-the-system"><strong>Read The System</strong></a>
+</p>
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-2C3E50?style=for-the-badge)](https://langchain-ai.github.io/langgraph/)
-[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)](https://deepmind.google/technologies/gemini/)
-[![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
-[![Playwright](https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white)](https://playwright.dev/)
+<p align="center">
+  <a href="https://fastapi.tiangolo.com/"><img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi"></a>
+  <a href="https://nextjs.org/"><img alt="Next.js" src="https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white"></a>
+  <a href="https://react.dev/"><img alt="React 19" src="https://img.shields.io/badge/React%2019-1f6feb?style=for-the-badge&logo=react&logoColor=white"></a>
+  <a href="https://www.remotion.dev/"><img alt="Remotion" src="https://img.shields.io/badge/Remotion-video-ff4d4d?style=for-the-badge"></a>
+  <a href="https://supabase.com/"><img alt="Supabase" src="https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white"></a>
+  <a href="https://playwright.dev/"><img alt="Playwright" src="https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white"></a>
+</p>
 
-### Live Demo
+![GovBot Remotion showcase](gov_agent/docs/govbot-showcase.gif)
 
-https://govbot-fawn.vercel.app
+<p align="center">
+  <a href="gov_agent/docs/govbot-showcase.mp4">Watch the 12 second MP4</a>
+  ·
+  <a href="gov_agent/docs/demo1.gif">Open the original product GIF</a>
+  ·
+  <a href="frontend/remotion/GovBotShowcase.tsx">Edit the Remotion source</a>
+</p>
 
-![GovBot Demo](gov_agent/docs/demo1.gif)
+## What GovBot Does
 
-## Demo Story
+GovBot turns the usual public-service runaround into a guided relay:
 
-GovBot is designed like a relay across channels instead of a single portal:
+1. A citizen starts from WhatsApp or the web.
+2. Phone verification opens a reusable profile.
+3. Documents move into a protected vault.
+4. Eligibility and form mapping reuse the saved profile.
+5. Applications stay trackable after submission.
+6. Officers get dashboards for fraud, disbursement, regions, and activity.
+7. Credentials and QR proof keep the trust layer alive after approval.
 
-- WhatsApp handles discovery, reminders, OTP entry, and lightweight citizen guidance.
-- The web app handles profile completion, document review, form submission, live status, and proof sharing.
-- Backend agents handle OCR, renewal intelligence, portal mapping, bank verification, and operational visibility.
+The word play is intentional: GovBot is not another form queue. It is a queue-cutter, proof-carrier, and status-finder for workflows that usually ask citizens to start over again and again.
 
-That makes the project useful both as a citizen-facing assistant and as a hackathon/demo system you can actually walk people through end to end.
+## Table Of Contents
 
-## Why GovBot Exists
+- [Why It Exists](#why-it-exists)
+- [The Product In One Glance](#the-product-in-one-glance)
+- [Demo Routes](#demo-routes)
+- [Quick Start](#quick-start)
+- [Environment Guide](#environment-guide)
+- [Read The System](#read-the-system)
+- [Architecture](#architecture)
+- [Data And Trust Model](#data-and-trust-model)
+- [Remotion Video](#remotion-video)
+- [Verification](#verification)
+- [Contributing](#contributing)
 
-Most public-service workflows still fall apart in the same places:
+## Why It Exists
 
-- Citizens have to repeat the same personal details across multiple portals.
-- Scheme rules are hard to understand without guidance.
-- Document handling is clumsy, especially on mobile.
-- Status tracking usually disappears once a form is submitted.
-- Officers and admins end up with fragmented operational visibility.
+Public-service workflows often break in boring places:
 
-GovBot treats WhatsApp as the front door, then uses a web dashboard and backend services to carry the workflow the rest of the way.
+| The usual pain | GovBot's answer |
+| --- | --- |
+| Citizens type the same details on every portal | One reusable profile follows the journey |
+| Documents are scattered across chats, files, and portals | A passkey-protected vault keeps them close |
+| Scheme rules feel like a maze | Guided eligibility turns the maze into a map |
+| Application status disappears after submission | Search, dashboard, and WhatsApp updates keep it visible |
+| Officers see fragments, not flow | Analytics, fraud flags, and disbursement views share one surface |
+| Proof ends at "application received" | Wallet and QR verification pages carry proof forward |
 
-## What Makes This Build Stand Out
+## The Product In One Glance
 
-- A single services hub connects scholarships, PM-KISAN, DigiLocker sync, document workflows, tracking, and admin analytics.
-- Renewal reminders combine scholarship due dates with saved document expiry dates, then format them for both web and WhatsApp summaries.
-- The bank verification flow is demo-ready and simulates NPCI-style payout verification while masking stored account details.
-- Credential and QR verification pages keep a trust layer after submission instead of ending the journey at "application received".
+<details open>
+<summary><strong>Citizen Journey</strong></summary>
 
-## What The Project Covers
+| Step | Surface | What happens |
+| --- | --- | --- |
+| Discover | WhatsApp or `/services` | Citizen asks for help, chooses a service, or opens the web app |
+| Verify | OTP login | Phone-backed session creates or restores access |
+| Profile | `/profile` and dashboard | Saved details become the citizen's reusable service passport |
+| Documents | `/documents`, OCR, DigiLocker | Aadhaar, PAN, income certificates, caste certificates, and marksheets move into the vault |
+| Decide | `/eligibility`, scholarship routes, PM-KISAN | Scheme checks turn requirements into next steps |
+| Fill | `/form-fill`, NSP/SSP flows | Saved profile and document data map into forms |
+| Track | `/track-search`, `/track/[id]`, dashboard | Application state remains searchable and visible |
+| Prove | `/wallet`, `/verify/[id]` | Credentials and QR-style proof close the loop |
 
-### Citizen-side
+</details>
 
-- WhatsApp-based entry point for scheme help, tracking, and assisted flows
-- OTP login with JWT-backed web access
-- Reusable citizen profile with completeness scoring
-- Aadhaar OCR and profile prefill
-- Document vault for PAN, Aadhaar, income certificates, caste certificates, and marksheets
-- 4-digit passkey gate for sensitive documents
-- DigiLocker-based document sync flow
-- Eligibility screening and scheme guidance
-- Auto-fill for portal forms using saved profile data
-- Real-time application status timeline and dashboard
-- Verifiable credential wallet and QR-based verification pages
+<details>
+<summary><strong>Officer Journey</strong></summary>
 
-### Officer-side
+| View | Route | Purpose |
+| --- | --- | --- |
+| Official login | `/official-login` | Shared username/password gate for demo official tools |
+| Overview | `/gov-dashboard` | Operational picture for applications and activity |
+| Disbursements | `/gov-dashboard/disbursements` | Payout and release visibility |
+| Fraud | `/gov-dashboard/fraud` | Suspicious application and document signals |
+| Regions | `/gov-dashboard/regional` | Regional activity and service performance |
+| Admin | `/admin` | Admin-oriented monitoring surface |
 
-- Overview dashboard for applications and activity
-- Disbursement tracking
-- Fraud flag views
-- Regional performance views
+</details>
 
-## System Overview
+<details>
+<summary><strong>AI And Automation Layer</strong></summary>
 
-```mermaid
-flowchart LR
-    WA[WhatsApp] --> WAPI[WhatsApp Cloud API]
-    WEB[Next.js Web App] --> API[FastAPI Backend]
-    WAPI --> API
+| Capability | How the repo handles it |
+| --- | --- |
+| Conversation flow | FastAPI routers plus LangGraph-style orchestration |
+| OCR and extraction | Gemini-backed document parsing, with provider-specific clients |
+| Text routing | Optional Groq, Mistral, and Gemini pool for test-time text/chat routing |
+| Form mapping | Gemini-assisted field mapping for target forms |
+| Browser automation | Playwright-assisted form fill execution |
+| Reminders | Renewal intelligence combines scholarship dates and document expiry |
+| Verification | Credential wallet, QR proof pages, and blockchain/IPFS integration hooks |
 
-    API --> FLOW[LangGraph Workflow Layer]
-    FLOW --> PROFILE[Profile and Session Services]
-    FLOW --> DOCS[OCR, Vault, and Document Services]
-    FLOW --> FORMS[Form Scanner and Portal Automation]
-    FLOW --> OPS[Tracking, Renewals, Analytics, Credentials]
+</details>
 
-    DOCS --> GEMINI[Gemini Models]
-    FORMS --> GEMINI
-    FORMS --> PLAYWRIGHT[Playwright Browser]
-    PLAYWRIGHT --> PORTALS[Government Portals]
+## Demo Routes
 
-    PROFILE --> DB[(Supabase Postgres)]
-    DOCS --> DB
-    DOCS --> STORAGE[(Supabase Storage)]
-    OPS --> DB
+These are the routes worth walking in a demo. Start with `/services` if you want the cleanest product tour.
 
-    DB --> WEB
-    OPS --> WAPI
-```
+| Route | Why it matters |
+| --- | --- |
+| `/` | Landing page and cross-channel positioning |
+| `/services` | Central hub for citizen services and official tools |
+| `/login` | Citizen OTP entry |
+| `/dashboard` | Citizen timeline, profile state, and activity |
+| `/profile` | Profile editor and completeness view |
+| `/documents` | Passkey-protected document vault |
+| `/ocr` | OCR extraction surface |
+| `/digilocker` | DigiLocker sync entry point |
+| `/eligibility` | Scheme screening |
+| `/pmkisan` | PM-KISAN flow |
+| `/nsp` and `/nsp/apply` | National Scholarship Portal demo |
+| `/ssp` and `/ssp/step-1` through `/ssp/step-5` | SSP guided portal replacement |
+| `/form-fill` | Generic saved-data-to-form surface |
+| `/renewals` | Scholarship renewal and document-expiry reminders |
+| `/bank-verify` | Demo payout-readiness verification |
+| `/track-search` | Application lookup |
+| `/wallet` and `/verify/[id]` | Credential display and QR proof verification |
+| `/official-login` | Official access gate |
+| `/gov-dashboard` | Officer overview |
+| `/gov-dashboard/disbursements` | Treasury and payout view |
+| `/gov-dashboard/fraud` | Fraud flag view |
+| `/gov-dashboard/regional` | Regional performance view |
+| `/admin` | Admin view |
 
-## Core Journey
+## Quick Start
 
-```mermaid
-flowchart TD
-    A[Citizen starts on WhatsApp or Web] --> B[Phone verification and login]
-    B --> C[Create or update citizen profile]
-    C --> D[Add documents through OCR, DigiLocker, or upload]
-    D --> E[Check eligibility or choose a scheme]
-    E --> F[Map saved data to the target form]
-    F --> G[Submit and persist application state]
-    G --> H[Track progress on the dashboard or in chat]
-    H --> I[Verify bank and disbursement details]
-    I --> J[View issued credentials and proof links]
-```
-
-## Main Capabilities
-
-| Area                   | What is in the repo                                                                                                     |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Authentication         | WhatsApp OTP flow for citizens, shared officials username/password login, JWT sessions, QR login handoff to the web app |
-| Citizen profile        | Persistent profile storage, completeness scoring, profile sync from OCR and document vault data                         |
-| Documents              | OCR extraction, validation, vault storage, signed access links, audit logging, passkey protection                       |
-| Form automation        | URL-based field analysis, Gemini field mapping, Playwright-backed form filling                                          |
-| Schemes and tracking   | Eligibility screeners, PM-KISAN flow, application timelines, live dashboard updates                                     |
-| Renewals and reminders | Renewal registration, deadline summaries, document-expiry reminders, WhatsApp-friendly reminder text                    |
-| Bank verification      | Demo NPCI/Sandbox-style account verification flow with hashed account storage and payout-readiness checks               |
-| Operations             | Admin analytics, fraud views, disbursement and regional dashboards                                                      |
-| Credentials            | Wallet pages, issuance endpoints, verification pages, blockchain/IPFS integration hooks                                 |
-
-## Demo-Ready Flows
-
-### 1. Citizen intake to dashboard
-
-Start on WhatsApp, verify by OTP, and hand the citizen off to the web app with a reusable profile and saved session.
-
-### 2. Documents to form-fill
-
-Import or upload documents, extract data through OCR or DigiLocker, then reuse the saved profile to prefill service forms.
-
-### 3. Submission to proof
-
-Track an application through search and dashboard views, then expose verification pages and wallet-style proof once the flow is complete.
-
-### 4. Reminders to payout readiness
-
-Show upcoming renewal deadlines, expiring citizen documents, and bank-account verification from one service surface instead of scattered tools.
-
-## Tech Stack
-
-| Layer                  | Technology                                               |
-| ---------------------- | -------------------------------------------------------- |
-| Backend API            | FastAPI, Pydantic, Uvicorn                               |
-| Workflow orchestration | LangGraph                                                |
-| AI services            | Google Gemini                                            |
-| Web frontend           | Next.js 16, React 19, TypeScript, Tailwind CSS 4         |
-| Data and storage       | Supabase Postgres, Supabase Storage                      |
-| Automation             | Playwright                                               |
-| Messaging              | WhatsApp Cloud API, Twilio fallback for SMS OTP delivery |
-| Live updates           | Supabase realtime and SSE endpoints                      |
-| Credentials            | Solidity contract, Polygon/IPFS integration hooks        |
-
-## Repository Map
-
-```text
-GovBot/
-├── gov_agent/          FastAPI app, routers, workflow logic, vault, OCR, automation agents
-├── gov_agent/docs/     Demo assets and reference materials used in the showcase flow
-├── frontend/           Next.js pages, dashboards, components, API relay routes
-├── frontend/lib/       Shared frontend helpers, content maps, and lightweight tests
-├── tests/              Backend tests and realtime utility coverage
-├── contracts/          Credential contract source
-├── schema.sql          Database schema for Supabase
-├── requirements.txt    Python dependencies
-├── Dockerfile          Container build
-└── README.md
-```
-
-Contributor workflow, verification, and shared agent-tooling setup now live in [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md).
-
-## Local Setup
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 20+
-- npm
-- Chromium for Playwright
-- A Supabase project
-- WhatsApp Cloud API credentials if you want the full messaging flow
-
-### 1. Clone the repo
+The repo has one supported workflow surface: use `make`.
 
 ```bash
 git clone https://github.com/shashank03-dev/GovBot.git
 cd GovBot
-```
-
-### 2. Add environment files
-
-Copy the tracked templates:
-
-```bash
 cp .env.example .env
 cp frontend/.env.local.example frontend/.env.local
+make setup
+make bootstrap
+make dev
 ```
 
-### Backend environment variables
+Local services:
 
-#### Required core variables
+| Service | URL |
+| --- | --- |
+| Backend | `http://127.0.0.1:8000` |
+| Health check | `http://127.0.0.1:8000/govbot/health` |
+| Frontend | `http://127.0.0.1:3000` |
 
-| Variable                   | Purpose                         |
-| -------------------------- | ------------------------------- |
-| `WHATSAPP_TOKEN`           | WhatsApp Cloud API access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID        |
-| `WHATSAPP_VERIFY_TOKEN`    | Webhook verification token      |
-| `SUPABASE_URL`             | Supabase project URL            |
-| `SUPABASE_KEY`             | Supabase service-role key       |
-| `GEMINI_API_KEY`           | Gemini API key                  |
-| `SECRET_KEY`               | JWT signing key                 |
+Port already busy?
 
-#### Recommended application variables
+```bash
+make dev BACKEND_PORT=8001 FRONTEND_PORT=3001
+```
 
-| Variable                         | Purpose                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| `GEMINI_GENERATION_MODELS`       | Optional comma-separated Gemini generation fallback order, default `gemini-2.5-flash,gemini-2.0-flash` |
-| `TEXT_LLM_PROVIDERS_JSON`        | Optional test-only text/chat pool configuration for Groq, Gemini, and Mistral routing |
-| `WHATSAPP_OTP_TEMPLATE_NAME`     | Approved WhatsApp template for OTP delivery                                           |
-| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code, default `en_US`                                               |
-| `FRONTEND_URL`                   | Public frontend URL used for redirects and profile links                              |
-| `BASE_URL`                       | Public backend or base application URL used in generated links                        |
-| `CORS_ORIGINS`                   | Comma-separated list of allowed frontend origins                                      |
-| `SUPABASE_DOCUMENTS_BUCKET`      | Storage bucket for uploaded documents                                                 |
-| `TWILIO_ACCOUNT_SID`             | Twilio account SID for SMS fallback                                                   |
-| `TWILIO_AUTH_TOKEN`              | Twilio auth token                                                                     |
-| `TWILIO_FROM_NUMBER`             | Twilio sender number                                                                  |
+Need only one side?
 
-#### Test-only text provider pool
+```bash
+make dev-backend
+make dev-frontend
+```
 
-`TEXT_LLM_PROVIDERS_JSON` is used only for the shared text/chat router. It does not change OCR, document/image analysis, or embedding paths, which still use their existing provider-specific code. For free-tier development, prefer Groq first, then Mistral, then Gemini so Gemini quota is saved for image OCR.
+> Important: FastAPI startup is intentionally non-mutating. If local cleanup or RAG ingestion is needed, run `make bootstrap` explicitly.
 
-Example:
+## Environment Guide
+
+<details open>
+<summary><strong>Core backend variables</strong></summary>
+
+| Variable | Purpose |
+| --- | --- |
+| `WHATSAPP_TOKEN` | WhatsApp Cloud API access token |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID |
+| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_KEY` | Supabase service-role key |
+| `GEMINI_API_KEY` | Gemini API key |
+| `SECRET_KEY` | JWT signing key |
+
+</details>
+
+<details>
+<summary><strong>Recommended application variables</strong></summary>
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_GENERATION_MODELS` | Optional Gemini fallback order, default `gemini-2.5-flash,gemini-2.0-flash` |
+| `TEXT_LLM_PROVIDERS_JSON` | Optional test-time text/chat pool for Groq, Gemini, and Mistral |
+| `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template for OTP delivery |
+| `WHATSAPP_OTP_TEMPLATE_LANGUAGE` | Template language code, default `en_US` |
+| `FRONTEND_URL` | Public frontend URL used for redirects and profile links |
+| `BASE_URL` | Public backend or app URL used in generated links |
+| `CORS_ORIGINS` | Comma-separated allowed frontend origins |
+| `SUPABASE_DOCUMENTS_BUCKET` | Storage bucket for uploaded documents |
+| `TWILIO_ACCOUNT_SID` | Twilio account SID for SMS fallback |
+| `TWILIO_AUTH_TOKEN` | Twilio auth token |
+| `TWILIO_FROM_NUMBER` | Twilio sender number |
+
+</details>
+
+<details>
+<summary><strong>Optional integration variables</strong></summary>
+
+| Variable | Purpose |
+| --- | --- |
+| `SETU_CLIENT_ID` | DigiLocker provider client ID |
+| `SETU_CLIENT_SECRET` | DigiLocker provider client secret |
+| `SETU_API_KEY` | DigiLocker provider API key |
+| `SETU_PRODUCT_ID` | DigiLocker provider product ID |
+| `SANDBOX_API_KEY` | Bank verification provider API key |
+| `SANDBOX_API_SECRET` | Bank verification provider API secret |
+| `SANDBOX_ACCESS_TOKEN` | Bank verification provider access token |
+| `ALCHEMY_API_KEY` | Blockchain RPC provider key |
+| `POLYGON_PRIVATE_KEY` | Wallet private key for credential issuance |
+| `POLYGON_RPC_URL` | Polygon RPC URL |
+| `CONTRACT_ADDRESS` | Deployed credential contract address |
+| `PINATA_API_KEY` | Pinata API key |
+| `PINATA_SECRET_KEY` | Pinata secret key |
+
+</details>
+
+<details>
+<summary><strong>Frontend variables</strong></summary>
+
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_API_URL` | Backend base URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_KEY` | Supabase client-side key used by frontend pages |
+
+</details>
+
+<details>
+<summary><strong>Official dashboard demo credential</strong></summary>
+
+```bash
+OFFICIAL_USERNAME=shared-official-username
+OFFICIAL_PASSWORD=shared-official-password
+```
+
+</details>
+
+<details>
+<summary><strong>Optional text provider pool example</strong></summary>
+
+`TEXT_LLM_PROVIDERS_JSON` only affects the shared text/chat router. OCR, image analysis, and embeddings keep their provider-specific paths.
 
 ```env
 TEXT_LLM_PROVIDERS_JSON=[{"name":"groq-1","provider":"groq","model":"llama-3.1-8b-instant","api_key_env":"GROQ_API_KEY_1","enabled":true,"weight":3},{"name":"mistral-1","provider":"mistral","model":"mistral-small-latest","api_key_env":"MISTRAL_API_KEY_1","enabled":true,"weight":2},{"name":"gemini-1","provider":"gemini","model":"gemini-2.5-flash","api_key_env":"GEMINI_API_KEY","enabled":true,"weight":1}]
@@ -248,90 +282,158 @@ MISTRAL_API_KEY_1=your_mistral_key
 GEMINI_API_KEY=your_gemini_key
 ```
 
-The router is tuned for testing rather than guaranteed production capacity:
+The router prefers healthy low-latency providers, does one fast failover for interactive requests, and uses a small exact-match in-memory cache for repeated test prompts.
 
-- it prefers the lowest-latency healthy provider
-- it does one fast failover for interactive requests
-- it uses a small exact-match in-memory cache to absorb repeated test prompts
+</details>
 
-#### Optional integration variables
+## Read The System
 
-| Variable               | Purpose                                    |
-| ---------------------- | ------------------------------------------ |
-| `SETU_CLIENT_ID`       | DigiLocker provider client ID              |
-| `SETU_CLIENT_SECRET`   | DigiLocker provider client secret          |
-| `SETU_API_KEY`         | DigiLocker provider API key                |
-| `SETU_PRODUCT_ID`      | DigiLocker provider product ID             |
-| `SANDBOX_API_KEY`      | Bank verification provider API key         |
-| `SANDBOX_API_SECRET`   | Bank verification provider API secret      |
-| `SANDBOX_ACCESS_TOKEN` | Bank verification provider access token    |
-| `ALCHEMY_API_KEY`      | Blockchain RPC provider key                |
-| `POLYGON_PRIVATE_KEY`  | Wallet private key for credential issuance |
-| `POLYGON_RPC_URL`      | Polygon RPC URL                            |
-| `CONTRACT_ADDRESS`     | Deployed credential contract address       |
-| `PINATA_API_KEY`       | Pinata API key                             |
-| `PINATA_SECRET_KEY`    | Pinata secret key                          |
-
-Official dashboards require a separate shared credential:
-
-```bash
-OFFICIAL_USERNAME=shared-official-username(add it yourself)
-OFFICIAL_PASSWORD=shared-official-password(add it yourself)
+```text
+GovBot/
+├── gov_agent/              FastAPI app, routers, workflow logic, OCR, vault, automation
+├── gov_agent/docs/         Demo GIFs, Remotion renders, and reference files
+├── frontend/               Next.js pages, components, relay API routes, Remotion source
+├── frontend/lib/           Shared frontend helpers and lightweight Node tests
+├── frontend/remotion/      Code-generated video composition for this README
+├── tests/                  Backend tests and realtime utility coverage
+├── contracts/              Credential contract source
+├── api/                    Deployment adapter entrypoint
+├── schema.sql              Supabase schema
+├── requirements.txt        Python dependencies
+├── Dockerfile              Container build
+├── Makefile                Supported workflow commands
+├── CONTRIBUTING.md         Canonical contributor workflow
+└── AGENTS.md               Shared agent-tooling guidance
 ```
 
-### Frontend environment variables
+<details open>
+<summary><strong>Backend files to know</strong></summary>
 
-| Variable                   | Purpose                                             |
-| -------------------------- | --------------------------------------------------- |
-| `NEXT_PUBLIC_API_URL`      | Backend base URL                                    |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL                                |
-| `NEXT_PUBLIC_SUPABASE_KEY` | Supabase client-side key used by the frontend pages |
+| File | Role |
+| --- | --- |
+| `gov_agent/main.py` | FastAPI app and router registration |
+| `gov_agent/flow_router.py` | WhatsApp conversation flow, passkey commands, dashboard links |
+| `gov_agent/profile_router.py` | Citizen profile storage and completeness tracking |
+| `gov_agent/document_vault.py` | Document ingestion, storage, masking, signed links, audit logic |
+| `gov_agent/form_scanner_router.py` | Field extraction, Gemini mapping, form auto-fill execution |
+| `gov_agent/renewal_intelligence.py` | Renewal and document-expiry summaries |
+| `gov_agent/npci_router.py` | Demo bank verification and payout-readiness helpers |
+| `gov_agent/credentials_router.py` | Credential issuance and verification endpoints |
+| `gov_agent/treasury_router.py` | Treasury and disbursement release flow |
+| `gov_agent/whatsapp_bridge_router.py` | WhatsApp bridge helpers for demo operations |
 
-### 3. Install project dependencies
+</details>
 
-```bash
-make setup
+<details>
+<summary><strong>Frontend files to know</strong></summary>
+
+| File | Role |
+| --- | --- |
+| `frontend/pages/index.tsx` | Landing page |
+| `frontend/pages/services.tsx` | Service navigation hub |
+| `frontend/pages/dashboard.tsx` | Citizen dashboard and realtime activity |
+| `frontend/pages/profile.tsx` | Profile editor and completeness view |
+| `frontend/pages/documents.tsx` | Document vault UI |
+| `frontend/pages/form-fill.tsx` | Generic form auto-fill surface |
+| `frontend/pages/renewals.tsx` | Renewal reminders and document expiry summaries |
+| `frontend/pages/bank-verify.tsx` | Guided bank verification |
+| `frontend/pages/gov-dashboard/index.tsx` | Officer dashboard overview |
+| `frontend/pages/api/[...path].ts` | Frontend API relay to the backend |
+| `frontend/remotion/GovBotShowcase.tsx` | README video composition |
+
+</details>
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Citizen[Citizen] --> WhatsApp[WhatsApp]
+    Citizen --> Web[Next.js Web App]
+    Officer[Officer] --> Web
+
+    WhatsApp --> Cloud[WhatsApp Cloud API]
+    Cloud --> API[FastAPI Backend]
+    Web --> Relay[Next.js API Relay]
+    Relay --> API
+
+    API --> Flow[Conversation And Workflow Layer]
+    Flow --> Profile[Profile And Session Services]
+    Flow --> Vault[OCR And Document Vault]
+    Flow --> Forms[Form Mapping And Automation]
+    Flow --> Ops[Tracking, Renewals, Analytics, Credentials]
+
+    Vault --> Gemini[Gemini]
+    Forms --> Gemini
+    Forms --> Browser[Playwright Browser]
+    Browser --> Portals[Government Portals]
+
+    Profile --> DB[(Supabase Postgres)]
+    Vault --> DB
+    Vault --> Storage[(Supabase Storage)]
+    Ops --> DB
+    Ops --> Chain[Polygon And IPFS Hooks]
+
+    DB --> Web
+    Ops --> Cloud
 ```
 
-### 4. Run explicit backend bootstrap
+```mermaid
+sequenceDiagram
+    participant C as Citizen
+    participant W as WhatsApp/Web
+    participant A as FastAPI
+    participant V as Document Vault
+    participant G as Gemini
+    participant S as Supabase
+    participant O as Officer Dashboard
 
-This is intentionally separate from app startup. Use it when you create a fresh workspace or need to rebuild local RAG state.
-
-```bash
-make bootstrap
+    C->>W: Starts a service request
+    W->>A: Sends verified session context
+    A->>S: Creates or restores profile
+    C->>W: Uploads or syncs documents
+    W->>V: Sends document payload
+    V->>G: Extracts fields
+    V->>S: Stores masked metadata and vault links
+    A->>S: Persists application state
+    O->>S: Reads operational dashboard data
+    W->>C: Shows status, reminders, and proof
 ```
 
-### 5. Start the backend
+## Data And Trust Model
+
+| Area | Approach |
+| --- | --- |
+| Sessions | OTP-backed citizen sessions and shared official auth for demo dashboards |
+| Documents | Vault storage, masking, signed access links, audit logs, passkey protection |
+| Profile reuse | OCR and vault data can prefill profile and form targets |
+| Realtime | Supabase realtime and server-sent event endpoints support live dashboard updates |
+| Payout readiness | Demo bank verification stores masked or hashed account details |
+| Credentials | Wallet and verification pages connect to blockchain/IPFS integration hooks |
+| Startup safety | Mutating cleanup and RAG ingestion stay out of FastAPI startup |
+
+## Remotion Video
+
+The animated README reel is code, not a hand-edited export.
+
+| Command | What it does |
+| --- | --- |
+| `npm run video` | Opens Remotion Studio from `frontend/remotion/index.ts` |
+| `npm run video:render` | Renders `gov_agent/docs/govbot-showcase.mp4` |
+| `npm run video:gif` | Renders the README-friendly `gov_agent/docs/govbot-showcase.gif` |
+
+Run these from `frontend/`:
 
 ```bash
-make dev-backend
+npm run video
+npm run video:render
+npm run video:gif
 ```
 
-### 6. Start the frontend
+The current render is 12 seconds long. The MP4 is 1280x720 at 30 FPS. The GIF is 640x360 at 10 FPS so it stays reasonable for GitHub.
 
-```bash
-make dev-frontend
-```
+## Verification
 
-You can also run both together:
-
-```bash
-make dev
-```
-
-If those ports are already in use, override them explicitly:
-
-```bash
-make dev BACKEND_PORT=8001 FRONTEND_PORT=3001
-```
-
-### 7. Expose the backend for webhook testing if needed
-
-```bash
-ngrok http 8000
-```
-
-## Useful Development Checks
+Use the narrow target first, then the full repo gate before claiming the repo is healthy.
 
 ```bash
 make test-backend
@@ -342,49 +444,56 @@ make build
 make check
 ```
 
-## Demo Routes Worth Showing
+For workflow or frontend changes, also run the app and verify the main demo routes in a browser:
 
-| Route                        | Why it matters                                                         |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `/`                          | Landing page with cross-channel positioning and service discovery      |
-| `/services`                  | Central hub for scholarships, tools, and official dashboards           |
-| `/official-login`            | Shared government-official sign-in before analytics or admin access    |
-| `/documents`                 | Passkey-protected vault for PAN, Aadhaar, certificates, and marksheets |
-| `/form-fill`                 | Generic form auto-fill surface driven by saved citizen data            |
-| `/renewals`                  | Combined document expiry and scholarship reminder experience           |
-| `/bank-verify`               | Demo-ready payout verification flow                                    |
-| `/track-search`              | Confirmation-based application search and tracking entry point         |
-| `/gov-dashboard`             | Officer-side analytics, disbursement, and fraud visibility             |
-| `/wallet` and `/verify/[id]` | Credential display and QR-style proof verification                     |
+```bash
+make dev
+```
 
-## Notable Backend Areas
+Then walk:
 
-- [`gov_agent/main.py`](gov_agent/main.py) wires the FastAPI app and router surface.
-- [`gov_agent/flow_router.py`](gov_agent/flow_router.py) handles the WhatsApp conversation flow, passkey commands, and dashboard link generation.
-- [`gov_agent/profile_router.py`](gov_agent/profile_router.py) manages persistent citizen profiles and completeness tracking.
-- [`gov_agent/document_vault.py`](gov_agent/document_vault.py) contains document ingestion, storage, masking, and signed-link logic.
-- [`gov_agent/form_scanner_router.py`](gov_agent/form_scanner_router.py) covers field extraction, Gemini mapping, and form auto-fill execution.
-- [`gov_agent/renewal_intelligence.py`](gov_agent/renewal_intelligence.py) builds reminder summaries from document expiries and renewal dates.
-- [`gov_agent/npci_router.py`](gov_agent/npci_router.py) exposes the demo bank-verification flow and payout-readiness helpers.
+```text
+/
+/services
+/official-login
+/documents
+/form-fill
+/renewals
+/bank-verify
+/track-search
+/gov-dashboard
+/admin
+```
 
-## Notable Frontend Areas
+## Deployment Notes
 
-- [`frontend/pages/dashboard.tsx`](frontend/pages/dashboard.tsx) is the main citizen dashboard with realtime activity.
-- [`frontend/pages/profile.tsx`](frontend/pages/profile.tsx) is the profile editor and completeness view.
-- [`frontend/pages/documents.tsx`](frontend/pages/documents.tsx) is the document vault UI.
-- [`frontend/pages/form-fill.tsx`](frontend/pages/form-fill.tsx) is the generic form auto-fill surface.
-- [`frontend/pages/services.tsx`](frontend/pages/services.tsx) acts as the cross-service navigation layer for citizens and officials.
-- [`frontend/pages/official-login.tsx`](frontend/pages/official-login.tsx) handles the shared official username/password sign-in flow.
-- [`frontend/pages/renewals.tsx`](frontend/pages/renewals.tsx) shows renewal reminders and document expiry summaries.
-- [`frontend/pages/bank-verify.tsx`](frontend/pages/bank-verify.tsx) presents the guided bank verification flow.
-- [`frontend/pages/gov-dashboard/index.tsx`](frontend/pages/gov-dashboard/index.tsx) starts the officer dashboard flow.
+The frontend is linked to the `govbot` Vercel project through `frontend/.vercel/project.json`.
+
+For a Vercel frontend plus public backend tunnel demo, set:
+
+| Location | Variables |
+| --- | --- |
+| Vercel frontend project | `BACKEND_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_FRONTEND_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_KEY` |
+| Backend `.env` | `FRONTEND_URL`, `BASE_URL`, `CORS_ORIGINS` |
+
+Keep browser-visible calls on the frontend origin by using `/api/*` proxy routes instead of hard-coding the backend host in pages or components.
 
 ## Contributing
 
-Use [`CONTRIBUTING.md`](CONTRIBUTING.md) for the canonical workflow and [`AGENTS.md`](AGENTS.md) for shared agent-tooling guidance.
+Use the repo workflow layer:
+
+```bash
+make setup
+make bootstrap
+make check
+```
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for the canonical workflow and [`AGENTS.md`](AGENTS.md) for shared agent-tooling expectations.
+
+Do not commit local secrets, `.next`, `node_modules`, `chroma_db`, personal IDE state, or generated one-off screenshots.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License.
 
 Copyright (c) 2026 Shashank Gowda.
