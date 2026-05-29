@@ -1,7 +1,14 @@
 export const LOCAL_BACKEND_FALLBACK = 'http://localhost:8000';
 export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning';
+export const DEFAULT_BACKEND_FETCH_TIMEOUT_MS = 20_000;
+export const LONG_BACKEND_FETCH_TIMEOUT_MS = 60_000;
 const BUNDLED_NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 const BUNDLED_NEXT_PUBLIC_RAILWAY_URL = process.env.NEXT_PUBLIC_RAILWAY_URL || '';
+
+function normalizeTimeoutMs(timeoutMs) {
+  const value = Number(timeoutMs ?? process.env.BACKEND_FETCH_TIMEOUT_MS ?? DEFAULT_BACKEND_FETCH_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_BACKEND_FETCH_TIMEOUT_MS;
+}
 
 export function resolveBackendBaseUrl(env = process.env) {
   const candidates = [
@@ -57,6 +64,59 @@ export function buildBackendRequestInit(init = {}, env = process.env) {
     ...init,
     headers: buildBackendRequestHeaders(init.headers, env),
   };
+}
+
+export function isBackendTimeoutError(error) {
+  return error?.name === 'TimeoutError';
+}
+
+export async function fetchBackend(input, init = {}, options = {}) {
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('fetch is not available in this runtime');
+  }
+
+  const controller = new AbortController();
+  const upstreamSignal = init.signal;
+  let upstreamAborted = false;
+
+  const abortFromUpstream = () => {
+    upstreamAborted = true;
+    controller.abort(upstreamSignal?.reason);
+  };
+
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) {
+      abortFromUpstream();
+    } else {
+      upstreamSignal.addEventListener('abort', abortFromUpstream, { once: true });
+    }
+  }
+
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Backend request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  try {
+    return await fetchImpl(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted && !upstreamAborted) {
+      const timeoutError = new Error(`Backend request timed out after ${timeoutMs}ms`);
+      timeoutError.name = 'TimeoutError';
+      timeoutError.cause = error;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (upstreamSignal) {
+      upstreamSignal.removeEventListener('abort', abortFromUpstream);
+    }
+  }
 }
 
 export function buildBackendUrl(path = '', env = process.env) {

@@ -54,6 +54,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+.playwright-mcp/
 *.tsbuildinfo
 .npm/
 .pnpm-store/
@@ -69,6 +70,9 @@ frontend/.vercel/
 
 # Screenshots and temporary files
 /tmp/screenshots/
+/*.jpg
+/*.jpeg
+/*.png
 *.swp
 *.swo
 *~

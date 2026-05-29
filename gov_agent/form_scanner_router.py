@@ -27,13 +27,36 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 SCREENSHOT_DIR = os.environ.get("SCREENSHOT_DIR", "/tmp/govbot_screenshots")
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 from gov_agent.db import supabase
-from gov_agent.gemini_client import generate_text, has_gemini_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def has_gemini_client() -> bool:
+    from gov_agent.gemini_client import has_gemini_client as _has_gemini_client
+
+    return _has_gemini_client()
+
+
+def generate_text(
+    contents: Any,
+    *,
+    response_mime_type: str | None = None,
+    temperature: float | None = None,
+) -> str:
+    from gov_agent.gemini_client import generate_text as _generate_text
+
+    return _generate_text(
+        contents,
+        response_mime_type=response_mime_type,
+        temperature=temperature,
+    )
+
+
+def _ensure_screenshot_dir() -> None:
+    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Citizen profile fields that the mapper can target
@@ -366,6 +389,7 @@ async def _playwright_fill(url: str, fill_values: Dict[str, Any], form_fields: L
             await browser.close()
 
             fname_ss = f"{uuid.uuid4().hex[:12]}.png"
+            _ensure_screenshot_dir()
             fpath = os.path.join(SCREENSHOT_DIR, fname_ss)
             with open(fpath, "wb") as f:
                 f.write(screenshot_bytes)

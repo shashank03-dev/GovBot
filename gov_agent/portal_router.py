@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Literal, Optional
 import importlib
-from gov_agent import ssp_agent, csss_agent, minority_agent
 from gov_agent.db import supabase
 from datetime import datetime, timezone
 
@@ -84,10 +83,13 @@ async def apply_portal(portal_id: str, body: PortalApplyRequest):
         data = body.model_dump()
 
         if portal_id == "ssp":
+            ssp_agent = importlib.import_module("gov_agent.ssp_agent")
             result = await ssp_agent.run_ssp_application(data)
         elif portal_id == "csss":
+            csss_agent = importlib.import_module("gov_agent.csss_agent")
             result = await csss_agent.run_csss_application(data)
         elif portal_id == "minority":
+            minority_agent = importlib.import_module("gov_agent.minority_agent")
             result = await minority_agent.run_minority_application(data)
         else:
             graph = importlib.import_module("gov_agent.graph")

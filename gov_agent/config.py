@@ -16,6 +16,7 @@ as configurable constants for the application.
 - GEMINI_VISION_VALIDATION: Optional flag for a second Gemini image check
   after OCR extraction. Disabled by default to conserve free-tier quota.
 - MISTRAL_API_KEY / MISTRAL_API_KEY_1: Optional Mistral key for Document AI OCR.
+- LOCAL_OCR_ENABLED: Prefer local OCR before remote model OCR. Enabled by default.
 
 Call ``validate_config()`` at application startup to assert all required vars
 are present. Importing this module never raises, making test/CI imports safe.
@@ -32,6 +33,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DEV_SECRET_KEY = "govbot-dev-secret-key-for-local-only"
 
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        logger.warning("Invalid float for %s; using %.2f", name, default)
+        return default
+
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
@@ -46,6 +55,8 @@ GEMINI_VISION_VALIDATION = os.getenv("GEMINI_VISION_VALIDATION", "false").lower(
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY") or os.getenv("MISTRAL_API_KEY_1", "")
 MISTRAL_OCR_MODEL = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest")
 MISTRAL_OCR_ENABLED = os.getenv("MISTRAL_OCR_ENABLED", "true").lower() == "true"
+LOCAL_OCR_ENABLED = os.getenv("LOCAL_OCR_ENABLED", "true").lower() == "true"
+LOCAL_OCR_TIMEOUT_SECONDS = _float_env("LOCAL_OCR_TIMEOUT_SECONDS", 4.0)
 SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
 OFFICIAL_USERNAME = os.getenv("OFFICIAL_USERNAME", "")
 OFFICIAL_PASSWORD = os.getenv("OFFICIAL_PASSWORD", "")
@@ -149,3 +160,5 @@ PINATA_SECRET_KEY = os.getenv("PINATA_SECRET_KEY", "")
 # Feature flags
 MOCK_DIGILOCKER = os.getenv("MOCK_DIGILOCKER", "true").lower() == "true"
 MOCK_NPCI = os.getenv("MOCK_NPCI", "true").lower() == "true"
+MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS = _float_env("MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS", 0.0)
+MOCK_NPCI_DELAY_SECONDS = _float_env("MOCK_NPCI_DELAY_SECONDS", 0.0)

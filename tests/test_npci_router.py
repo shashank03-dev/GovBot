@@ -18,9 +18,11 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
         supabase_mock = MagicMock()
         supabase_mock.table.side_effect = [existing_chain, insert_chain, update_chain]
 
+        sleep_mock = AsyncMock(return_value=None)
         with (
             patch.object(npci_router, "supabase", supabase_mock),
-            patch.object(npci_router.asyncio, "sleep", new=AsyncMock(return_value=None)),
+            patch.object(npci_router.asyncio, "sleep", new=sleep_mock),
+            patch.object(npci_router.config, "MOCK_NPCI_DELAY_SECONDS", 0),
         ):
             result = await npci_router.mock_bank_verify(
                 npci_router.BankVerifyRequest(
@@ -31,6 +33,7 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "success")
+        sleep_mock.assert_not_awaited()
         self.assertEqual(result.beneficiary_name, "SHASHANK GOWDA T")
         self.assertEqual(result.bank_name, "State Bank of India")
         self.assertEqual(result.branch, "HMT LAYOUT")
@@ -46,9 +49,11 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
         supabase_mock = MagicMock()
         supabase_mock.table.side_effect = [existing_chain, insert_chain, update_chain]
 
+        sleep_mock = AsyncMock(return_value=None)
         with (
             patch.object(npci_router, "supabase", supabase_mock),
-            patch.object(npci_router.asyncio, "sleep", new=AsyncMock(return_value=None)),
+            patch.object(npci_router.asyncio, "sleep", new=sleep_mock),
+            patch.object(npci_router.config, "MOCK_NPCI_DELAY_SECONDS", 0),
         ):
             result = await npci_router.mock_bank_verify(
                 npci_router.BankVerifyRequest(
@@ -59,6 +64,7 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "failed")
+        sleep_mock.assert_not_awaited()
         self.assertIn("does not match bank records", result.message.lower())
 
 

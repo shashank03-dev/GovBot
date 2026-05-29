@@ -24,6 +24,7 @@ export default function AnimatedCounter({
   const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true, margin: '-100px' });
   const hasAnimated = useRef(false);
+  const frameIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!isInView || hasAnimated.current) return;
@@ -43,13 +44,21 @@ export default function AnimatedCounter({
       setCount(currentValue);
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        frameIdRef.current = requestAnimationFrame(animate);
       } else {
         setCount(end);
+        frameIdRef.current = null;
       }
     };
 
-    requestAnimationFrame(animate);
+    frameIdRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (frameIdRef.current !== null) {
+        cancelAnimationFrame(frameIdRef.current);
+        frameIdRef.current = null;
+      }
+    };
   }, [isInView, end, duration]);
 
   const displayValue = formatter 

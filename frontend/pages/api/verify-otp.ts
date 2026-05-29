@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 import { setCitizenSessionCookie } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -10,7 +10,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { phone, code, otp, purpose } = req.body;
 
   try {
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl('/auth/verify-otp'),
       buildBackendRequestInit({
         method: 'POST',
@@ -31,7 +31,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       valid: true,
       phone: data.phone,
     });
-  } catch {
+  } catch (error) {
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ message: 'OTP verification timed out' });
+    }
     return res.status(500).json({ message: 'Internal Server Error' });
   }
 }

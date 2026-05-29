@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,7 +16,7 @@ export default async function handler(
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl('/api/bank/mock/verify'),
       buildBackendRequestInit({
         method: 'POST',
@@ -36,6 +36,9 @@ export default async function handler(
     });
   } catch (error) {
     console.error('Bank verification error:', error);
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ error: 'Bank verification timed out' });
+    }
     return res.status(500).json({ error: 'Failed to verify bank account' });
   }
 }

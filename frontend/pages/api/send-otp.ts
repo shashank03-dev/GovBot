@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -9,7 +9,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { phone, purpose } = req.body;
 
   try {
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl('/auth/send-otp'),
       buildBackendRequestInit({
         method: 'POST',
@@ -22,7 +22,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const data = await response.json();
     return res.status(response.status).json(data);
-  } catch {
+  } catch (error) {
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ message: 'OTP service timed out' });
+    }
     return res.status(500).json({ message: 'Internal Server Error' });
   }
 }

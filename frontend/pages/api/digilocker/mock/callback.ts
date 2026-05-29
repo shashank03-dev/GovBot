@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 export default async function handler(
@@ -25,7 +25,7 @@ export default async function handler(
       req,
       backendPath: '/api/digilocker/mock/callback',
     });
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl(backendPath),
       buildBackendRequestInit({
         headers: authorization ? { Authorization: authorization } : {},
@@ -40,6 +40,9 @@ export default async function handler(
     return res.status(200).json(data);
   } catch (error) {
     console.error('DigiLocker callback error:', error);
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ error: 'DigiLocker callback timed out' });
+    }
     return res.status(500).json({ error: 'DigiLocker callback failed' });
   }
 }

@@ -5,14 +5,12 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
 from gov_agent.config import GEMINI_API_KEY, load_text_provider_env_configs
 from gov_agent.providers.base import ProviderCallError, ProviderConfig
-from gov_agent.providers.gemini_provider import GeminiTextProvider
-from gov_agent.providers.groq_provider import GroqTextProvider
-from gov_agent.providers.mistral_provider import MistralTextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +37,7 @@ class LLMTextRouter:
         providers: list[ProviderConfig],
         provider_clients: dict[str, Any],
         cache_ttl_seconds: int = 15,
+        cache_max_entries: int = 256,
     ):
         self._providers = providers
         self._provider_clients = provider_clients
@@ -47,7 +46,8 @@ class LLMTextRouter:
             config.name: ProviderRuntimeState() for config in providers
         }
         self._cache_ttl_seconds = cache_ttl_seconds
-        self._cache: dict[str, tuple[float, str]] = {}
+        self._cache_max_entries = max(1, cache_max_entries)
+        self._cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
     async def generate_text(
         self,
@@ -67,7 +67,9 @@ class LLMTextRouter:
         )
         cached = self._cache.get(cache_key)
         now = time.monotonic()
+        self._prune_cache(now)
         if cached and cached[0] > now:
+            self._cache.move_to_end(cache_key)
             logger.info("text_router cache_hit=true task=%s", task)
             return cached[1]
 
@@ -94,6 +96,8 @@ class LLMTextRouter:
                     time.monotonic() + self._cache_ttl_seconds,
                     text,
                 )
+                self._cache.move_to_end(cache_key)
+                self._prune_cache(time.monotonic())
                 latency_ms = self._provider_state[provider.name].latency_ms
                 logger.info(
                     "text_router provider=%s model=%s latency_ms=%.2f cache_hit=false failover_count=%s",
@@ -121,6 +125,13 @@ class LLMTextRouter:
                 continue
             healthy.append(provider)
         return sorted(healthy, key=self._score_provider, reverse=True)
+
+    def _prune_cache(self, now: float) -> None:
+        expired_keys = [key for key, (expires_at, _) in self._cache.items() if expires_at <= now]
+        for key in expired_keys:
+            self._cache.pop(key, None)
+        while len(self._cache) > self._cache_max_entries:
+            self._cache.popitem(last=False)
 
     def _score_provider(self, provider: ProviderConfig) -> float:
         state = self._provider_state[provider.name]
@@ -218,16 +229,22 @@ def _build_provider_clients(providers: list[ProviderConfig]) -> dict[str, Any]:
     clients: dict[str, Any] = {}
     for provider in providers:
         if provider.provider == "gemini":
+            from gov_agent.providers.gemini_provider import GeminiTextProvider
+
             clients[provider.name] = GeminiTextProvider(
                 api_key=provider.api_key,
                 model=provider.model,
             )
         elif provider.provider == "groq":
+            from gov_agent.providers.groq_provider import GroqTextProvider
+
             clients[provider.name] = GroqTextProvider(
                 api_key=provider.api_key,
                 model=provider.model,
             )
         elif provider.provider == "mistral":
+            from gov_agent.providers.mistral_provider import MistralTextProvider
+
             clients[provider.name] = MistralTextProvider(
                 api_key=provider.api_key,
                 model=provider.model,

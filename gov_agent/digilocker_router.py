@@ -19,7 +19,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from gov_agent.config import FRONTEND_URL, MOCK_DIGILOCKER
+from gov_agent.config import FRONTEND_URL, MOCK_DIGILOCKER, MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS
 from gov_agent.db import supabase
 from gov_agent.demo_documents import load_demo_document_asset
 from gov_agent.digilocker_agent import (
@@ -142,6 +142,11 @@ def _utcnow_iso() -> str:
 def _require_mock_digilocker() -> None:
     if not MOCK_DIGILOCKER:
         raise HTTPException(status_code=503, detail="Mock DigiLocker is disabled")
+
+
+async def _sleep_for_mock_delay(seconds: float) -> None:
+    if seconds > 0:
+        await asyncio.sleep(seconds)
 
 
 def _hash_callback_token(token: str) -> str:
@@ -504,7 +509,7 @@ async def mock_callback(
     """Simulate a callback from DigiLocker and create a shared review session."""
     _require_mock_digilocker()
 
-    await asyncio.sleep(2)
+    await _sleep_for_mock_delay(MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS)
 
     result = supabase.table("digilocker_consents").select("*").eq("consent_id", consent_id).limit(1).execute()
     if not result.data:
@@ -526,8 +531,6 @@ async def mock_callback(
             "updated_at": _utcnow_iso(),
         }).eq("consent_id", consent_id).execute()
         return {"status": "rejected", "message": "User denied access"}
-
-    await asyncio.sleep(1)
 
     fetched_documents: list[dict[str, Any]] = []
     materialized_documents = [_materialize_mock_document(doc) for doc in MOCK_DOCUMENTS]

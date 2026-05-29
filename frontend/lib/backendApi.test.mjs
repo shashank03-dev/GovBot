@@ -131,6 +131,22 @@ test('buildBackendUrl joins normalized paths onto the resolved backend URL', () 
   assert.equal(buildBackendUrl('auth/send-otp', env), 'https://sun-nonlicentious-buzzingly.ngrok-free.dev/auth/send-otp');
 });
 
+test('fetchBackend aborts stalled backend calls on its deadline', async () => {
+  const backendApi = await import('./backendApi.mjs');
+
+  await assert.rejects(
+    () =>
+      backendApi.fetchBackend('https://backend.example/slow', {}, {
+        timeoutMs: 5,
+        fetchImpl: (_url, init = {}) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          }),
+      }),
+    { name: 'TimeoutError' },
+  );
+});
+
 test('default helper detects bundled NEXT_PUBLIC_API_URL in browser-like builds', () => {
   const moduleUrl = new URL('./backendApi.mjs', import.meta.url).href;
   const output = execFileSync(

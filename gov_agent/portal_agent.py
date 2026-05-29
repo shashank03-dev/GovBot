@@ -31,7 +31,7 @@ async def launch_browser() -> Tuple[Browser, Page]:
 
 async def download_media(media_id: str, save_path: str) -> str:
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"https://graph.facebook.com/v18.0/{media_id}",
             headers=headers
@@ -68,4 +68,3 @@ async def submit_and_capture(page: Page) -> dict:
         "status": "success",
         "confirmation_number": f"NSP2026{conf}"
     }
-

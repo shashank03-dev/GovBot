@@ -13,12 +13,14 @@ import httpx
 
 from gov_agent.config import (
     GEMINI_VISION_VALIDATION,
+    LOCAL_OCR_ENABLED,
+    LOCAL_OCR_TIMEOUT_SECONDS,
     SUPABASE_DOCUMENTS_BUCKET,
     WHATSAPP_TOKEN,
 )
 from gov_agent.db import supabase
 from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
-from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
+from gov_agent.local_ocr import extract_local_ocr_text
 from gov_agent.mistral_ocr_client import extract_ocr_markdown, has_mistral_ocr_client
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,37 @@ DOCUMENT_LABELS = {
     "marksheet": "Marksheet",
     CUSTOM_DOC_TYPE: "Custom Document",
 }
+
+
+def has_gemini_client() -> bool:
+    from gov_agent.gemini_client import has_gemini_client as _has_gemini_client
+
+    return _has_gemini_client()
+
+
+def inline_data_part(*, data_b64: str, mime_type: str) -> Any:
+    from gov_agent.gemini_client import inline_data_part as _inline_data_part
+
+    return _inline_data_part(data_b64=data_b64, mime_type=mime_type)
+
+
+def generate_text(
+    contents: Any,
+    *,
+    system_instruction: str | None = None,
+    response_mime_type: str | None = None,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+) -> str:
+    from gov_agent.gemini_client import generate_text as _generate_text
+
+    return _generate_text(
+        contents,
+        system_instruction=system_instruction,
+        response_mime_type=response_mime_type,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
 
 
 class DocumentVaultError(Exception):
@@ -905,6 +938,61 @@ def _extract_document_data_from_ocr_text(doc_type: str, text: str) -> dict[str, 
     return {}
 
 
+def _has_meaningful_ocr_extraction(doc_type: str, extracted: dict[str, Any]) -> bool:
+    def has_text(key: str) -> bool:
+        return bool(str(extracted.get(key) or "").strip())
+
+    def has_positive_number(key: str) -> bool:
+        value = _parse_number(extracted.get(key))
+        return value is not None and value > 0
+
+    if doc_type == "pan":
+        return has_text("pan_number")
+    if doc_type == "aadhaar":
+        return has_text("aadhaar_number")
+    if doc_type == "income_cert":
+        return has_text("certificate_number") or has_positive_number("annual_income")
+    if doc_type == "caste_cert":
+        return has_text("certificate_number") or has_text("caste") or has_text("category")
+    if doc_type == "marksheet":
+        return (
+            has_text("student_name")
+            or has_text("roll_number")
+            or has_text("register_number")
+            or has_positive_number("percentage")
+            or has_positive_number("marks_obtained")
+        )
+    return any(_filled(value) for value in extracted.values())
+
+
+def _extract_with_local_ocr(
+    doc_type: str,
+    *,
+    image_b64: str,
+    mime_type: Optional[str],
+) -> Optional[tuple[dict[str, Any], float, str]]:
+    if not LOCAL_OCR_ENABLED:
+        return None
+    try:
+        content = _decode_base64(image_b64)
+        local_result = extract_local_ocr_text(
+            content,
+            mime_type or "image/jpeg",
+            timeout_seconds=LOCAL_OCR_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.info("Local OCR failed for %s: %s", doc_type, exc)
+        return None
+    if not local_result:
+        return None
+
+    extracted = _extract_document_data_from_ocr_text(doc_type, local_result.text)
+    if not _has_meaningful_ocr_extraction(doc_type, extracted):
+        return None
+    confidence = 0.88 if local_result.engine == "pdfplumber" else 0.82
+    return extracted, confidence, local_result.text
+
+
 def _extract_with_mistral_ocr(
     doc_type: str,
     *,
@@ -922,7 +1010,7 @@ def _extract_with_mistral_ocr(
         logger.warning("Mistral OCR failed for %s: %s", doc_type, exc)
         return None
     extracted = _extract_document_data_from_ocr_text(doc_type, raw_text)
-    if not any(_filled(value) for value in extracted.values()):
+    if not _has_meaningful_ocr_extraction(doc_type, extracted):
         return None
     return extracted, 0.84, raw_text
 
@@ -966,6 +1054,10 @@ def extract_document_data(
         except Exception as exc:
             logger.warning("Gemini extraction failed for %s: %s", doc_type, exc)
             return _custom_extraction_fallback(label)
+
+    local_result = _extract_with_local_ocr(doc_type, image_b64=image_b64, mime_type=mime_type)
+    if local_result:
+        return local_result
 
     if not has_gemini_client() or mime_type == "application/pdf":
         mistral_result = _extract_with_mistral_ocr(doc_type, image_b64=image_b64, mime_type=mime_type)

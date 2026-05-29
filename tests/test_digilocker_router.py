@@ -161,10 +161,15 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
 
         callback_token = parse_qs(urlparse(consent.redirect_url).query)["callback_token"][0]
 
+        sleep_mock = AsyncMock(return_value=None)
         with patch.object(digilocker_router, "supabase", fake_supabase), patch.object(
             digilocker_router,
             "ingest_document",
             new=AsyncMock(return_value={"status": "ready"}),
+        ), patch.object(digilocker_router.asyncio, "sleep", new=sleep_mock), patch.object(
+            digilocker_router,
+            "MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS",
+            0,
         ):
             result = await digilocker_router.mock_callback(
                 consent.consent_id,
@@ -173,6 +178,7 @@ class DigiLockerRouterTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result["status"], "success")
+        sleep_mock.assert_not_awaited()
         self.assertEqual(result["documents_fetched"], 2)
         self.assertIn("review_session_id", result)
         self.assertIn("review_url", result)

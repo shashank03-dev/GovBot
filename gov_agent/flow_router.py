@@ -1,12 +1,11 @@
 import re
 import uuid
 import logging
+import importlib
 from urllib.parse import quote
 from typing import Any
 from gov_agent.models import WhatsAppIncoming
 from gov_agent.db import supabase
-from gov_agent import rag_engine
-from gov_agent import graph
 from gov_agent import renewal_intelligence
 from gov_agent import whatsapp_document_manager as wdm
 from gov_agent.config import FRONTEND_URL
@@ -26,6 +25,19 @@ from gov_agent.document_vault import (
 from gov_agent.llm_text_router import generate_text_reply
 
 logger = logging.getLogger(__name__)
+
+
+class _LazyModuleProxy:
+    def __init__(self, module_name: str):
+        self._module_name = module_name
+
+    def __getattr__(self, name: str) -> Any:
+        module = importlib.import_module(self._module_name)
+        return getattr(module, name)
+
+
+rag_engine = _LazyModuleProxy("gov_agent.rag_engine")
+graph = _LazyModuleProxy("gov_agent.graph")
 
 _LANG_NAMES = {
     "hi": "Hindi",

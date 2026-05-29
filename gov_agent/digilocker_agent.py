@@ -12,9 +12,26 @@ from datetime import datetime, timezone
 from typing import Any
 from gov_agent.db import supabase
 from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
-from gov_agent.gemini_client import generate_text, has_gemini_client, inline_data_part
 
 logger = logging.getLogger(__name__)
+
+
+def has_gemini_client() -> bool:
+    from gov_agent.gemini_client import has_gemini_client as _has_gemini_client
+
+    return _has_gemini_client()
+
+
+def inline_data_part(*, data_b64: str, mime_type: str) -> Any:
+    from gov_agent.gemini_client import inline_data_part as _inline_data_part
+
+    return _inline_data_part(data_b64=data_b64, mime_type=mime_type)
+
+
+def generate_text(contents: Any) -> str:
+    from gov_agent.gemini_client import generate_text as _generate_text
+
+    return _generate_text(contents)
 
 
 def get_documents_for_phone(phone: str) -> list:

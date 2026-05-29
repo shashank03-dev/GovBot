@@ -16,6 +16,7 @@ import hashlib
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from gov_agent import config
 from gov_agent.db import supabase
 from gov_agent.user_auth import optional_jwt as _optional_jwt, require_phone_access
 
@@ -94,6 +95,11 @@ def _get_last4(account_number: str) -> str:
     return account_number[-4:] if len(account_number) >= 4 else account_number
 
 
+async def _sleep_for_mock_delay(seconds: float) -> None:
+    if seconds > 0:
+        await asyncio.sleep(seconds)
+
+
 @router.post("/bank/mock/verify", response_model=BankVerifyResponse)
 async def mock_bank_verify(body: BankVerifyRequest):
     """Mock bank account verification with penny drop simulation."""
@@ -144,8 +150,7 @@ async def mock_bank_verify(body: BankVerifyRequest):
         "attempted_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
     
-    # Simulate penny drop processing
-    await asyncio.sleep(3)  # 3 second delay
+    await _sleep_for_mock_delay(config.MOCK_NPCI_DELAY_SECONDS)
     
     # Check mock database
     mock_key = f"{body.ifsc_code}_{body.account_number}"

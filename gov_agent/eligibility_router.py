@@ -3,7 +3,6 @@ from datetime import datetime
 
 from fastapi import APIRouter
 from gov_agent.db import supabase
-from gov_agent import rag_engine
 from gov_agent.models import EligibilityRequest, EligibilityResult
 
 logger = logging.getLogger(__name__)
@@ -59,6 +58,8 @@ async def screen_eligibility(req: EligibilityRequest):
     result = _evaluate_rules(req)
 
     try:
+        from gov_agent import rag_engine
+
         rag_answer = await rag_engine.query_eligibility(
             f"income {req.income} caste {req.caste} course {req.course_level} marks {req.marks_pct}"
         )

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import types
 import unittest
 from unittest.mock import patch
@@ -166,24 +167,58 @@ class LLMTextRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first, second), ("cached", "cached"))
         self.assertEqual(client.calls, 1)
 
+    async def test_cache_is_bounded_and_evicts_oldest_prompts(self):
+        client = _FakeProvider(text="cached")
+        router = LLMTextRouter(
+            providers=[
+                ProviderConfig(
+                    name="groq-1",
+                    provider="groq",
+                    model="llama-3.1-8b-instant",
+                    api_key="groq-key",
+                    enabled=True,
+                    weight=3,
+                )
+            ],
+            provider_clients={"groq-1": client},
+            cache_ttl_seconds=30,
+            cache_max_entries=2,
+        )
+
+        await router.generate_text("first prompt")
+        await router.generate_text("second prompt")
+        await router.generate_text("third prompt")
+        await router.generate_text("first prompt")
+
+        self.assertEqual(client.calls, 4)
+        self.assertLessEqual(len(router._cache), 2)
+
 
 class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
-    async def test_passes_system_instruction_to_model_constructor(self):
+    def test_uses_current_google_genai_sdk_not_deprecated_generativeai(self):
+        source = Path("gov_agent/providers/gemini_provider.py").read_text()
+
+        self.assertIn("from google import genai", source)
+        self.assertNotIn("google.generativeai", source)
+
+    async def test_passes_system_instruction_to_generate_content_config(self):
         recorded = {}
 
-        class _FakeModel:
-            def __init__(self, model_name, system_instruction=None):
-                recorded["model_name"] = model_name
-                recorded["system_instruction"] = system_instruction
-
-            def generate_content(self, prompt, generation_config=None):
-                recorded["prompt"] = prompt
-                recorded["generation_config"] = generation_config
+        class _FakeModels:
+            def generate_content(self, *, model, contents, config=None):
+                recorded["model_name"] = model
+                recorded["prompt"] = contents
+                recorded["config"] = config
                 return types.SimpleNamespace(text="translated")
 
+        class _FakeClient:
+            def __init__(self, *, api_key):
+                recorded["api_key"] = api_key
+                self.models = _FakeModels()
+
         with patch(
-            "gov_agent.providers.gemini_provider.genai.GenerativeModel",
-            new=_FakeModel,
+            "gov_agent.providers.gemini_provider.genai.Client",
+            new=_FakeClient,
         ):
             provider = GeminiTextProvider(api_key="gemini-key", model="gemini-2.0-flash")
             text = await provider.generate_text(
@@ -194,7 +229,9 @@ class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(text, "translated")
+        self.assertEqual(recorded["api_key"], "gemini-key")
         self.assertEqual(recorded["model_name"], "gemini-2.0-flash")
-        self.assertEqual(recorded["system_instruction"], "Translate politely")
         self.assertEqual(recorded["prompt"], "Hello")
-        self.assertEqual(recorded["generation_config"]["temperature"], 0.2)
+        self.assertEqual(recorded["config"].system_instruction, "Translate politely")
+        self.assertEqual(recorded["config"].temperature, 0.2)
+        self.assertEqual(recorded["config"].max_output_tokens, 64)

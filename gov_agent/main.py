@@ -179,9 +179,7 @@ app.include_router(
 @asynccontextmanager
 async def lifespan(app):
     from gov_agent.config import validate_config
-    from gov_agent.llm_text_router import initialize_text_router
     validate_config()
-    initialize_text_router()
     yield
 
 app.router.lifespan_context = lifespan

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 import { setOfficialSessionCookie } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -9,7 +9,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl('/auth/official/login'),
       buildBackendRequestInit({
         method: 'POST',
@@ -28,7 +28,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       username: payload.username,
       role: payload.role,
     });
-  } catch {
+  } catch (error) {
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ error: 'Official login timed out' });
+    }
     return res.status(500).json({ error: 'Official login failed' });
   }
 }

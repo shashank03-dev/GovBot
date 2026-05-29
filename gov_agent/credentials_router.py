@@ -28,13 +28,28 @@ from gov_agent.config import BASE_URL
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Web3 imports (optional - will gracefully degrade if not installed)
-try:
-    from web3 import Web3
+WEB3_AVAILABLE: bool | None = None
+_WEB3_CLASS = None
+
+
+def _get_web3_class():
+    global WEB3_AVAILABLE, _WEB3_CLASS
+
+    if WEB3_AVAILABLE is False:
+        return None
+    if _WEB3_CLASS is not None:
+        return _WEB3_CLASS
+
+    try:
+        from web3 import Web3
+    except ImportError:
+        WEB3_AVAILABLE = False
+        logger.warning("Web3 not installed. Blockchain features will be mocked.")
+        return None
+
     WEB3_AVAILABLE = True
-except ImportError:
-    WEB3_AVAILABLE = False
-    logger.warning("Web3 not installed. Blockchain features will be mocked.")
+    _WEB3_CLASS = Web3
+    return Web3
 
 # Contract ABI (simplified - only functions we need)
 CONTRACT_ABI = [
@@ -157,7 +172,7 @@ async def _upload_to_ipfs(credential_data: dict) -> str | None:
         
         import httpx
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 "https://api.pinata.cloud/pinning/pinJSONToIPFS",
                 headers={
@@ -171,7 +186,6 @@ async def _upload_to_ipfs(credential_data: dict) -> str | None:
                     },
                     "pinataContent": credential_data,
                 },
-                timeout=30.0,
             )
             
             if response.status_code == 200:
@@ -239,7 +253,8 @@ async def issue_blockchain_credential(body: IssueCredentialRequest):
     # Issue on blockchain (if Web3 available)
     tx_hash = "0x" + "0" * 64  # Mock transaction hash
 
-    if WEB3_AVAILABLE:
+    Web3 = _get_web3_class()
+    if Web3 is not None:
         try:
             from gov_agent.config import POLYGON_RPC_URL, POLYGON_PRIVATE_KEY, CONTRACT_ADDRESS
             
@@ -335,7 +350,8 @@ async def verify_blockchain_credential(credential_id: str):
     cred = result.data[0]
     
     # Verify on blockchain if available
-    if WEB3_AVAILABLE:
+    Web3 = _get_web3_class()
+    if Web3 is not None:
         try:
             from gov_agent.config import POLYGON_RPC_URL, CONTRACT_ADDRESS
             

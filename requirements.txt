@@ -5,6 +5,7 @@ langgraph
 langchain-core
 chromadb
 pdfplumber
+pytesseract
 httpx
 python-dotenv
 supabase

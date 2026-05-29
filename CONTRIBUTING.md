@@ -47,6 +47,7 @@ For demo deployments where Vercel serves the frontend and ngrok exposes the back
 ## Quality Bar
 
 - CI runs `make setup` and `make check` on every push and pull request.
+- CI installs the system `tesseract-ocr` runtime before dependency setup so local OCR checks exercise the same binary expected by production containers.
 - Do not bypass failing lint, type, or build errors to get a green build.
 - FastAPI startup is intentionally non-mutating now. If local document cleanup or RAG ingestion is needed, run `make bootstrap` explicitly.
 

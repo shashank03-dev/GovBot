@@ -210,6 +210,88 @@ class SensitiveReplyTests(unittest.TestCase):
 
 
 class DemoFallbackExtractionTests(unittest.TestCase):
+    def test_extracts_aadhaar_from_local_ocr_before_remote_ocr(self):
+        ocr_text = """
+        Name: Asha Singh
+        DOB: 1998-05-15
+        Female
+        Aadhaar 1234 5678 9012
+        Address: Bengaluru, Karnataka
+        """
+
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=False),
+            patch("gov_agent.document_vault.extract_local_ocr_text") as local_ocr_mock,
+            patch("gov_agent.document_vault.extract_ocr_markdown") as remote_ocr_mock,
+        ):
+            local_ocr_mock.return_value.text = ocr_text
+            local_ocr_mock.return_value.engine = "tesseract"
+
+            aadhaar, confidence, raw_text = extract_document_data(
+                "aadhaar",
+                image_b64=base64.b64encode(b"\xff\xd8\xffdemo").decode("ascii"),
+                mime_type="image/jpeg",
+            )
+
+        remote_ocr_mock.assert_not_called()
+        self.assertGreaterEqual(confidence, 0.8)
+        self.assertEqual(raw_text, ocr_text)
+        self.assertEqual(aadhaar["aadhaar_number"], "1234 5678 9012")
+        self.assertEqual(aadhaar["full_name"], "Asha Singh")
+        self.assertEqual(aadhaar["dob"], "1998-05-15")
+
+    def test_local_ocr_short_circuits_gemini_when_available(self):
+        ocr_text = """
+        Name: Asha Singh
+        DOB: 1998-05-15
+        Female
+        Aadhaar 1234 5678 9012
+        """
+
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=True),
+            patch("gov_agent.document_vault.extract_local_ocr_text") as local_ocr_mock,
+            patch("gov_agent.document_vault.generate_text") as generate_text_mock,
+        ):
+            local_ocr_mock.return_value.text = ocr_text
+            local_ocr_mock.return_value.engine = "tesseract"
+
+            aadhaar, confidence, _ = extract_document_data(
+                "aadhaar",
+                image_b64=base64.b64encode(b"\xff\xd8\xffdemo").decode("ascii"),
+                mime_type="image/jpeg",
+            )
+
+        generate_text_mock.assert_not_called()
+        self.assertGreaterEqual(confidence, 0.8)
+        self.assertEqual(aadhaar["aadhaar_number"], "1234 5678 9012")
+
+    def test_sparse_local_ocr_falls_through_to_remote_ocr(self):
+        with (
+            patch("gov_agent.document_vault.has_gemini_client", return_value=False),
+            patch("gov_agent.document_vault.extract_local_ocr_text") as local_ocr_mock,
+            patch("gov_agent.document_vault.extract_ocr_markdown") as remote_ocr_mock,
+        ):
+            local_ocr_mock.return_value.text = "unreadable certificate scan"
+            local_ocr_mock.return_value.engine = "tesseract"
+            remote_ocr_mock.return_value = """
+            Certificate No: RD1218190096391
+            Date: 2026-01-01
+            Family Annual Income Rs. 98,000
+            """
+
+            income, confidence, raw_text = extract_document_data(
+                "income_cert",
+                image_b64=base64.b64encode(b"\xff\xd8\xffdemo").decode("ascii"),
+                mime_type="image/jpeg",
+            )
+
+        remote_ocr_mock.assert_called_once()
+        self.assertEqual(confidence, 0.84)
+        self.assertIn("RD1218190096391", raw_text)
+        self.assertEqual(income["certificate_number"], "RD1218190096391")
+        self.assertEqual(income["annual_income"], 98000)
+
     def test_extracts_2026_income_and_caste_certificate_fallback_values(self):
         with patch("gov_agent.document_vault.has_gemini_client", return_value=False):
             income, income_confidence, _ = extract_document_data(

@@ -9,6 +9,7 @@ class MainLifespanTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("gov_agent.config.validate_config") as validate_config_mock,
+            patch("gov_agent.llm_text_router.initialize_text_router") as initialize_text_router_mock,
             patch("gov_agent.document_vault.cleanup_document_duplicates") as cleanup_mock,
             patch("gov_agent.rag_engine.ingest_document", new=AsyncMock()) as ingest_mock,
         ):
@@ -16,6 +17,7 @@ class MainLifespanTests(unittest.IsolatedAsyncioTestCase):
                 pass
 
         validate_config_mock.assert_called_once_with()
+        initialize_text_router_mock.assert_not_called()
         cleanup_mock.assert_not_called()
         ingest_mock.assert_not_awaited()
 

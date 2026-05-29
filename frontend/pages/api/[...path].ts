@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
+  DEFAULT_BACKEND_FETCH_TIMEOUT_MS,
+  LONG_BACKEND_FETCH_TIMEOUT_MS,
   buildBackendUrl,
   buildBackendRequestHeaders,
+  fetchBackend,
+  isBackendTimeoutError,
   resolveBackendProxyPath,
 } from '@/lib/backendApi.mjs';
 import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
@@ -89,6 +93,16 @@ function buildProxyHeaders(req: NextApiRequest, backendPath: string) {
   return proxyHeaders;
 }
 
+function resolveProxyTimeoutMs(backendPath: string) {
+  return (
+    backendPath.startsWith('/documents/') ||
+    backendPath.startsWith('/form-scanner/') ||
+    backendPath.startsWith('/ocr/')
+  )
+    ? LONG_BACKEND_FETCH_TIMEOUT_MS
+    : DEFAULT_BACKEND_FETCH_TIMEOUT_MS;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const target = buildProxyTarget(req);
   if (!target) {
@@ -106,7 +120,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       requestInit.duplex = 'half';
     }
 
-    const response = await fetch(target.targetUrl, requestInit);
+    const response = await fetchBackend(target.targetUrl, requestInit, {
+      timeoutMs: resolveProxyTimeoutMs(target.backendPath),
+    });
 
     for (const [key, value] of response.headers.entries()) {
       if (RESPONSE_HEADER_SKIP_LIST.has(key.toLowerCase())) {
@@ -119,6 +135,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(response.status).send(body);
   } catch (error) {
     console.error('Backend catch-all proxy error:', error);
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ error: 'Backend request timed out' });
+    }
     return res.status(502).json({ error: 'Backend proxy error' });
   }
 }

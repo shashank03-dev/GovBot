@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 from datetime import timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -189,6 +190,14 @@ def _build_fake_supabase_for_send():
     return fake_supabase, otp_table, rate_table
 
 
+class _RecordingBackgroundTasks:
+    def __init__(self):
+        self.tasks = []
+
+    def add_task(self, func, *args, **kwargs):
+        self.tasks.append((func, args, kwargs))
+
+
 class VerifyOtpTests(unittest.TestCase):
     def test_coerce_utc_datetime_parses_supabase_trimmed_fractional_timestamp(self):
         parsed = auth_router._coerce_utc_datetime("2026-05-27T18:32:10.58782+00:00")
@@ -243,6 +252,33 @@ class VerifyOtpTests(unittest.TestCase):
         self.assertIn("whatsapp", args[1].lower())
         self.assertIn("web", args[1].lower())
         self.assertIn("connected", args[1].lower())
+
+    def test_verify_otp_schedules_login_confirmation_without_awaiting_send(self):
+        fake_supabase = _build_fake_supabase_for_verify()
+        background_tasks = _RecordingBackgroundTasks()
+
+        with (
+            patch.object(auth_router, "supabase", fake_supabase),
+            patch.object(
+                auth_router.whatsapp_sender,
+                "send_message",
+                new=AsyncMock(return_value=True),
+            ) as send_message,
+        ):
+            result = asyncio.run(
+                auth_router.verify_otp(
+                    auth_router.VerifyOTPRequest(phone="9876543210", code="123456"),
+                    background_tasks=background_tasks,
+                )
+            )
+
+        self.assertTrue(result["valid"])
+        send_message.assert_not_awaited()
+        self.assertEqual(len(background_tasks.tasks), 1)
+        task_func, task_args, task_kwargs = background_tasks.tasks[0]
+        self.assertIs(task_func, auth_router._send_web_connection_confirmation)
+        self.assertEqual(task_args, ("919876543210",))
+        self.assertEqual(task_kwargs, {})
 
     def test_verify_otp_fails_closed_when_verify_rate_limit_table_is_missing(self):
         client = _build_client()

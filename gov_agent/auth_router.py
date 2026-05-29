@@ -13,7 +13,7 @@ import re
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from gov_agent.db import supabase
@@ -367,7 +367,7 @@ async def send_otp(body: SendOTPRequest):
 # ── POST /verify-otp ─────────────────────────────────────────────────────────
 
 @router.post("/verify-otp")
-async def verify_otp(body: VerifyOTPRequest):
+async def verify_otp(body: VerifyOTPRequest, background_tasks: BackgroundTasks):
     """Validate an OTP and return a signed JWT on success."""
     if not body.phone or not body.code:
         raise HTTPException(status_code=400, detail="phone and code are required")
@@ -398,7 +398,7 @@ async def verify_otp(body: VerifyOTPRequest):
 
     logger.info("JWT issued for %s", phone)
     if purpose == _OTP_PURPOSE_LOGIN:
-        await _send_web_connection_confirmation(phone)
+        background_tasks.add_task(_send_web_connection_confirmation, phone)
     return {"valid": True, "token": token, "phone": phone, "purpose": purpose}
 
 

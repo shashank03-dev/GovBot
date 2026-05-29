@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 export default async function handler(
@@ -23,7 +23,7 @@ export default async function handler(
       backendPath,
       authorizationHeader: req.headers.authorization || '',
     });
-    const response = await fetch(
+    const response = await fetchBackend(
       buildBackendUrl(backendPath),
       buildBackendRequestInit({
         method: 'POST',
@@ -39,6 +39,9 @@ export default async function handler(
     return res.status(response.status).json(data);
   } catch (error) {
     console.error('Bank ready error:', error);
+    if (isBackendTimeoutError(error)) {
+      return res.status(504).json({ error: 'Bank readiness request timed out' });
+    }
     return res.status(500).json({ error: 'Failed to mark bank as ready for disbursement' });
   }
 }

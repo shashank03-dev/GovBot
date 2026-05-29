@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import Link from 'next/link';
@@ -54,9 +54,17 @@ export default function BankVerifyPage() {
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [releaseStatus, setReleaseStatus] = useState<BeneficiaryReleaseStatus | null>(null);
+  const stageTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const router = useRouter();
 
   useEffect(() => { setMounted(true); }, []);
+
+  const clearStageTimeouts = useCallback(() => {
+    stageTimeoutsRef.current.forEach((timer) => clearTimeout(timer));
+    stageTimeoutsRef.current = [];
+  }, []);
+
+  useEffect(() => clearStageTimeouts, [clearStageTimeouts]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -96,6 +104,7 @@ export default function BankVerifyPage() {
     setStep('verifying');
     setVerifyStage(0);
     setLoading(true);
+    clearStageTimeouts();
 
     // Simulate progressive verification stages
     const stages = [
@@ -103,9 +112,7 @@ export default function BankVerifyPage() {
       { delay: 1200, stage: 2 },
       { delay: 1800, stage: 3 },
     ];
-    for (const s of stages) {
-      setTimeout(() => setVerifyStage(s.stage), s.delay);
-    }
+    stageTimeoutsRef.current = stages.map((s) => setTimeout(() => setVerifyStage(s.stage), s.delay));
 
     try {
       const res = await fetch('/api/bank/verify', {
@@ -136,6 +143,7 @@ export default function BankVerifyPage() {
   }
 
   function resetForm() {
+    clearStageTimeouts();
     setStep('form');
     setResult(null);
     setReadyResult(null);

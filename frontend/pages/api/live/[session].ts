@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { buildBackendRequestInit, buildBackendUrl } from '@/lib/backendApi.mjs';
+import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeoutError } from '@/lib/backendApi.mjs';
 import { resolveSessionAuthorizationHeader } from '@/lib/authSession.mjs';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -10,7 +10,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const backendPath = `/live/${session}`;
       const authorization = resolveSessionAuthorizationHeader({ req, backendPath });
-      const response = await fetch(
+      const response = await fetchBackend(
         buildBackendUrl(backendPath),
         buildBackendRequestInit({
           headers: authorization ? { Authorization: authorization } : {},
@@ -18,7 +18,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
       const data = await response.json();
       return res.status(response.status).json(data);
-    } catch {
+    } catch (error) {
+      if (isBackendTimeoutError(error)) {
+        return res.status(504).json({ error: 'Live session request timed out' });
+      }
       return res.status(500).json({ error: 'Live session error' });
     }
   }
@@ -27,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const backendPath = `/live/${session}/update`;
       const authorization = resolveSessionAuthorizationHeader({ req, backendPath });
-      const response = await fetch(
+      const response = await fetchBackend(
         buildBackendUrl(backendPath),
         buildBackendRequestInit({
           method: 'POST',
@@ -40,7 +43,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
       const data = await response.json();
       return res.status(response.status).json(data);
-    } catch {
+    } catch (error) {
+      if (isBackendTimeoutError(error)) {
+        return res.status(504).json({ error: 'Live session update timed out' });
+      }
       return res.status(500).json({ error: 'Live session update error' });
     }
   }

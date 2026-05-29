@@ -222,7 +222,10 @@ async def simulate_disbursement_credit(disbursement_id: str):
     
     # Simulate processing delay
     import asyncio
-    await asyncio.sleep(2)
+    from gov_agent.config import MOCK_NPCI_DELAY_SECONDS
+
+    if MOCK_NPCI_DELAY_SECONDS > 0:
+        await asyncio.sleep(MOCK_NPCI_DELAY_SECONDS)
     
     # Update to credited
     txn_id = f"NPCI{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"

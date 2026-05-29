@@ -1,17 +1,48 @@
 
-import chromadb
-import pdfplumber
-from gov_agent.gemini_client import embed_text, generate_text
+from typing import Any
 
 
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(
-    name="scheme_rules",
-    metadata={"hnsw:space": "cosine"}
-)
+_chroma_client: Any | None = None
+_collection: Any | None = None
+
+
+def _get_collection() -> Any:
+    global _chroma_client, _collection
+
+    if _collection is None:
+        import chromadb
+
+        _chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        _collection = _chroma_client.get_or_create_collection(
+            name="scheme_rules",
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _collection
+
+
+class _CollectionProxy:
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_get_collection(), name)
+
+
+collection = _CollectionProxy()
+
+
+def embed_text(content: Any, *, task_type: str | None = None) -> list[float]:
+    from gov_agent.gemini_client import embed_text as _embed_text
+
+    return _embed_text(content, task_type=task_type)
+
+
+def generate_text(contents: Any) -> str:
+    from gov_agent.gemini_client import generate_text as _generate_text
+
+    return _generate_text(contents)
 
 
 async def ingest_document(pdf_path: str) -> int:
+    import pdfplumber
+
     with pdfplumber.open(pdf_path) as pdf:
         full_text = ""
         for page in pdf.pages:

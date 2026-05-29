@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from supabase import create_client
-
 from gov_agent import config
+
+
+def create_client(url: str, key: str):
+    from supabase import create_client as _create_client
+
+    return _create_client(url, key)
 
 
 class LazySupabaseClient:
