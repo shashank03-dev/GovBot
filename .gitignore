@@ -98,3 +98,6 @@ Thumbs.db
 docs/superpowers/
 skills-lock.json
 .vercel
+
+# Local Render secret env (never commit)
+deploy/render.env.local

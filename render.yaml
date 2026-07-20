@@ -1,0 +1,86 @@
+# Render Blueprint for the GovBot FastAPI backend.
+# Deploy: Render Dashboard -> New -> Blueprint -> connect the GovBot repo -> Apply.
+# Non-secret config is set here. Secret values are pasted in the dashboard
+# (see deploy/render.env.local, which is git-ignored) or added under Environment.
+services:
+  - name: govbot-backend
+    type: web
+    runtime: docker
+    plan: free
+    region: singapore            # closest Render region to India
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /govbot/health
+    autoDeploy: true
+    envVars:
+      # --- Public URLs (frontend stays on Vercel) ---
+      - key: FRONTEND_URL
+        value: https://govbot-fawn.vercel.app
+      - key: BASE_URL
+        value: https://govbot-fawn.vercel.app
+      - key: CORS_ORIGINS
+        value: https://govbot-fawn.vercel.app,http://localhost:3000
+
+      # --- Demo runs in integration mode: mocks ON (no live provider creds needed) ---
+      - key: MOCK_DIGILOCKER
+        value: "true"
+      - key: MOCK_NPCI
+        value: "true"
+      - key: MOCK_DIGILOCKER_CALLBACK_DELAY_SECONDS
+        value: "0"
+      - key: MOCK_NPCI_DELAY_SECONDS
+        value: "0"
+
+      # --- Non-secret model / OCR config ---
+      - key: GEMINI_GENERATION_MODELS
+        value: gemini-2.5-flash
+      - key: GEMINI_VISION_VALIDATION
+        value: "false"
+      - key: MISTRAL_OCR_MODEL
+        value: mistral-ocr-latest
+      - key: MISTRAL_OCR_ENABLED
+        value: "true"
+      - key: LOCAL_OCR_ENABLED
+        value: "true"
+      - key: LOCAL_OCR_TIMEOUT_SECONDS
+        value: "4"
+      - key: WHATSAPP_OTP_TEMPLATE_LANGUAGE
+        value: en_US
+      - key: SUPABASE_DOCUMENTS_BUCKET
+        value: user-documents
+      - key: CREDENTIAL_CHAIN_NAME
+        value: Polygon Mumbai
+      - key: CREDENTIAL_EXPLORER_BASE_URL
+        value: https://mumbai.polygonscan.com/tx/
+      - key: POLYGON_RPC_URL
+        value: https://rpc-mumbai.maticvigil.com
+
+      # --- Secrets: set these in the dashboard (or paste deploy/render.env.local) ---
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: OFFICIAL_USERNAME
+        sync: false
+      - key: OFFICIAL_PASSWORD
+        sync: false
+      - key: TEXT_LLM_PROVIDERS_JSON
+        sync: false
+      - key: GROQ_API_KEY_1
+        sync: false
+      - key: MISTRAL_API_KEY_1
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: WHATSAPP_OTP_TEMPLATE_NAME
+        sync: false

@@ -1,0 +1,39 @@
+# The Next.js frontend deploys separately (Vercel). Never ship it in the backend image (~1.3 GB).
+frontend/
+
+# Version control and local agent/editor tooling
+.git/
+.github/
+.gitignore
+.cursor/
+.windsurf/
+.superpowers/
+.sixth/
+.agents/
+.claude/
+.codex
+.vercel/
+.playwright-mcp/
+.planning/
+
+# Python caches and test artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+pytest.ini
+tests/
+
+# Docs, media showcase, and review notes are not needed at runtime
+docs/
+REVIEW.md
+Makefile
+skills-lock.json
+
+# Secrets are provided as Hugging Face Space secrets at runtime, never baked into the image
+.env
+.env.example
+
+# NOTE: the two root images (WhatsApp Image 2026-05-28 ....jpeg, IMG_20250722_134905.jpg)
+# are intentionally NOT ignored — demo_documents.py reads them for the seeded OCR/DigiLocker demo.
+# chroma_db/ is intentionally NOT ignored — it is the prebuilt RAG store and only ~1.5 MB.
