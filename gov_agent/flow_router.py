@@ -388,7 +388,7 @@ async def _continue_after_digilocker_review(phone: str, data: dict[str, Any], re
             return (
                 "💳 *Bank Account Verification*\n\n"
                 "For scholarship disbursement, we need to verify your bank account.\n\n"
-                "Please enter your 11-digit IFSC code (e.g., SBIN0001234)",
+                "Please enter your 11-digit IFSC code (e.g., SBIN0012345)",
                 "collect_bank_ifsc",
                 data,
             )
@@ -1523,7 +1523,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             return (
                 "💳 *Bank Account Verification*\n\n"
                 "For scholarship disbursement, we need to verify your bank account.\n\n"
-                "Please enter your 11-digit IFSC code (e.g., SBIN0001234)",
+                "Please enter your 11-digit IFSC code (e.g., SBIN0012345)",
                 "collect_bank_ifsc",
                 data
             )
@@ -1537,7 +1537,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         ifsc = body.strip().upper()
         if len(ifsc) != 11:
             return (
-                "❌ Invalid IFSC code. Must be 11 characters (e.g., SBIN0001234)\n\n"
+                "❌ Invalid IFSC code. Must be 11 characters (e.g., SBIN0012345)\n\n"
                 "Please enter your IFSC code:",
                 "collect_bank_ifsc",
                 data

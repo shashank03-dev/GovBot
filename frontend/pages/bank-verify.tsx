@@ -273,7 +273,7 @@ export default function BankVerifyPage() {
                   type="text"
                   value={ifsc}
                   onChange={e => setIfsc(e.target.value.toUpperCase())}
-                  placeholder="e.g. SBIN0001234"
+                  placeholder="e.g. SBIN0012345"
                   maxLength={11}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#ff9933]/20 focus:border-[#ff9933] transition-all uppercase tracking-wider"
                   required

@@ -99,7 +99,7 @@ def _profile_to_ssp_fields(profile: dict[str, Any]) -> dict[str, Any]:
         "pincode": profile.get("pincode") or "",
         "permanent_address": profile.get("address") or "",
         "college_name": profile.get("institution") or "",
-        "course_name": profile.get("course_level") or "",
+        "course_name": profile.get("course_name") or profile.get("course_level") or "",
         "previous_year_percentage_or_cgpa": profile.get("marks_pct") or "",
         "bank_account": profile.get("bank_account") or "",
         "bank_ifsc": profile.get("bank_ifsc") or "",

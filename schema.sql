@@ -530,6 +530,7 @@ create table if not exists citizen_profiles (
     dob               date,
     gender            text,
     pan_number        text,
+    aadhaar_number    text,       -- full 12-digit; aadhaar_last4 is derived from this
     aadhaar_last4     text,
     address           text,
     state             text,
@@ -538,12 +539,17 @@ create table if not exists citizen_profiles (
     income            integer,
     caste             text,        -- general / obc / sc / st / ews
     religion          text,
-    course_level      text,
+    course_level      text,       -- eligibility enum: pre_matric / post_matric / degree / pg
+    course_name       text,       -- course as printed on the form, e.g. 'Information Science'
     institution       text,
+    board             text,
+    academic_year     text,
+    admission_date    date,
     marks_pct         numeric(5,2),
     bank_account      text,
     bank_ifsc         text,
     bank_name         text,
+    bank_branch       text,
     father_name       text,
     mother_name       text,
     email             text,
@@ -555,6 +561,12 @@ create table if not exists citizen_profiles (
 
 alter table if exists citizen_profiles add column if not exists pan_number text;
 alter table if exists citizen_profiles add column if not exists passkey_hash text;
+alter table if exists citizen_profiles add column if not exists aadhaar_number text;
+alter table if exists citizen_profiles add column if not exists course_name text;
+alter table if exists citizen_profiles add column if not exists board text;
+alter table if exists citizen_profiles add column if not exists academic_year text;
+alter table if exists citizen_profiles add column if not exists admission_date date;
+alter table if exists citizen_profiles add column if not exists bank_branch text;
 
 -- ------------------------------------------------------------
 -- 18. form_fill_sessions — auto-fill history for any portal URL

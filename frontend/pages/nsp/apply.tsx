@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import { buildBackendRequestInit, buildProxyApiPath } from '@/lib/backendApi.mjs';
 import { buildPortalDocumentChecklist } from '@/lib/documentVault.mjs';
 import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/lib/navigationLinks.mjs';
+import { buildNspFillValuesFromProfile } from '@/lib/formFillTargets.mjs';
 import {
   NSP_DEMO_DATA as DEMO_DATA,
   NSP_DEMO_SESSION_STORAGE_KEY,
@@ -256,6 +257,24 @@ export default function NSPApply() {
       }
     };
 
+    const loadFromSavedProfile = async () => {
+      if (!storedPhone) return false;
+      try {
+        const res = await fetch(
+          buildProxyApiPath(`profile/${encodeURIComponent(storedPhone)}`),
+          buildBackendRequestInit({ method: 'GET' }),
+        );
+        if (!res.ok) return false;
+        const data = await res.json();
+        const fillValues = buildNspFillValuesFromProfile({ ...data.profile, phone: storedPhone });
+        if (!Object.keys(fillValues).length) return false;
+        applyProfile(buildNspDemoDataFromFillValues(fillValues), fillValues);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     const loadFromLocalStorage = () => {
       const stored = localStorage.getItem('digilocker_profile');
       if (!stored) return;
@@ -267,8 +286,9 @@ export default function NSPApply() {
 
     void (async () => {
       if (loadFromFormFill()) return;
-      const loadedReview = await loadFromReview();
-      if (!loadedReview) loadFromLocalStorage();
+      if (await loadFromReview()) return;
+      if (await loadFromSavedProfile()) return;
+      loadFromLocalStorage();
     })();
   }, [router.isReady, router.query.review_session, router.query.source]);
 

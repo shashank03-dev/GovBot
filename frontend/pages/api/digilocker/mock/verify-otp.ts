@@ -3,29 +3,31 @@ import { buildBackendRequestInit, buildBackendUrl, fetchBackend, isBackendTimeou
 import { setCitizenSessionCookie } from '@/lib/authSession.mjs';
 import { normalizeIndianPhone } from '@/lib/phoneStorage.mjs';
 
+// Synthetic showcase data only — must stay in sync with NSP_DEMO_DATA in
+// frontend/lib/nspDemoAutofill.mjs and MOCK_BANK_ACCOUNTS in gov_agent/npci_router.py.
 const MOCK_PROFILE = {
-  name: 'SHASHANK GOWDA T',
-  dob: '30/10/2006',
+  name: 'DEMO CITIZEN KUMAR',
+  dob: '15/06/2005',
   gender: 'Male',
-  aadhaar: '6634 0835 5424',
-  email: 'frshashank7447@gmail.com',
+  aadhaar: '9999 0000 1234',
+  email: 'demo@govbot.test',
   category: 'obc',
   religion: 'hindu',
   income: '98000',
   domicile: 'Karnataka',
   district: 'Bengaluru North',
-  institute: 'Sir M Vishveswraya Institute of Technology',
+  institute: 'Demo Institute of Technology',
   course: 'Information Science',
   year: '2025',
   board: 'Karnataka School Examination and Assessment Board',
   marks: '95.5',
   admissionDate: '03/09/2025',
-  accountHolder: 'SHASHANK GOWDA T',
+  accountHolder: 'DEMO CITIZEN KUMAR',
   bankName: 'State Bank of India',
-  accountNo: '325671904812',
-  confirmAccountNo: '325671904812',
+  accountNo: '000011112222',
+  confirmAccountNo: '000011112222',
   ifsc: 'SBIN0012345',
-  branch: 'HMT Layout',
+  branch: 'Demo Branch',
   docs: ['Aadhaar Card', 'Income and Caste Certificate', 'Marksheet 2025'],
 };
 

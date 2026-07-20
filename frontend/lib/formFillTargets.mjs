@@ -10,13 +10,19 @@ const NSP_DEMO_FIELDS = [
   { label: 'Annual Family Income (Rs)', name: 'income', id: 'income', type: 'text', placeholder: '' },
   { label: 'State of Domicile', name: 'domicile', id: 'domicile', type: 'select', placeholder: '' },
   { label: 'Institute District', name: 'district', id: 'district', type: 'select', placeholder: '' },
+  { label: 'Institute State', name: 'instituteState', id: 'instituteState', type: 'select', placeholder: '' },
   { label: 'Institute Name', name: 'institute', id: 'institute', type: 'text', placeholder: '' },
   { label: 'Course / Class', name: 'course', id: 'course', type: 'select', placeholder: '' },
+  { label: 'Academic Year', name: 'year', id: 'year', type: 'text', placeholder: '' },
+  { label: 'Board / University', name: 'board', id: 'board', type: 'text', placeholder: '' },
+  { label: 'Date of Admission', name: 'admissionDate', id: 'admissionDate', type: 'text', placeholder: '' },
   { label: 'Previous Year Marks (%)', name: 'marks', id: 'marks', type: 'text', placeholder: '' },
   { label: 'Account Holder Name', name: 'accountHolder', id: 'accountHolder', type: 'text', placeholder: '' },
   { label: 'Bank Name', name: 'bankName', id: 'bankName', type: 'select', placeholder: '' },
   { label: 'Account Number', name: 'accountNo', id: 'accountNo', type: 'text', placeholder: '' },
+  { label: 'Confirm Account Number', name: 'confirmAccountNo', id: 'confirmAccountNo', type: 'text', placeholder: '' },
   { label: 'IFSC Code', name: 'ifsc', id: 'ifsc', type: 'text', placeholder: '' },
+  { label: 'Branch Name', name: 'branch', id: 'branch', type: 'text', placeholder: '' },
   { label: "Father's Name", name: 'fatherName', id: 'fatherName', type: 'text', placeholder: '' },
   { label: "Mother's Name", name: 'motherName', id: 'motherName', type: 'text', placeholder: '' },
 ];
@@ -29,17 +35,23 @@ const NSP_DEMO_FIELD_MAP = {
   religion: 'religion',
   mobile: 'phone',
   email: 'email',
-  aadhaar: 'aadhaar_last4',
+  aadhaar: 'aadhaar_number',
   income: 'income',
   domicile: 'state',
+  instituteState: 'state',
   district: 'district',
   institute: 'institution',
-  course: 'course_level',
+  course: 'course_name',
+  year: 'academic_year',
+  board: 'board',
+  admissionDate: 'admission_date',
   marks: 'marks_pct',
   accountHolder: 'full_name',
   bankName: 'bank_name',
   accountNo: 'bank_account',
+  confirmAccountNo: 'bank_account',
   ifsc: 'bank_ifsc',
+  branch: 'bank_branch',
   fatherName: 'father_name',
   motherName: 'mother_name',
 };
@@ -69,6 +81,7 @@ function normalizeLookupUrl(url) {
 }
 
 function buildFillValues(fieldMap, profile) {
+  /** @type {Record<string, string>} */
   const fillValues = {};
   const missingFields = new Set();
 
@@ -85,6 +98,15 @@ function buildFillValues(fieldMap, profile) {
     fillValues,
     missingFields: Array.from(missingFields),
   };
+}
+
+/**
+ * Map a saved citizen profile onto NSP form field ids.
+ * Returns only fields the profile actually has a value for, so callers can layer
+ * the result over NSP_DEMO_DATA and fall back to demo values for the rest.
+ */
+export function buildNspFillValuesFromProfile(profile) {
+  return buildFillValues(NSP_DEMO_FIELD_MAP, profile).fillValues;
 }
 
 export function findFormFillTarget(url) {

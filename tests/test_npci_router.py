@@ -27,16 +27,16 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
             result = await npci_router.mock_bank_verify(
                 npci_router.BankVerifyRequest(
                     phone="919632363213",
-                    account_number="44344429113",
+                    account_number="000011112222",
                     ifsc_code="SBIN0012345",
                 )
             )
 
         self.assertEqual(result.status, "success")
         sleep_mock.assert_not_awaited()
-        self.assertEqual(result.beneficiary_name, "SHASHANK GOWDA T")
+        self.assertEqual(result.beneficiary_name, "DEMO CITIZEN KUMAR")
         self.assertEqual(result.bank_name, "State Bank of India")
-        self.assertEqual(result.branch, "HMT LAYOUT")
+        self.assertEqual(result.branch, "Demo Branch")
         self.assertIn("verified successfully", result.message.lower())
 
     async def test_mock_bank_verify_returns_deterministic_mismatch_failure(self):

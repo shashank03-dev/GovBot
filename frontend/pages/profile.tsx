@@ -18,6 +18,7 @@ type Profile = {
   full_name?: string;
   dob?: string;
   gender?: string;
+  aadhaar_number?: string;
   aadhaar_last4?: string;
   address?: string;
   state?: string;
@@ -27,11 +28,16 @@ type Profile = {
   caste?: string;
   religion?: string;
   course_level?: string;
+  course_name?: string;
   institution?: string;
+  board?: string;
+  academic_year?: string;
+  admission_date?: string;
   marks_pct?: number | string;
   bank_account?: string;
   bank_ifsc?: string;
   bank_name?: string;
+  bank_branch?: string;
   father_name?: string;
   mother_name?: string;
   email?: string;
@@ -75,7 +81,7 @@ const SECTIONS: Section[] = [
       { key: 'father_name', label: "Father's Name", placeholder: 'As per Aadhaar' },
       { key: 'mother_name', label: "Mother's Name", placeholder: 'As per Aadhaar' },
       { key: 'email', label: 'Email Address', type: 'email', placeholder: 'example@email.com' },
-      { key: 'aadhaar_last4', label: 'Aadhaar (Last 4 digits)', placeholder: 'XXXX' },
+      { key: 'aadhaar_number', label: 'Aadhaar Number', placeholder: '12-digit Aadhaar number' },
     ],
   },
   {
@@ -108,7 +114,11 @@ const SECTIONS: Section[] = [
     color: '#8b5cf6',
     fields: [
       { key: 'course_level', label: 'Course Level', options: ['pre_matric', 'post_matric', 'degree', 'pg'] },
+      { key: 'course_name', label: 'Course Name', placeholder: 'e.g. Information Science' },
       { key: 'institution', label: 'Institution / College', placeholder: 'Full institution name' },
+      { key: 'board', label: 'Board / University', placeholder: 'Board or university name' },
+      { key: 'academic_year', label: 'Academic Year', placeholder: 'e.g. 2025' },
+      { key: 'admission_date', label: 'Date of Admission', type: 'date' },
       { key: 'marks_pct', label: 'Marks % (Last Exam)', type: 'number', placeholder: 'e.g. 85.5' },
     ],
   },
@@ -121,6 +131,7 @@ const SECTIONS: Section[] = [
       { key: 'bank_name', label: 'Bank Name', placeholder: 'e.g. State Bank of India' },
       { key: 'bank_ifsc', label: 'IFSC Code', placeholder: '11-character IFSC' },
       { key: 'bank_account', label: 'Account Number', placeholder: '9-18 digit account number' },
+      { key: 'bank_branch', label: 'Branch Name', placeholder: 'e.g. HMT Layout' },
     ],
   },
 ];

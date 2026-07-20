@@ -1,8 +1,10 @@
+// Mirrors _PROFILE_FIELDS in gov_agent/profile_router.py — keep the two in sync.
 const PROFILE_FIELD_WEIGHTS = {
   full_name: 10,
   dob: 10,
   gender: 5,
-  aadhaar_last4: 10,
+  // aadhaar_last4 is derived from aadhaar_number, so only the source field is scored.
+  aadhaar_number: 10,
   address: 5,
   state: 5,
   district: 3,
@@ -11,11 +13,16 @@ const PROFILE_FIELD_WEIGHTS = {
   caste: 8,
   religion: 3,
   course_level: 5,
+  course_name: 5,
   institution: 5,
+  board: 3,
+  academic_year: 3,
+  admission_date: 3,
   marks_pct: 5,
   bank_account: 8,
   bank_ifsc: 5,
   bank_name: 3,
+  bank_branch: 3,
   father_name: 5,
   email: 3,
 };
@@ -55,6 +62,7 @@ export function mapReviewImportedFieldsToProfile(importedFields = {}) {
     mapped.gender = String(importedFields.gender).trim();
   }
   if (isFilled(importedFields.aadhaar_number)) {
+    mapped.aadhaar_number = String(importedFields.aadhaar_number).trim();
     mapped.aadhaar_last4 = getAadhaarLast4(importedFields.aadhaar_number);
   }
   if (isFilled(importedFields.address)) {

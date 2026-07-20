@@ -42,28 +42,24 @@ class BankVerifyResponse(BaseModel):
     message: str
 
 
-# Mock database of valid bank accounts for demo
+# Mock database of valid bank accounts for demo — synthetic data only.
+# The SBIN0012345_000011112222 entry is the canonical showcase account and must
+# match NSP_DEMO_DATA in frontend/lib/nspDemoAutofill.mjs.
 MOCK_BANK_ACCOUNTS = {
-    "SBIN0012345_44344429113": {
-        "name": "SHASHANK GOWDA T",
+    "SBIN0012345_000011112222": {
+        "name": "DEMO CITIZEN KUMAR",
         "status": "active",
-        "branch": "HMT LAYOUT",
-        "bank_name": "State Bank of India",
-    },
-    "SBIN0012345_325671904812": {
-        "name": "SHASHANK GOWDA T",
-        "status": "active",
-        "branch": "HMT Layout",
+        "branch": "Demo Branch",
         "bank_name": "State Bank of India",
     },
     "HDFC0005678_9876543210": {
-        "name": "SHASHANK GOWDA T",
+        "name": "DEMO CITIZEN KUMAR",
         "status": "active",
         "branch": "Bangalore North",
         "bank_name": "HDFC Bank",
     },
     "ICIC0009012_5555666677": {
-        "name": "SHASHANK GOWDA T",
+        "name": "DEMO CITIZEN KUMAR",
         "status": "active",
         "branch": "Bangalore North",
         "bank_name": "ICICI Bank",

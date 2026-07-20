@@ -1,30 +1,33 @@
 export const NSP_DEMO_SESSION_STORAGE_KEY = 'govbot_nsp_demo_prefill';
 
+// Synthetic fallback used when the saved profile has no value for a field.
+// Must stay in sync with MOCK_PROFILE in pages/api/digilocker/mock/verify-otp.ts
+// and MOCK_BANK_ACCOUNTS in gov_agent/npci_router.py.
 export const NSP_DEMO_DATA = {
-  name: 'SHASHANK GOWDA T',
-  dob: '30/10/2006',
+  name: 'DEMO CITIZEN KUMAR',
+  dob: '15/06/2005',
   gender: 'Male',
   category: 'obc',
   religion: 'hindu',
-  mobile: '919632363213',
-  email: 'frshashank7447@gmail.com',
-  aadhaar: '6634 0835 5424',
+  mobile: '919000000000',
+  email: 'demo@govbot.test',
+  aadhaar: '9999 0000 1234',
   income: '98000',
   domicile: 'Karnataka',
   instituteState: 'Karnataka',
   district: 'Bengaluru North',
-  institute: 'Sir M Vishveswraya Institute of Technology',
+  institute: 'Demo Institute of Technology',
   course: 'Information Science',
   year: '2025',
   board: 'Karnataka School Examination and Assessment Board',
   marks: '95.5',
   admissionDate: '03/09/2025',
-  accountHolder: 'SHASHANK GOWDA T',
+  accountHolder: 'DEMO CITIZEN KUMAR',
   bankName: 'State Bank of India',
-  accountNo: '325671904812',
-  confirmAccountNo: '325671904812',
+  accountNo: '000011112222',
+  confirmAccountNo: '000011112222',
   ifsc: 'SBIN0012345',
-  branch: 'HMT Layout',
+  branch: 'Demo Branch',
 };
 
 const NSP_VISIBLE_AUTOFILL_FIELDS = [

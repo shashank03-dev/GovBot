@@ -34,7 +34,8 @@ _PROFILE_FIELDS: dict[str, int] = {
     "full_name": 10,
     "dob": 10,
     "gender": 5,
-    "aadhaar_last4": 10,
+    # aadhaar_last4 is derived from aadhaar_number, so only the source field is scored.
+    "aadhaar_number": 10,
     "address": 5,
     "state": 5,
     "district": 3,
@@ -43,11 +44,16 @@ _PROFILE_FIELDS: dict[str, int] = {
     "caste": 8,
     "religion": 3,
     "course_level": 5,
+    "course_name": 5,
     "institution": 5,
+    "board": 3,
+    "academic_year": 3,
+    "admission_date": 3,
     "marks_pct": 5,
     "bank_account": 8,
     "bank_ifsc": 5,
     "bank_name": 3,
+    "bank_branch": 3,
     "father_name": 5,
     "email": 3,
 }
@@ -61,6 +67,7 @@ class ProfileUpsert(BaseModel):
     full_name: Optional[str] = None
     dob: Optional[str] = None
     gender: Optional[str] = None
+    aadhaar_number: Optional[str] = None
     aadhaar_last4: Optional[str] = None
     address: Optional[str] = None
     state: Optional[str] = None
@@ -70,11 +77,16 @@ class ProfileUpsert(BaseModel):
     caste: Optional[str] = None
     religion: Optional[str] = None
     course_level: Optional[str] = None
+    course_name: Optional[str] = None
     institution: Optional[str] = None
+    board: Optional[str] = None
+    academic_year: Optional[str] = None
+    admission_date: Optional[str] = None
     marks_pct: Optional[float] = None
     bank_account: Optional[str] = None
     bank_ifsc: Optional[str] = None
     bank_name: Optional[str] = None
+    bank_branch: Optional[str] = None
     father_name: Optional[str] = None
     mother_name: Optional[str] = None
     email: Optional[str] = None
@@ -90,6 +102,12 @@ class ProfileResponse(BaseModel):
 
 
 _PROFILE_MUTABLE_FIELDS = set(ProfileUpsert.model_fields.keys())
+
+
+def _aadhaar_last4(aadhaar_number: str) -> str:
+    """Last 4 digits of an Aadhaar number, ignoring spaces and separators."""
+    digits = "".join(ch for ch in str(aadhaar_number) if ch.isdigit())
+    return digits[-4:] if len(digits) >= 4 else digits
 
 
 def _compute_completeness(profile: dict) -> tuple[int, list[str]]:
@@ -161,6 +179,10 @@ async def upsert_profile(phone: str, body: ProfileUpsert, token_phone: Optional[
         if not updates:
             raise HTTPException(status_code=400, detail="No fields provided")
 
+        # aadhaar_last4 is always derived from the full number so the two cannot drift.
+        if updates.get("aadhaar_number"):
+            updates["aadhaar_last4"] = _aadhaar_last4(updates["aadhaar_number"])
+
         profile_updates = dict(updates)
         updates["phone"] = phone
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -212,7 +234,8 @@ async def populate_from_ocr(phone: str, token_phone: Optional[str] = Depends(_op
             updates["address"] = field_map["address"]
         if field_map.get("aadhaar_number"):
             aadhaar = str(field_map["aadhaar_number"]).replace(" ", "")
-            updates["aadhaar_last4"] = aadhaar[-4:] if len(aadhaar) >= 4 else aadhaar
+            updates["aadhaar_number"] = aadhaar
+            updates["aadhaar_last4"] = _aadhaar_last4(aadhaar)
 
         if not updates:
             raise HTTPException(status_code=422, detail="OCR extraction did not contain mappable fields")
