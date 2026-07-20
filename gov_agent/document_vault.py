@@ -379,6 +379,14 @@ def build_profile_updates(doc_type: str, extracted_data: dict[str, Any]) -> dict
         )
         if marks_pct is not None:
             updates["marks_pct"] = marks_pct
+        board = _first_filled(extracted_data.get("board"))
+        if board:
+            updates["board"] = str(board).strip()
+        academic_year = _first_filled(
+            extracted_data.get("academic_year"), extracted_data.get("year")
+        )
+        if academic_year:
+            updates["academic_year"] = str(academic_year).strip()
         return updates
     return {}
 

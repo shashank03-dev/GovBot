@@ -36,6 +36,8 @@ test('mergeReviewIntoProfile hydrates an empty profile from DigiLocker review da
       income: 25000,
       caste: 'SC',
       marks_pct: 95.5,
+      board: 'Karnataka State Board',
+      year: '2025',
     },
   );
 
@@ -43,6 +45,8 @@ test('mergeReviewIntoProfile hydrates an empty profile from DigiLocker review da
   assert.equal(merged.profile.aadhaar_last4, '5424');
   assert.equal(merged.profile.caste, 'sc');
   assert.equal(merged.profile.marks_pct, 95.5);
+  assert.equal(merged.profile.board, 'Karnataka State Board');
+  assert.equal(merged.profile.academic_year, '2025');
   assert.equal(hasProfileContent(merged.profile), true);
   assert.ok(merged.completeness_pct > 0);
   assert.equal(merged.missing_fields.includes('full_name'), false);

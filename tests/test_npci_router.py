@@ -14,9 +14,10 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
 
         insert_chain = MagicMock()
         update_chain = MagicMock()
+        profile_chain = MagicMock()
 
         supabase_mock = MagicMock()
-        supabase_mock.table.side_effect = [existing_chain, insert_chain, update_chain]
+        supabase_mock.table.side_effect = [existing_chain, insert_chain, update_chain, profile_chain]
 
         sleep_mock = AsyncMock(return_value=None)
         with (
@@ -38,6 +39,15 @@ class MockBankVerifyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.bank_name, "State Bank of India")
         self.assertEqual(result.branch, "Demo Branch")
         self.assertIn("verified successfully", result.message.lower())
+
+        # Verified bank details are written back into the citizen profile.
+        supabase_mock.table.assert_any_call("citizen_profiles")
+        profile_payload = profile_chain.upsert.call_args.args[0]
+        self.assertEqual(profile_payload["phone"], "919632363213")
+        self.assertEqual(profile_payload["bank_ifsc"], "SBIN0012345")
+        self.assertEqual(profile_payload["bank_account"], "000011112222")
+        self.assertEqual(profile_payload["bank_name"], "State Bank of India")
+        self.assertEqual(profile_payload["bank_branch"], "Demo Branch")
 
     async def test_mock_bank_verify_returns_deterministic_mismatch_failure(self):
         existing_chain = MagicMock()

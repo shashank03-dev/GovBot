@@ -8,9 +8,10 @@ import { buildDashboardLoginHref, buildTrackHref, TRACK_SEARCH_HREF } from '@/li
 import { buildNspFillValuesFromProfile } from '@/lib/formFillTargets.mjs';
 import {
   NSP_DEMO_DATA as DEMO_DATA,
+  NSP_EMPTY_DATA as EMPTY_DATA,
   NSP_DEMO_SESSION_STORAGE_KEY,
   NSP_DEMO_STEPS as RAW_NSP_DEMO_STEPS,
-  buildNspDemoDataFromFillValues,
+  buildNspProfileDataFromFillValues,
   shouldShowNspShowcaseFallbackNotice,
 } from '@/lib/nspDemoAutofill.mjs';
 
@@ -220,9 +221,10 @@ export default function NSPApply() {
     const launchedFromFormFill = router.query.source === 'form-fill';
     const storedPhone = typeof window !== 'undefined' ? (localStorage.getItem('govbot_phone') || '') : '';
 
+    // Real citizen data only — fields the profile has no value for stay blank rather
+    // than falling back to DEMO_DATA, so the form never mixes demo values with real ones.
     const applyProfile = (profile: Partial<typeof DEMO_DATA>, suppliedValues: Record<string, unknown> = profile) => {
-      const merged = { ...DEMO_DATA, ...profile };
-      activeDataRef.current = merged;
+      activeDataRef.current = { ...EMPTY_DATA, ...profile };
       if (!shouldShowNspShowcaseFallbackNotice(suppliedValues)) {
         hasApplicantPrefillRef.current = true;
       }
@@ -235,7 +237,7 @@ export default function NSPApply() {
 
       try {
         const fillValues = JSON.parse(stored);
-        applyProfile(buildNspDemoDataFromFillValues(fillValues), fillValues);
+        applyProfile(buildNspProfileDataFromFillValues(fillValues), fillValues);
         return true;
       } catch {
         return false;
@@ -268,7 +270,7 @@ export default function NSPApply() {
         const data = await res.json();
         const fillValues = buildNspFillValuesFromProfile({ ...data.profile, phone: storedPhone });
         if (!Object.keys(fillValues).length) return false;
-        applyProfile(buildNspDemoDataFromFillValues(fillValues), fillValues);
+        applyProfile(buildNspProfileDataFromFillValues(fillValues), fillValues);
         return true;
       } catch {
         return false;

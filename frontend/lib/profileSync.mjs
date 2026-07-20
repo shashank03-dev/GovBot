@@ -77,6 +77,13 @@ export function mapReviewImportedFieldsToProfile(importedFields = {}) {
   if (isFilled(importedFields.marks_pct)) {
     mapped.marks_pct = toNumberOrValue(importedFields.marks_pct);
   }
+  if (isFilled(importedFields.board)) {
+    mapped.board = String(importedFields.board).trim();
+  }
+  const academicYear = importedFields.academic_year ?? importedFields.year;
+  if (isFilled(academicYear)) {
+    mapped.academic_year = String(academicYear).trim();
+  }
 
   return mapped;
 }

@@ -88,8 +88,15 @@ function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function buildNspDemoDataFromFillValues(fillValues = {}) {
-  const merged = { ...NSP_DEMO_DATA };
+// Every NSP field blank. Used as the base when filling from real citizen data so
+// a field the profile has no value for stays empty instead of borrowing a demo value.
+/** @type {typeof NSP_DEMO_DATA} */
+export const NSP_EMPTY_DATA = /** @type {any} */ (
+  Object.fromEntries(Object.keys(NSP_DEMO_DATA).map((field) => [field, '']))
+);
+
+function buildNspData(fillValues, base) {
+  const merged = { ...base };
 
   Object.entries(fillValues).forEach(([field, value]) => {
     const normalized = normalizeString(value);
@@ -114,6 +121,25 @@ export function buildNspDemoDataFromFillValues(fillValues = {}) {
   }
 
   return merged;
+}
+
+/** Showcase fill for anonymous visitors: demo values stand in for anything missing. */
+export function buildNspDemoDataFromFillValues(fillValues = {}) {
+  return buildNspData(fillValues, NSP_DEMO_DATA);
+}
+
+/**
+ * Fill from real citizen data. Nothing is hardcoded: a field the profile has no
+ * value for comes back empty rather than borrowing from the demo template.
+ */
+export function buildNspProfileDataFromFillValues(fillValues = {}) {
+  return buildNspData(fillValues, NSP_EMPTY_DATA);
+}
+
+/** NSP fields with no value after filling from a profile — what the citizen still needs to add. */
+export function getMissingNspProfileFields(fillValues = {}) {
+  const filled = buildNspProfileDataFromFillValues(fillValues);
+  return NSP_VISIBLE_AUTOFILL_FIELDS.filter((field) => !normalizeString(filled[field]));
 }
 
 function hasNspApplicantValue(value) {

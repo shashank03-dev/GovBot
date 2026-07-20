@@ -326,6 +326,11 @@ def _apply_review_to_profile(phone: str, imported_fields: dict[str, Any]) -> Non
         updates["income"] = imported_fields["income"]
     if imported_fields.get("caste"):
         updates["caste"] = str(imported_fields["caste"]).lower()
+    if imported_fields.get("board"):
+        updates["board"] = str(imported_fields["board"]).strip()
+    academic_year = imported_fields.get("academic_year") or imported_fields.get("year")
+    if academic_year:
+        updates["academic_year"] = str(academic_year).strip()
 
     supabase.table("citizen_profiles").upsert(updates, on_conflict="phone").execute()
 

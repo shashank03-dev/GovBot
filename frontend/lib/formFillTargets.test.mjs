@@ -10,6 +10,8 @@ import {
 import {
   NSP_DEMO_DATA,
   buildNspDemoDataFromFillValues,
+  buildNspProfileDataFromFillValues,
+  getMissingNspProfileFields,
 } from './nspDemoAutofill.mjs';
 
 // A profile with every field the NSP autofill needs.
@@ -112,6 +114,36 @@ test('a partial profile keeps real values and fills the rest from the demo templ
   assert.equal(merged.branch, 'Some Branch');
   assert.equal(merged.course, NSP_DEMO_DATA.course);
   assert.equal(merged.aadhaar, NSP_DEMO_DATA.aadhaar);
+});
+
+test('profile-driven fill never substitutes a demo value for a missing field', () => {
+  const partial = buildNspFillValuesFromProfile({ full_name: 'Real Citizen', state: 'Kerala' });
+  const filled = buildNspProfileDataFromFillValues(partial);
+
+  assert.equal(filled.name, 'Real Citizen');
+  assert.equal(filled.instituteState, 'Kerala');
+  // Anything the profile lacks must be blank, not borrowed from NSP_DEMO_DATA.
+  assert.equal(filled.aadhaar, '');
+  assert.equal(filled.course, '');
+  assert.equal(filled.branch, '');
+  assert.equal(filled.income, '');
+});
+
+test('profile-driven fill of a complete profile leaves nothing missing', () => {
+  const fillValues = buildNspFillValuesFromProfile(COMPLETE_PROFILE);
+
+  assert.deepEqual(getMissingNspProfileFields(fillValues), []);
+});
+
+test('getMissingNspProfileFields reports exactly what the profile still lacks', () => {
+  const missing = getMissingNspProfileFields(
+    buildNspFillValuesFromProfile({ full_name: 'Real Citizen' }),
+  );
+
+  assert.ok(missing.includes('aadhaar'));
+  assert.ok(missing.includes('branch'));
+  assert.ok(!missing.includes('name'));
+  assert.ok(!missing.includes('accountHolder'), 'accountHolder is derived from name');
 });
 
 test('demo fixtures contain no real personal data', () => {

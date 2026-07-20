@@ -96,6 +96,32 @@ async def _sleep_for_mock_delay(seconds: float) -> None:
         await asyncio.sleep(seconds)
 
 
+def _sync_verified_bank_to_profile(
+    phone: str,
+    ifsc_code: str,
+    account_number: str,
+    bank_name: str | None,
+    branch: str | None,
+) -> None:
+    """Copy the verified bank details into the citizen's profile so the form
+    fields fill automatically. Verified data is authoritative, so it overwrites
+    whatever the citizen may have typed. Best-effort: never fails verification."""
+    updates: dict = {
+        "phone": phone,
+        "bank_ifsc": ifsc_code,
+        "bank_account": account_number,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if bank_name:
+        updates["bank_name"] = bank_name
+    if branch:
+        updates["bank_branch"] = branch
+    try:
+        supabase.table("citizen_profiles").upsert(updates, on_conflict="phone").execute()
+    except Exception as exc:  # pragma: no cover - profile sync is best-effort
+        logger.warning("bank verify -> profile sync failed for %s: %s", phone, exc)
+
+
 @router.post("/bank/mock/verify", response_model=BankVerifyResponse)
 async def mock_bank_verify(body: BankVerifyRequest):
     """Mock bank account verification with penny drop simulation."""
@@ -121,6 +147,13 @@ async def mock_bank_verify(body: BankVerifyRequest):
     if existing.data:
         existing_row = existing.data[0]
         existing_meta = existing_row.get("mock_response") or {}
+        _sync_verified_bank_to_profile(
+            body.phone,
+            body.ifsc_code,
+            body.account_number,
+            existing_meta.get("bank_name") or _infer_bank_name(existing_row.get("ifsc_code", "")),
+            existing_meta.get("branch"),
+        )
         return BankVerifyResponse(
             verification_id=existing_row["id"],
             status="success",
@@ -171,7 +204,15 @@ async def mock_bank_verify(body: BankVerifyRequest):
         }).eq("id", verification_id).execute()
         
         logger.info(f"Bank verification successful for {body.phone}: ****{last4}")
-        
+
+        _sync_verified_bank_to_profile(
+            body.phone,
+            body.ifsc_code,
+            body.account_number,
+            mock_account["bank_name"],
+            mock_account["branch"],
+        )
+
         return BankVerifyResponse(
             verification_id=verification_id,
             status="success",

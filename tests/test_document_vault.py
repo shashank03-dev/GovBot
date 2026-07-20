@@ -106,6 +106,14 @@ class ProfileMappingTests(unittest.TestCase):
             build_profile_updates("marksheet", {"student_name": "Asha Singh", "percentage": "95.5"}),
             {"full_name": "Asha Singh", "marks_pct": 95.5},
         )
+        # Marksheet board and year flow into the profile's board / academic_year.
+        self.assertEqual(
+            build_profile_updates(
+                "marksheet",
+                {"student_name": "Asha Singh", "percentage": "95.5", "board": "CBSE", "year": "2025"},
+            ),
+            {"full_name": "Asha Singh", "marks_pct": 95.5, "board": "CBSE", "academic_year": "2025"},
+        )
 
     def test_build_profile_updates_maps_karnataka_category_iiia_to_obc(self):
         updates = build_profile_updates(

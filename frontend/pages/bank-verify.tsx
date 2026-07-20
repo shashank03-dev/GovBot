@@ -294,6 +294,29 @@ export default function BankVerifyPage() {
                 <p className="text-xs text-slate-400 mt-1">9-18 digit account number</p>
               </div>
 
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3.5 py-3 text-xs text-slate-500">
+                <p className="font-semibold text-slate-600 mb-1">Demo account — passes verification</p>
+                <p>
+                  IFSC{' '}
+                  <button
+                    type="button"
+                    onClick={() => setIfsc('SBIN0012345')}
+                    className="font-mono font-semibold text-slate-700 underline decoration-dotted hover:text-[#ff9933]"
+                  >
+                    SBIN0012345
+                  </button>
+                  {' · '}Account{' '}
+                  <button
+                    type="button"
+                    onClick={() => setAccountNo('000011112222')}
+                    className="font-mono font-semibold text-slate-700 underline decoration-dotted hover:text-[#ff9933]"
+                  >
+                    000011112222
+                  </button>
+                </p>
+                <p className="mt-1 text-slate-400">Verifies as State Bank of India · Demo Branch, then fills your profile&apos;s bank details.</p>
+              </div>
+
               {error && <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3.5 py-2.5">{error}</p>}
 
               <button
