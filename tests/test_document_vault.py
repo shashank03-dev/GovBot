@@ -1,12 +1,15 @@
 import asyncio
 import base64
 import unittest
+from datetime import date
 from unittest.mock import ANY, MagicMock, patch
 
 from gov_agent.document_vault import (
     DocumentVaultError,
+    _extract_document_data_from_ocr_text,
     _materialize_document,
     _record_status,
+    _resolve_profile_merge,
     analyze_document_validity,
     build_document_updates_from_profile,
     build_profile_updates,
@@ -700,6 +703,234 @@ class UploadValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(ctx.exception.code, "upload")
+
+
+class BroadFieldExtractionTests(unittest.TestCase):
+    def test_aadhaar_reads_guardian_name_from_care_of_line(self):
+        for relation in ("S/O", "C/O", "D/O"):
+            with self.subTest(relation=relation):
+                extracted = _extract_document_data_from_ocr_text(
+                    "aadhaar",
+                    f"Name: Asha Singh\n{relation}: Ramesh Singh\nAadhaar 1234 5678 9012\n",
+                )
+
+                self.assertEqual(extracted["father_name"], "Ramesh Singh")
+                self.assertEqual(extracted["care_of"], "Ramesh Singh")
+
+    def test_aadhaar_does_not_treat_spouse_as_a_parent(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "aadhaar",
+            "Name: Asha Singh\nW/O: Suresh Kumar\nAadhaar 1234 5678 9012\n",
+        )
+
+        self.assertEqual(extracted["care_of"], "Suresh Kumar")
+        self.assertEqual(extracted["father_name"], "")
+
+    def test_aadhaar_reads_pincode_without_matching_longer_digit_runs(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "aadhaar",
+            "Name: Asha Singh\nAadhaar 1234 5678 9012\nAddress: Bengaluru, Karnataka - 560073\n",
+        )
+
+        self.assertEqual(extracted["pincode"], "560073")
+
+    def test_holder_name_is_not_taken_from_a_relation_label(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "aadhaar",
+            "Mother's Name : ANUSOOYA\nName: Asha Singh\nAadhaar 1234 5678 9012\n",
+        )
+
+        self.assertEqual(extracted["full_name"], "Asha Singh")
+        self.assertEqual(extracted["mother_name"], "ANUSOOYA")
+
+    def test_certificate_reads_names_and_place_fields(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "caste_cert",
+            "Certificate No: RD1218190096391\n"
+            "Certified that Kumar Shashank Gowda T belongs to caste Vokkaligaru of Category III A.\n"
+            "Father's Name: THIMMARAJU T\n"
+            "Mother's Name: ANUSUYA\n"
+            "District: Bengaluru Urban\n"
+            "Taluk: Bengaluru North\n",
+        )
+
+        self.assertEqual(extracted["student_name"], "Shashank Gowda T")
+        self.assertEqual(extracted["father_name"], "THIMMARAJU T")
+        self.assertEqual(extracted["mother_name"], "ANUSUYA")
+        self.assertEqual(extracted["district"], "Bengaluru Urban")
+        self.assertEqual(extracted["taluk"], "Bengaluru North")
+        self.assertEqual(extracted["certificate_number"], "RD1218190096391")
+
+    def test_profile_updates_forward_relation_names_for_every_doc_type(self):
+        aadhaar = build_profile_updates(
+            "aadhaar",
+            {"aadhaar_number": "1234 5678 9012", "father_name": "Ramesh Singh", "pincode": "560073"},
+        )
+        self.assertEqual(aadhaar["father_name"], "Ramesh Singh")
+        self.assertEqual(aadhaar["pincode"], "560073")
+
+        cert = build_profile_updates(
+            "caste_cert",
+            {
+                "caste": "Vokkaligaru",
+                "student_name": "Shashank Gowda T",
+                "father_name": "THIMMARAJU T",
+                "mother_name": "ANUSUYA",
+                "district": "Bengaluru Urban",
+            },
+        )
+        self.assertEqual(cert["caste"], "obc")
+        self.assertEqual(cert["full_name"], "Shashank Gowda T")
+        self.assertEqual(cert["father_name"], "THIMMARAJU T")
+        self.assertEqual(cert["mother_name"], "ANUSUYA")
+        self.assertEqual(cert["district"], "Bengaluru Urban")
+
+        marksheet = build_profile_updates(
+            "marksheet",
+            {"student_name": "Asha Singh", "father_name": "Ramesh Singh", "mother_name": "Sita"},
+        )
+        self.assertEqual(marksheet["father_name"], "Ramesh Singh")
+        self.assertEqual(marksheet["mother_name"], "Sita")
+
+    def test_blank_extracted_fields_never_reach_the_profile(self):
+        updates = build_profile_updates(
+            "aadhaar",
+            {"aadhaar_number": "1234 5678 9012", "father_name": "", "mother_name": "   "},
+        )
+
+        self.assertNotIn("father_name", updates)
+        self.assertNotIn("mother_name", updates)
+
+
+class DateOfBirthExtractionTests(unittest.TestCase):
+    def test_pan_reads_labelled_date_of_birth(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "pan",
+            "INCOME TAX DEPARTMENT\n"
+            "Name: SHASHANK GOWDA T\n"
+            "Father's Name: THIMMARAJU T\n"
+            "Date of Birth: 30/10/2006\n"
+            "Permanent Account Number CWDPT4141C\n",
+        )
+
+        self.assertEqual(extracted["dob"], "2006-10-30")
+        self.assertEqual(extracted["pan_number"], "CWDPT4141C")
+
+    def test_pan_reads_unlabelled_date_in_real_card_layout(self):
+        """Most PAN OCR output prints the DOB on its own line with no label."""
+        extracted = _extract_document_data_from_ocr_text(
+            "pan",
+            "INCOME TAX DEPARTMENT     GOVT. OF INDIA\n"
+            "SHASHANK GOWDA T\n"
+            "THIMMARAJU THIMMARAYAPPA\n"
+            "30/10/2006\n"
+            "Permanent Account Number\nCWDPT4141C\n",
+        )
+
+        self.assertEqual(extracted["dob"], "2006-10-30")
+
+    def test_pan_prefers_labelled_dob_over_an_unrelated_date(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "pan",
+            "Date: 01/01/2015\nDate of Birth: 30/10/2006\nPermanent Account Number CWDPT4141C\n",
+        )
+
+        self.assertEqual(extracted["dob"], "2006-10-30")
+
+    def test_dob_never_accepts_a_future_date(self):
+        future_year = date.today().year + 3
+        extracted = _extract_document_data_from_ocr_text(
+            "pan",
+            f"Name: Asha Singh\nDate of Birth: 01/01/{future_year}\nPermanent Account Number ABCDE1234F\n",
+        )
+
+        self.assertEqual(extracted["dob"], "")
+
+    def test_aadhaar_normalises_a_slash_formatted_dob_to_iso(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "aadhaar",
+            "Name: Asha Singh\nDOB: 15/05/1998\nAadhaar 1234 5678 9012\n",
+        )
+
+        self.assertEqual(extracted["dob"], "1998-05-15")
+
+    def test_aadhaar_keeps_raw_dob_text_when_it_cannot_be_parsed(self):
+        extracted = _extract_document_data_from_ocr_text(
+            "aadhaar",
+            "Name: Asha Singh\nDOB: not readable\nAadhaar 1234 5678 9012\n",
+        )
+
+        self.assertEqual(extracted["dob"], "not readable")
+
+
+class ProfileMergeCorrelationTests(unittest.TestCase):
+    def test_missing_field_is_filled(self):
+        resolved = _resolve_profile_merge({}, {"father_name": "Ramesh Singh"})
+
+        self.assertEqual(resolved, {"father_name": "Ramesh Singh"})
+
+    def test_identical_key_and_value_is_treated_as_duplicate_and_skipped(self):
+        resolved = _resolve_profile_merge(
+            {"father_name": "Ramesh Singh"},
+            {"father_name": "Ramesh Singh"},
+        )
+
+        self.assertEqual(resolved, {})
+
+    def test_duplicate_detection_ignores_case_and_spacing(self):
+        resolved = _resolve_profile_merge(
+            {"father_name": "THIMMARAJU  T"},
+            {"father_name": "Thimmaraju T"},
+        )
+
+        self.assertEqual(resolved, {})
+
+    def test_duplicate_detection_compares_numbers_numerically(self):
+        resolved = _resolve_profile_merge({"income": 25000}, {"income": "25000"})
+
+        self.assertEqual(resolved, {})
+
+    def test_conflicting_value_keeps_the_stored_one(self):
+        resolved = _resolve_profile_merge(
+            {"father_name": "THIMMARAJU THIMMARAYAPPA"},
+            {"father_name": "Thimmaraju T"},
+        )
+
+        self.assertEqual(resolved, {})
+
+    def test_identity_anchors_are_corrected_by_a_newer_document(self):
+        resolved = _resolve_profile_merge(
+            {"pan_number": "AAAAA1111A", "aadhaar_last4": "1111"},
+            {"pan_number": "ABCDE1234F", "aadhaar_last4": "9012"},
+        )
+
+        self.assertEqual(resolved, {"pan_number": "ABCDE1234F", "aadhaar_last4": "9012"})
+
+    def test_blank_incoming_values_are_ignored(self):
+        resolved = _resolve_profile_merge({}, {"father_name": "", "mother_name": None})
+
+        self.assertEqual(resolved, {})
+
+    def test_shared_field_across_documents_is_stored_once(self):
+        """father_name appears on both PAN and Aadhaar; the second document is a no-op."""
+        profile: dict[str, object] = {}
+
+        pan = build_profile_updates(
+            "pan",
+            {"pan_number": "ABCDE1234F", "full_name": "Asha Singh", "father_name": "Ramesh Singh"},
+        )
+        profile.update(_resolve_profile_merge(profile, pan))
+
+        aadhaar = build_profile_updates(
+            "aadhaar",
+            {"aadhaar_number": "1234 5678 9012", "full_name": "Asha Singh", "father_name": "Ramesh Singh"},
+        )
+        second_pass = _resolve_profile_merge(profile, aadhaar)
+
+        self.assertEqual(profile["father_name"], "Ramesh Singh")
+        self.assertNotIn("father_name", second_pass)
+        self.assertNotIn("full_name", second_pass)
+        self.assertEqual(second_pass, {"aadhaar_last4": "9012"})
 
 
 if __name__ == "__main__":

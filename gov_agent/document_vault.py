@@ -181,6 +181,58 @@ def ensure_profile_passkey(phone: str, pin: Optional[str]) -> None:
     )
 
 
+def has_profile_passkey(phone: str) -> bool:
+    """Return True when the citizen already has a document passkey configured."""
+    resp = (
+        supabase.table("citizen_profiles")
+        .select("passkey_hash,passkey")
+        .eq("phone", phone)
+        .limit(1)
+        .execute()
+    )
+    profile = resp.data[0] if resp.data else {}
+    return bool(str(profile.get("passkey_hash") or "").strip() or str(profile.get("passkey") or "").strip())
+
+
+def set_profile_passkey(phone: str, new_pin: Optional[str], *, current_pin: Optional[str] = None) -> None:
+    """Set or change the document passkey for a citizen.
+
+    First-time set (no existing passkey) needs no ``current_pin`` — this is what
+    unblocks web-only users. Changing an existing passkey requires ``current_pin``
+    to match, so a stolen session token cannot silently reset it.
+    """
+    normalized_new = (new_pin or "").strip()
+    if not normalized_new.isdigit() or len(normalized_new) != 4:
+        raise DocumentVaultError(
+            "passkey_required",
+            "Passkey must be exactly 4 digits.",
+        )
+
+    resp = (
+        supabase.table("citizen_profiles")
+        .select("passkey_hash,passkey")
+        .eq("phone", phone)
+        .limit(1)
+        .execute()
+    )
+    profile = resp.data[0] if resp.data else {}
+    stored_digest = str(profile.get("passkey_hash") or "").strip()
+    legacy_pin = str(profile.get("passkey") or "").strip()
+
+    if stored_digest or legacy_pin:
+        # A passkey already exists — require the current one before changing it.
+        validate_stored_passkey(
+            current_pin,
+            stored_digest=stored_digest or None,
+            legacy_pin=legacy_pin or None,
+        )
+
+    supabase.table("citizen_profiles").upsert(
+        {"phone": phone, "passkey_hash": hash_passkey(normalized_new)},
+        on_conflict="phone",
+    ).execute()
+
+
 CASTE_PROFILE_VALUES = {
     "general": "general",
     "gen": "general",
@@ -258,37 +310,67 @@ def _document_caste_values(value: Any) -> Optional[tuple[str, str]]:
     return CASTE_DOCUMENT_VALUES[normalized]
 
 
+def _shared_profile_updates(extracted_data: dict[str, Any]) -> dict[str, Any]:
+    """Fields many document types carry, mapped onto their citizen_profiles columns.
+
+    Only keys actually present are returned, so a document that does not print a
+    field never contributes a blank value to the profile.
+    """
+    updates: dict[str, Any] = {}
+    for source_key, profile_key in (
+        ("father_name", "father_name"),
+        ("mother_name", "mother_name"),
+        ("district", "district"),
+        ("state", "state"),
+        ("pincode", "pincode"),
+    ):
+        value = extracted_data.get(source_key)
+        if _filled(value):
+            updates[profile_key] = str(value).strip()
+    return updates
+
+
 def build_profile_updates(doc_type: str, extracted_data: dict[str, Any]) -> dict[str, Any]:
     if doc_type == "pan":
-        return {
+        updates = {
             key: extracted_data[key]
             for key in ("pan_number", "full_name", "father_name", "dob")
             if extracted_data.get(key)
         }
+        return {**_shared_profile_updates(extracted_data), **updates}
     if doc_type == "aadhaar":
         updates = {
             key: extracted_data[key]
             for key in ("full_name", "dob", "gender", "address")
             if extracted_data.get(key)
         }
+        updates = {**_shared_profile_updates(extracted_data), **updates}
         aadhaar_number = str(extracted_data.get("aadhaar_number", "")).strip()
         digits = re.sub(r"\D", "", aadhaar_number)
         if digits:
             updates["aadhaar_last4"] = digits[-4:]
         return updates
-    if doc_type == "income_cert":
-        income = _parse_number(
-            _first_filled(extracted_data.get("annual_income"), extracted_data.get("income")),
-            integer=True,
-        )
-        return {"income": income} if income is not None else {}
-    if doc_type == "caste_cert":
+    if doc_type in {"income_cert", "caste_cert"}:
+        updates = _shared_profile_updates(extracted_data)
+        student_name = _first_filled(extracted_data.get("student_name"), extracted_data.get("full_name"))
+        if student_name:
+            updates["full_name"] = str(student_name).strip()
+        if doc_type == "income_cert":
+            income = _parse_number(
+                _first_filled(extracted_data.get("annual_income"), extracted_data.get("income")),
+                integer=True,
+            )
+            if income is not None:
+                updates["income"] = income
+            return updates
         caste = _normalize_profile_caste(
             _first_filled(extracted_data.get("caste"), extracted_data.get("category")),
         )
-        return {"caste": caste} if caste else {}
+        if caste:
+            updates["caste"] = caste
+        return updates
     if doc_type == "marksheet":
-        updates: dict[str, Any] = {}
+        updates = _shared_profile_updates(extracted_data)
         student_name = _first_filled(extracted_data.get("student_name"), extracted_data.get("full_name"))
         if student_name:
             updates["full_name"] = str(student_name).strip()
@@ -659,6 +741,9 @@ def _extract_fallback(doc_type: str) -> tuple[dict[str, Any], float, str]:
             "full_name": "SHASHANK GOWDA T",
             "dob": "2006-10-30",
             "gender": "Male",
+            "care_of": "Thimmaraju T",
+            "father_name": "Thimmaraju T",
+            "pincode": "560073",
             "address": (
                 "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, "
                 "Doddabidarakallu, Bangalore North, Nagasandra, Bangalore, "
@@ -732,13 +817,30 @@ def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
         ),
         "aadhaar": (
             "Extract from this Aadhaar card image:\n"
-            "- Full name as printed\n"
+            "- Full name as printed (the card holder, never a relative)\n"
             "- Date of birth (YYYY-MM-DD)\n"
             "- 12-digit Aadhaar number (1234 5678 9012 format)\n"
             "- Complete address\n"
+            "- 6-digit PIN code from the address\n"
             "- Gender\n"
-            'Return JSON only: {"aadhaar_number":"","full_name":"","dob":"","address":"","gender":"","confidence":0.0}',
-            {"aadhaar_number": "", "full_name": "", "dob": "", "address": "", "gender": "", "confidence": 0.0},
+            "- The C/O, S/O, D/O or W/O name exactly as printed (care_of)\n"
+            "- Father's or guardian's name if the card names one (S/O, D/O and C/O name the father)\n"
+            "- Mother's name only if the card explicitly prints one\n"
+            "Return an empty string for any field that is not printed. Do not guess.\n"
+            'Return JSON only: {"aadhaar_number":"","full_name":"","dob":"","address":"","pincode":"",'
+            '"gender":"","care_of":"","father_name":"","mother_name":"","confidence":0.0}',
+            {
+                "aadhaar_number": "",
+                "full_name": "",
+                "dob": "",
+                "address": "",
+                "pincode": "",
+                "gender": "",
+                "care_of": "",
+                "father_name": "",
+                "mother_name": "",
+                "confidence": 0.0,
+            },
         ),
         "income_cert": (
             "Extract from this income certificate image:\n"
@@ -746,8 +848,24 @@ def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
             "- Annual income as integer rupees\n"
             "- Issue date (YYYY-MM-DD)\n"
             "- Valid until date if present (YYYY-MM-DD)\n"
-            'Return JSON only: {"certificate_number":"","annual_income":0,"issue_date":"","valid_until":"","confidence":0.0}',
-            {"certificate_number": "", "annual_income": 0, "issue_date": "", "valid_until": "", "confidence": 0.0},
+            "- Applicant / student name\n"
+            "- Father's name and mother's name if present\n"
+            "- District and taluk if present\n"
+            "Return an empty string for any field that is not printed. Do not guess.\n"
+            'Return JSON only: {"certificate_number":"","annual_income":0,"issue_date":"","valid_until":"",'
+            '"student_name":"","father_name":"","mother_name":"","district":"","taluk":"","confidence":0.0}',
+            {
+                "certificate_number": "",
+                "annual_income": 0,
+                "issue_date": "",
+                "valid_until": "",
+                "student_name": "",
+                "father_name": "",
+                "mother_name": "",
+                "district": "",
+                "taluk": "",
+                "confidence": 0.0,
+            },
         ),
         "caste_cert": (
             "Extract from this caste certificate image:\n"
@@ -755,8 +873,26 @@ def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
             "- Caste\n"
             "- Category\n"
             "- Issue date (YYYY-MM-DD)\n"
-            'Return JSON only: {"certificate_number":"","caste":"","category":"","issue_date":"","confidence":0.0}',
-            {"certificate_number": "", "caste": "", "category": "", "issue_date": "", "confidence": 0.0},
+            "- Valid until date if present (YYYY-MM-DD)\n"
+            "- Applicant / student name\n"
+            "- Father's name and mother's name if present\n"
+            "- District and taluk if present\n"
+            "Return an empty string for any field that is not printed. Do not guess.\n"
+            'Return JSON only: {"certificate_number":"","caste":"","category":"","issue_date":"","valid_until":"",'
+            '"student_name":"","father_name":"","mother_name":"","district":"","taluk":"","confidence":0.0}',
+            {
+                "certificate_number": "",
+                "caste": "",
+                "category": "",
+                "issue_date": "",
+                "valid_until": "",
+                "student_name": "",
+                "father_name": "",
+                "mother_name": "",
+                "district": "",
+                "taluk": "",
+                "confidence": 0.0,
+            },
         ),
         "marksheet": (
             "Extract from this marksheet image:\n"
@@ -765,8 +901,26 @@ def _extraction_prompt(doc_type: str) -> tuple[str, dict[str, Any]]:
             "- Passing year\n"
             "- Percentage as number\n"
             "- Issue date if present (YYYY-MM-DD)\n"
-            'Return JSON only: {"student_name":"","roll_number":"","year":"","percentage":0.0,"issue_date":"","confidence":0.0}',
-            {"student_name": "", "roll_number": "", "year": "", "percentage": 0.0, "issue_date": "", "confidence": 0.0},
+            "- Father's name and mother's name if present\n"
+            "- Board, marks obtained, maximum marks and class obtained if present\n"
+            "Return an empty string for any field that is not printed. Do not guess.\n"
+            'Return JSON only: {"student_name":"","roll_number":"","year":"","percentage":0.0,"issue_date":"",'
+            '"father_name":"","mother_name":"","board":"","marks_obtained":0,"max_marks":0,"class_obtained":"",'
+            '"confidence":0.0}',
+            {
+                "student_name": "",
+                "roll_number": "",
+                "year": "",
+                "percentage": 0.0,
+                "issue_date": "",
+                "father_name": "",
+                "mother_name": "",
+                "board": "",
+                "marks_obtained": 0,
+                "max_marks": 0,
+                "class_obtained": "",
+                "confidence": 0.0,
+            },
         ),
     }
     return prompts[doc_type]
@@ -826,6 +980,65 @@ def _ocr_label_value(text: str, label_pattern: str) -> str:
     return _clean_ocr_value(value)
 
 
+def _ocr_person_name(text: str) -> str:
+    """Read the holder's own name.
+
+    ``_ocr_label_value`` searches anywhere in the line, so a bare ``Name`` pattern
+    also matches ``Father's Name:`` / ``Mother's Name:`` and can return a relative's
+    name as the holder. Anchoring at the start of the line keeps relation labels out.
+    """
+    for line in str(text or "").splitlines():
+        match = re.match(r"\s*(?:full\s+)?name\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
+        if match:
+            cleaned = _clean_ocr_value(match.group(1))
+            if cleaned:
+                return cleaned
+    return ""
+
+
+# Aadhaar prints exactly one relation line. S/O and D/O both name the father;
+# C/O is a guardian (usually the father); W/O and H/O name a spouse, not a parent.
+CARE_OF_RELATIONS = {
+    "s/o": "father",
+    "son of": "father",
+    "d/o": "father",
+    "daughter of": "father",
+    "c/o": "guardian",
+    "care of": "guardian",
+    "w/o": "spouse",
+    "wife of": "spouse",
+    "h/o": "spouse",
+    "husband of": "spouse",
+}
+
+
+def _extract_care_of(text: str) -> dict[str, str]:
+    match = re.search(
+        r"\b(S/O|D/O|C/O|W/O|H/O|Son\s+of|Daughter\s+of|Care\s+of|Wife\s+of|Husband\s+of)\b"
+        r"\s*[:\-]?\s*([^\n,|]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return {}
+    name = _clean_ocr_value(match.group(2))
+    if not name:
+        return {}
+    relation = CARE_OF_RELATIONS.get(re.sub(r"\s+", " ", match.group(1).strip().lower()))
+    extracted = {"care_of": name}
+    if relation in {"father", "guardian"}:
+        extracted["father_name"] = name
+    elif relation == "spouse":
+        extracted["spouse_name"] = name
+    return extracted
+
+
+def _extract_pincode(text: str) -> str:
+    """Pull a 6-digit PIN code. Word boundaries keep it from matching inside
+    longer digit runs such as a register number."""
+    return _regex_first(r"\b(\d{6})\b", text) or ""
+
+
 def _ocr_issue_date(text: str) -> Optional[date]:
     date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}-\d{1,2}-\d{1,2})"
     for pattern in (
@@ -836,6 +1049,42 @@ def _ocr_issue_date(text: str) -> Optional[date]:
         if parsed:
             return parsed
     return _parse_date(_regex_first(date_pattern, text))
+
+
+DOB_LABEL_PATTERN = (
+    r"(?:date\s+of\s+birth|birth\s+date|D\.?\s?O\.?\s?B\.?|"
+    r"जन्म\s*(?:की\s*)?(?:तारीख|तिथि))"
+)
+
+
+def _is_plausible_birth_date(value: date) -> bool:
+    today = date.today()
+    return value < today and today.year - value.year <= 120
+
+
+def _ocr_dob(text: str) -> Optional[date]:
+    """Read a date of birth.
+
+    A PAN card carries no issue date, so reusing ``_ocr_issue_date`` here made any
+    stray date win — including a future one. Prefer an explicitly labelled date of
+    birth, then fall back to the first date that could actually be one.
+    """
+    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}-\d{1,2}-\d{1,2})"
+
+    labelled = _parse_date(_regex_first(rf"{DOB_LABEL_PATTERN}\s*[:\-]?\s*{date_pattern}", text))
+    if labelled and _is_plausible_birth_date(labelled):
+        return labelled
+
+    for candidate in re.findall(date_pattern, text):
+        parsed = _parse_date(candidate)
+        if parsed and _is_plausible_birth_date(parsed):
+            return parsed
+    return None
+
+
+def _ocr_dob_iso(text: str) -> str:
+    parsed = _ocr_dob(text)
+    return parsed.isoformat() if parsed else ""
 
 
 def _ocr_valid_until(text: str, issue_date_obj: Optional[date]) -> Optional[date]:
@@ -850,6 +1099,35 @@ def _ocr_valid_until(text: str, issue_date_obj: Optional[date]) -> Optional[date
     return None
 
 
+def _extract_certificate_person(text: str) -> dict[str, str]:
+    """Names and place fields carried by income/caste certificates."""
+    student_name = _ocr_label_value(text, r"(?:Applicant|Student|Candidate)'?s?\s+Name") or _ocr_person_name(text)
+    if not student_name:
+        # Karnataka certificates phrase it as "Certified that <name> belongs to caste ...".
+        student_name = _clean_ocr_value(
+            _regex_first(
+                # Longest title first: an earlier "Kum" would otherwise eat part of "Kumar".
+                r"certified\s+that\s+(?:(?:Sri|Smt|Kumari|Kumar|Kum|Mrs|Mr|Ms)\.?\s+)?"
+                r"([A-Z][A-Za-z.\s]{2,60}?)\s+(?:belongs|is\s+a|son|daughter|residing)",
+                text,
+            )
+        )
+
+    father_name = _ocr_label_value(text, r"Father'?s\s+Name")
+    if not father_name:
+        father_name = _extract_care_of(text).get("father_name", "")
+
+    return {
+        "student_name": student_name,
+        "father_name": father_name,
+        "mother_name": _ocr_label_value(text, r"Mother'?s\s+Name"),
+        "district": _ocr_label_value(text, r"District"),
+        "taluk": _ocr_label_value(text, r"(?:Taluk|Taluka|Tehsil)"),
+        "address": _ocr_label_value(text, r"Address"),
+        "pincode": _extract_pincode(text),
+    }
+
+
 def _extract_income_or_caste_from_ocr_text(doc_type: str, text: str) -> dict[str, Any]:
     issue_date_obj = _ocr_issue_date(text)
     valid_until = _ocr_valid_until(text, issue_date_obj)
@@ -860,6 +1138,7 @@ def _extract_income_or_caste_from_ocr_text(doc_type: str, text: str) -> dict[str
         "certificate_number": certificate_number or "",
         "issue_date": issue_date_obj.isoformat() if issue_date_obj else "",
         "valid_until": valid_until.isoformat() if valid_until else "",
+        **_extract_certificate_person(text),
     }
     if doc_type == "income_cert":
         income_raw = _regex_first(
@@ -919,18 +1198,30 @@ def _extract_document_data_from_ocr_text(doc_type: str, text: str) -> dict[str, 
     if doc_type == "pan":
         return {
             "pan_number": _regex_first(r"\b([A-Z]{5}\d{4}[A-Z])\b", text) or "",
-            "full_name": _ocr_label_value(text, r"(?:Name|Full\s+Name)"),
+            "full_name": _ocr_person_name(text),
             "father_name": _ocr_label_value(text, r"Father'?s\s+Name"),
-            "dob": (_ocr_issue_date(text).isoformat() if _ocr_issue_date(text) else ""),
+            "mother_name": _ocr_label_value(text, r"Mother'?s\s+Name"),
+            "dob": _ocr_dob_iso(text),
         }
     if doc_type == "aadhaar":
-        return {
+        extracted = {
             "aadhaar_number": _regex_first(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text) or "",
-            "full_name": _ocr_label_value(text, r"(?:Name|Full\s+Name)"),
-            "dob": _ocr_label_value(text, r"(?:DOB|Date\s+of\s+Birth)"),
+            "full_name": _ocr_person_name(text),
+            # Normalise to ISO when the date is readable, else keep the raw text.
+            "dob": _ocr_dob_iso(text) or _ocr_label_value(text, r"(?:DOB|Date\s+of\s+Birth)"),
             "address": _ocr_label_value(text, r"Address"),
             "gender": _regex_first(r"\b(Male|Female|Other)\b", text) or "",
+            # Aadhaar names the guardian on a C/O, S/O, D/O or W/O line rather than
+            # a "Father's Name" label, so read both.
+            "father_name": _ocr_label_value(text, r"Father'?s\s+Name"),
+            "mother_name": _ocr_label_value(text, r"Mother'?s\s+Name"),
+            "care_of": "",
+            "pincode": _extract_pincode(text),
         }
+        for key, value in _extract_care_of(text).items():
+            if not str(extracted.get(key) or "").strip():
+                extracted[key] = value
+        return extracted
     if doc_type in {"income_cert", "caste_cert"}:
         return _extract_income_or_caste_from_ocr_text(doc_type, text)
     if doc_type == "marksheet":
@@ -1379,6 +1670,57 @@ def create_signed_download_url(storage_path: str, expires_in: int = 600) -> str:
     return response["signedURL"]
 
 
+# Anchors identify the citizen and come from a single document type each, so a
+# re-upload of that document is a correction rather than a cross-document conflict.
+PROFILE_IDENTITY_ANCHORS = {"pan_number", "aadhaar_last4"}
+
+
+def _values_equal(left: Any, right: Any) -> bool:
+    """Compare two field values the way a human would.
+
+    Numbers compare numerically ("25000" == 25000) and text compares ignoring case
+    and repeated whitespace ("THIMMARAJU  T" == "Thimmaraju T"), so the same fact
+    printed differently on two documents is recognised as one value, not a conflict.
+    """
+    left_number = _parse_number(left)
+    right_number = _parse_number(right)
+    if left_number is not None and right_number is not None:
+        return left_number == right_number
+    return (
+        re.sub(r"\s+", " ", str(left).strip()).casefold()
+        == re.sub(r"\s+", " ", str(right).strip()).casefold()
+    )
+
+
+def _resolve_profile_merge(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """Correlate each incoming field against the stored profile by key AND value.
+
+    Returns only the fields worth writing:
+      * key missing or blank -> fill it
+      * same key and equal value -> already known, leave it (a document sharing a
+        field with another document, such as father_name on both PAN and Aadhaar)
+      * same key, different value -> keep what is stored, never overwrite
+    """
+    resolved: dict[str, Any] = {}
+    for key, value in updates.items():
+        if not _filled(value):
+            continue
+        current_value = current.get(key)
+        if not _filled(current_value):
+            resolved[key] = value
+            continue
+        if _values_equal(current_value, value):
+            continue
+        if key in PROFILE_IDENTITY_ANCHORS:
+            resolved[key] = value
+            continue
+        logger.debug(
+            "Keeping stored profile value for %s; ignoring conflicting document value.",
+            key,
+        )
+    return resolved
+
+
 def _merge_profile_updates(phone: str, updates: dict[str, Any]) -> None:
     if not updates:
         return
@@ -1391,14 +1733,18 @@ def _merge_profile_updates(phone: str, updates: dict[str, Any]) -> None:
     )
     current = existing_resp.data[0] if existing_resp.data else {}
 
-    merged = {"phone": phone, "updated_at": datetime.now(timezone.utc).isoformat()}
-    for key, value in updates.items():
-        current_value = current.get(key)
-        if key in {"pan_number", "aadhaar_last4"} or not current_value:
-            merged[key] = value
+    resolved = _resolve_profile_merge(current, updates)
+    if not resolved:
+        return
 
-    if len(merged) > 2:
-        supabase.table("citizen_profiles").upsert(merged, on_conflict="phone").execute()
+    supabase.table("citizen_profiles").upsert(
+        {
+            "phone": phone,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            **resolved,
+        },
+        on_conflict="phone",
+    ).execute()
 
 
 def _record_status(doc_type: str, confidence: float, validation: dict[str, Any]) -> str:

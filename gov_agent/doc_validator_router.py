@@ -12,9 +12,11 @@ from gov_agent.document_vault import (
     delete_user_document,
     ensure_profile_passkey,
     get_user_document,
+    has_profile_passkey,
     ingest_document,
     list_user_documents,
     log_document_access,
+    set_profile_passkey,
     update_user_document,
 )
 from gov_agent.models import DocumentEditRequest, DocumentUploadRequest
@@ -56,6 +58,33 @@ class DocValidateRequest(BaseModel):
     image_b64: str
     session_id: Optional[str] = None
     phone: Optional[str] = None
+
+
+class SetPasskeyRequest(BaseModel):
+    new_passkey: str
+    current_passkey: Optional[str] = None
+    phone: Optional[str] = None
+
+
+@router.get("/passkey-status")
+async def get_passkey_status(
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    phone = _require_token_phone(token_phone)
+    return {"phone": phone, "has_passkey": has_profile_passkey(phone)}
+
+
+@router.post("/passkey")
+async def set_passkey(
+    req: SetPasskeyRequest,
+    token_phone: Optional[str] = Depends(_optional_jwt),
+):
+    resolved_phone = require_phone_access(req.phone, token_phone)
+    try:
+        set_profile_passkey(resolved_phone, req.new_passkey, current_pin=req.current_passkey)
+    except DocumentVaultError as exc:
+        raise _vault_http_exception(exc) from exc
+    return {"phone": resolved_phone, "has_passkey": True}
 
 
 @router.post("/validate")

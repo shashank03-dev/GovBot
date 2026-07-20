@@ -108,8 +108,9 @@ MENU = (
     "💡 *Other commands:*\n"
     "• 'profile' — View/update profile\n"
     "• 'set pin' — Set security passkey\n"
+    "• 'docs' — Manage documents (view/upload/edit)\n"
+    "• 'upload pan' / 'upload custom' — Save any document\n"
     "• 'my pan' / 'my aadhaar' — View docs (passkey needed)\n"
-    "• 'upload pan' / 'upload aadhaar' — Save KYC docs\n"
     "• 'web' — Open web dashboard\n\n"
     "Reply with 1-5 or a command above"
 )
@@ -122,18 +123,6 @@ PORTAL_MENU = (
     "4️⃣ Minority Scholarship\n\n"
     "Reply with 1, 2, 3 or 4"
 )
-
-_DOCUMENT_UPLOAD_COMMANDS = {
-    "upload pan": "pan",
-    "upload aadhaar": "aadhaar",
-    "upload aadhar": "aadhaar",
-    "upload adhaar": "aadhaar",
-    "upload income cert": "income_cert",
-    "upload income certificate": "income_cert",
-    "upload caste cert": "caste_cert",
-    "upload caste certificate": "caste_cert",
-    "upload marksheet": "marksheet",
-}
 
 _DOCUMENT_UPLOAD_LABELS = {
     "pan": "PAN card",
@@ -151,7 +140,8 @@ _UPLOAD_COMMAND_HELP = (
     "• upload aadhaar\n"
     "• upload income certificate\n"
     "• upload caste certificate\n"
-    "• upload marksheet"
+    "• upload marksheet\n"
+    "• upload custom"
 )
 
 _RENEWAL_PORTAL_KEYWORDS = {
@@ -173,6 +163,22 @@ _DOCUMENT_ACCESS_KEYWORDS = {
     "marksheet": "marksheet",
 }
 _CUSTOM_DOCUMENT_TOKEN_STOPWORDS = {"certificate", "document", "proof", "copy", "form", "card"}
+
+# Document-manager sub-states. While the user is inside any of these, the main
+# FSM's global restart/exit handling is unreachable (those states return early),
+# so a dedicated escape hatch is applied before the document-state chain runs.
+_DOCUMENT_FLOW_STATES = {
+    "document_retrieval_mode",
+    wdm.DOCUMENT_HUB_STATE,
+    wdm.DOCUMENT_SELECT_STATE,
+    wdm.DOCUMENT_UPLOAD_CHOOSE_STATE,
+    wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE,
+    wdm.DOCUMENT_EDIT_MODE_STATE,
+    wdm.DOCUMENT_EDIT_FIELD_STATE,
+    wdm.DOCUMENT_EDIT_VALUE_STATE,
+    wdm.DOCUMENT_REPLACE_FILE_STATE,
+    wdm.DOCUMENT_DELETE_CONFIRM_STATE,
+}
 
 
 def _has_document_request_intent(body_lower: str) -> bool:
@@ -299,7 +305,7 @@ def _format_upload_result(doc_type: str, result: dict[str, Any]) -> str:
     if status_message:
         lines.extend(["", status_message])
 
-    lines.extend(["", "Type 'Hi' for menu or upload another document command."])
+    lines.extend(["", "Type 'docs' to manage your documents or 'Hi' for the main menu."])
     return "\n".join(lines)
 
 
@@ -588,6 +594,22 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     body_lower = body.strip().lower()
     normalized_body = wdm.normalize_text(body)
 
+    # ── Escape hatch for document-manager sub-states ───────────────────────
+    # Document sub-states short-circuit before the main FSM's global
+    # restart/exit handling (further below), so honour the universal escape
+    # words here too. "cancel" is intentionally excluded — it carries a local
+    # meaning inside the delete-confirm and custom-label steps.
+    if state in _DOCUMENT_FLOW_STATES:
+        if body_lower in _RESTART_KEYWORDS:
+            return (MENU, "greeting", {})
+        if body_lower in {"exit", "close"}:
+            farewell = (
+                "👋 Thank you for using GovBot!\n\n"
+                "Your session has been closed.\n\n"
+                "Type 'Hi' anytime to start again 🙏"
+            )
+            return (farewell, "__delete__", {})
+
     # ── Global keyword: set passkey ────────────────────────────────────────
     if body_lower in {"set pin", "set passkey", "change pin", "change passkey"}:
         return ("🔐 Enter a 4-digit security PIN:", "set_passkey", data)
@@ -636,18 +658,6 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 _clear_document_manager_state(data),
             )
 
-    if body_lower in _DOCUMENT_UPLOAD_COMMANDS:
-        doc_type = _DOCUMENT_UPLOAD_COMMANDS[body_lower]
-        label = _DOCUMENT_UPLOAD_LABELS[doc_type]
-        return (
-            f"📎 Please send your {label} as a clear photo or document file.",
-            "kyc_document_upload",
-            {**data, "_pending_doc_type": doc_type},
-        )
-
-    if body_lower.startswith("upload "):
-        return (_UPLOAD_COMMAND_HELP, "greeting", data)
-
     # ── Global keyword: open web dashboard ─────────────────────────────────
     if body_lower in {"web", "open web", "dashboard", "open dashboard", "website"}:
         from gov_agent.qr_login import get_login_url
@@ -695,20 +705,13 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         if keyword in body_lower and ("my" in body_lower or "what" in body_lower or "show" in body_lower):
             profile = await _load_profile(msg.phone)
             if not profile.get("passkey_hash"):
-                next_data = {**data, "_after_passkey": "reveal"}
-                if keyword in {"pan", "aadhaar"}:
-                    next_data["_reveal_doc_type"] = keyword
-                else:
-                    next_data["_reveal_field"] = field
+                next_data = {**data, "_after_passkey": "reveal", "_reveal_field": field}
                 return (
                     "🔐 First, set a 4-digit security passkey to protect your data:",
                     "set_passkey",
                     next_data,
                 )
-            if keyword in {"pan", "aadhaar"}:
-                data["_reveal_doc_type"] = keyword
-            else:
-                data["_reveal_field"] = field
+            data["_reveal_field"] = field
             return ("🔐 Enter your 4-digit passkey:", "passkey_verify", data)
 
     # ── Global keyword: update profile ──────────────────────────────────────
@@ -854,6 +857,8 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         )
 
     elif state == wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE:
+        if normalized_body in {"back", "cancel"}:
+            return (_render_document_hub_reply(msg.phone), wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
         label = " ".join(body.strip().split())
         if not label:
             return ("📝 Please send a document name first.", wdm.DOCUMENT_CUSTOM_UPLOAD_LABEL_STATE, data)
@@ -920,6 +925,11 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         )
 
     elif state == wdm.DOCUMENT_EDIT_VALUE_STATE:
+        if normalized_body in {"back", "cancel"}:
+            document = get_user_document(str(data.get("_document_target_id") or ""))
+            if not document:
+                return ("❌ That document is no longer available.", wdm.DOCUMENT_HUB_STATE, _clear_document_manager_state(data))
+            return (wdm.render_edit_field_prompt(document), wdm.DOCUMENT_EDIT_FIELD_STATE, data)
         document_id = str(data.get("_document_target_id") or "")
         field_key = str(data.get("_document_edit_field") or "")
         value = body.strip()

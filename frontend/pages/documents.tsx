@@ -42,6 +42,13 @@ type ApiErrorPayload = {
 
 type VaultActionKind = 'preview' | 'download' | 'edit' | 'delete';
 
+type PasskeyFormState = {
+  newPasskey: string;
+  confirmPasskey: string;
+  currentPasskey: string;
+  error: string;
+};
+
 type VaultActionState = {
   action: VaultActionKind;
   documentId: string;
@@ -106,6 +113,9 @@ function apiErrorMessage(status: number, payload: ApiErrorPayload | null | undef
   if (status === 403 && payload?.detail === 'Access denied') {
     return 'Your session expired. Please log in again and retry.';
   }
+  if (status === 428) {
+    return 'You have not set a document passkey yet. Set one to unlock your vault.';
+  }
   if (Array.isArray(payload?.detail)) {
     const message = payload.detail
       .map((item) => item?.msg || '')
@@ -121,6 +131,22 @@ function apiErrorMessage(status: number, payload: ApiErrorPayload | null | undef
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+/** Carries the HTTP status so callers can react to it (e.g. 428 = no passkey set yet). */
+class VaultApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'VaultApiError';
+    this.status = status;
+  }
+}
+
+function throwIfNotOk(res: Response, payload: ApiErrorPayload | null | undefined, fallback: string) {
+  if (res.ok) return;
+  throw new VaultApiError(res.status, apiErrorMessage(res.status, payload, fallback));
 }
 
 function buildEditValues(docType: DocType, current: Record<string, string | number | null>) {
@@ -209,6 +235,10 @@ export default function DocumentsPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [vaultAction, setVaultAction] = useState<VaultActionState | null>(null);
   const [vaultActionBusy, setVaultActionBusy] = useState(false);
+  // null while the status is still unknown, so the button can stay neutral.
+  const [hasPasskey, setHasPasskey] = useState<boolean | null>(null);
+  const [passkeyForm, setPasskeyForm] = useState<PasskeyFormState | null>(null);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   const loadDocuments = useCallback(async (activePhone: string, authToken: string) => {
     setLoading(true);
@@ -234,6 +264,19 @@ export default function DocumentsPage() {
     }
   }, []);
 
+  const loadPasskeyStatus = useCallback(async (authToken: string) => {
+    try {
+      const res = await fetch(buildProxyApiPath('documents/passkey-status'), buildBackendRequestInit({
+        headers: { Authorization: `Bearer ${authToken}` },
+      }));
+      if (!res.ok) return;
+      const data = await res.json() as { has_passkey?: boolean };
+      setHasPasskey(Boolean(data.has_passkey));
+    } catch {
+      // Advisory only: the passkey dialog still works if this lookup fails.
+    }
+  }, []);
+
   useEffect(() => {
     if (!isReady) return;
     const savedToken = localStorage.getItem('govbot_token') || '';
@@ -251,7 +294,8 @@ export default function DocumentsPage() {
     setToken(savedToken);
     setPhone(savedPhone);
     void loadDocuments(savedPhone, savedToken);
-  }, [isReady, loadDocuments, replace]);
+    void loadPasskeyStatus(savedToken);
+  }, [isReady, loadDocuments, loadPasskeyStatus, replace]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -371,6 +415,86 @@ export default function DocumentsPage() {
     ));
   }
 
+  function openPasskeyForm() {
+    setPasskeyForm({ newPasskey: '', confirmPasskey: '', currentPasskey: '', error: '' });
+    setError('');
+    setNotice('');
+  }
+
+  function closePasskeyForm() {
+    if (passkeyBusy) return;
+    setPasskeyForm(null);
+  }
+
+  function updatePasskeyField(field: 'newPasskey' | 'confirmPasskey' | 'currentPasskey', value: string) {
+    setPasskeyForm((current) => (
+      current
+        ? { ...current, [field]: value.replace(/\D/g, '').slice(0, 4), error: '' }
+        : current
+    ));
+  }
+
+  async function submitPasskey(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!token || !passkeyForm) return;
+
+    const newPasskey = passkeyForm.newPasskey.trim();
+    const confirmPasskey = passkeyForm.confirmPasskey.trim();
+    const currentPasskey = passkeyForm.currentPasskey.trim();
+    const failWith = (message: string) => {
+      setPasskeyForm((current) => (current ? { ...current, error: message } : current));
+    };
+
+    if (!/^\d{4}$/.test(newPasskey)) {
+      failWith('Passkey must be exactly 4 digits.');
+      return;
+    }
+    if (newPasskey !== confirmPasskey) {
+      failWith('The two passkeys do not match.');
+      return;
+    }
+    // Changing an existing passkey requires proving you know the current one.
+    if (hasPasskey && !/^\d{4}$/.test(currentPasskey)) {
+      failWith('Enter your current 4-digit passkey to change it.');
+      return;
+    }
+
+    setPasskeyBusy(true);
+    try {
+      const res = await fetch(buildProxyApiPath('documents/passkey'), buildBackendRequestInit({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          new_passkey: newPasskey,
+          current_passkey: hasPasskey ? currentPasskey : undefined,
+        }),
+      }));
+      const data = await res.json() as ApiErrorPayload;
+      throwIfNotOk(res, data, 'Failed to save passkey.');
+      setHasPasskey(true);
+      setPasskeyForm(null);
+      setNotice('Passkey saved. Use it to unlock your vault here or in WhatsApp.');
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, 'Failed to save passkey');
+      // The status lookup can fail or go stale. If the backend says a passkey already
+      // exists, reveal the current-passkey field rather than leaving a dead end.
+      if (
+        error instanceof VaultApiError
+        && error.status === 401
+        && hasPasskey !== true
+        && !message.startsWith('Your session expired')
+      ) {
+        setHasPasskey(true);
+      }
+      failWith(message);
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
   async function submitVaultAction(e?: React.FormEvent) {
     e?.preventDefault();
     if (!token || !vaultAction) return;
@@ -379,7 +503,7 @@ export default function DocumentsPage() {
     if (!/^\d{4}$/.test(passkey)) {
       setVaultAction((current) => (current ? {
         ...current,
-        error: 'Enter the same 4-digit passkey you set in WhatsApp.',
+        error: 'Enter your 4-digit vault passkey.',
       } : current));
       return;
     }
@@ -399,7 +523,7 @@ export default function DocumentsPage() {
           },
         }));
         const data = await res.json() as { view_url?: string } & ApiErrorPayload;
-        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Preview unavailable.'));
+        throwIfNotOk(res, data, 'Preview unavailable.');
         setVaultAction(null);
         window.open(data.view_url, '_blank', 'noopener,noreferrer');
         return;
@@ -415,7 +539,7 @@ export default function DocumentsPage() {
           },
         }));
         const data = await res.json() as { download_url?: string } & ApiErrorPayload;
-        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Download unavailable.'));
+        throwIfNotOk(res, data, 'Download unavailable.');
         setVaultAction(null);
         window.open(data.download_url, '_blank', 'noopener,noreferrer');
         return;
@@ -433,7 +557,7 @@ export default function DocumentsPage() {
           extracted_data?: Record<string, string | number | null>;
           custom_label?: string | null;
         } & ApiErrorPayload;
-        if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to open document details.'));
+        throwIfNotOk(res, data, 'Failed to open document details.');
         const current = data.extracted_data || {};
         setEditingId(documentId);
         setEditingPasskey(passkey);
@@ -452,7 +576,7 @@ export default function DocumentsPage() {
         },
       }));
       const data = await res.json() as ApiErrorPayload;
-      if (!res.ok) throw new Error(apiErrorMessage(res.status, data, 'Failed to delete document.'));
+      throwIfNotOk(res, data, 'Failed to delete document.');
       setVaultAction(null);
       setNotice('Document deleted.');
       if (editingId === documentId) cancelEditing();
@@ -468,6 +592,15 @@ export default function DocumentsPage() {
               ? 'Failed to open document details.'
               : 'Failed to delete document',
       );
+      // 428 means no passkey exists yet — asking again for one they never set is a
+      // dead end, so swap straight to the dialog that creates it.
+      if (error instanceof VaultApiError && error.status === 428) {
+        setHasPasskey(false);
+        setVaultAction(null);
+        openPasskeyForm();
+        setError(message);
+        return;
+      }
       setVaultAction((current) => (current ? { ...current, error: message } : current));
     } finally {
       setVaultActionBusy(false);
@@ -557,9 +690,19 @@ export default function DocumentsPage() {
               Save your identity and scholarship documents once, preview them securely, and let GovBot reuse them across flows.
             </p>
           </div>
-          <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-right">
-            <div className="text-xs uppercase tracking-[0.18em] text-orange-500 font-semibold">Vault Owner</div>
-            <div className="text-sm font-semibold text-slate-800">{phone || 'Loading...'}</div>
+          <div className="shrink-0 text-right">
+            <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.18em] text-orange-500 font-semibold">Vault Owner</div>
+              <div className="text-sm font-semibold text-slate-800">{phone || 'Loading...'}</div>
+            </div>
+            <button
+              type="button"
+              onClick={openPasskeyForm}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              {hasPasskey === false ? 'Set passkey' : 'Change passkey'}
+            </button>
           </div>
         </div>
 
@@ -819,6 +962,124 @@ export default function DocumentsPage() {
         </div>
 
         <AnimatePresence>
+          {passkeyForm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6"
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full max-w-md rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_80px_-30px_rgba(15,23,42,0.5)]"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-50 text-[#ff9933]">
+                      <Lock className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+                        {hasPasskey ? 'Change vault passkey' : 'Set vault passkey'}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {hasPasskey
+                          ? 'Enter your current passkey, then choose a new 4-digit passkey.'
+                          : 'Choose a 4-digit passkey to protect your documents. It works here and in WhatsApp.'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closePasskeyForm}
+                    disabled={passkeyBusy}
+                    className="rounded-full border border-slate-200 p-2 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 disabled:opacity-50"
+                    aria-label="Close passkey dialog"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={submitPasskey} className="mt-6 space-y-4">
+                  {hasPasskey && (
+                    <label className="block">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Current passkey
+                      </div>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        autoFocus
+                        maxLength={4}
+                        value={passkeyForm.currentPasskey}
+                        onChange={(e) => updatePasskeyField('currentPasskey', e.target.value)}
+                        placeholder="Current passkey"
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition-colors focus:border-[#ff9933] focus:bg-white"
+                      />
+                    </label>
+                  )}
+
+                  <label className="block">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      New 4-digit passkey
+                    </div>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      autoFocus={!hasPasskey}
+                      maxLength={4}
+                      value={passkeyForm.newPasskey}
+                      onChange={(e) => updatePasskeyField('newPasskey', e.target.value)}
+                      placeholder="New passkey"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition-colors focus:border-[#ff9933] focus:bg-white"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Confirm new passkey
+                    </div>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={passkeyForm.confirmPasskey}
+                      onChange={(e) => updatePasskeyField('confirmPasskey', e.target.value)}
+                      placeholder="Re-enter passkey"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition-colors focus:border-[#ff9933] focus:bg-white"
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      This is the same passkey GovBot asks for in WhatsApp.
+                    </p>
+                  </label>
+
+                  {passkeyForm.error && <NoticeBanner tone="error" message={passkeyForm.error} />}
+
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closePasskeyForm}
+                      disabled={passkeyBusy}
+                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={passkeyBusy}
+                      className="rounded-2xl bg-gradient-to-r from-[#ff9933] to-[#e67e00] px-4 py-3 text-sm font-semibold text-white transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
+                    >
+                      {passkeyBusy ? 'Saving passkey...' : hasPasskey ? 'Update passkey' : 'Save passkey'}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+
           {vaultAction && activeVaultAction && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -890,7 +1151,7 @@ export default function DocumentsPage() {
                       }`}
                     />
                     <p className="mt-2 text-xs text-slate-500">
-                      Use the same passkey you set in WhatsApp for quick document access.
+                      The same passkey works in WhatsApp and here.
                     </p>
                   </label>
 
