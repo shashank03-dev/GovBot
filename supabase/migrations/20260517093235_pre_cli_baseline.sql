@@ -1,0 +1,9 @@
+-- Placeholder for a migration that was applied to the remote database before
+-- this repo adopted the Supabase CLI. The schema it created is captured in
+-- schema.sql at the repo root, which remains the source of truth for the
+-- tables predating CLI-managed migrations.
+--
+-- This file exists only so the local migration history lines up with the
+-- remote supabase_migrations.schema_migrations table; `supabase db push`
+-- skips it because the remote already records this version as applied.
+-- Intentionally no statements.
