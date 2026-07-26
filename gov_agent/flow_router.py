@@ -23,6 +23,7 @@ from gov_agent.document_vault import (
     verify_passkey,
 )
 from gov_agent.llm_text_router import generate_text_reply
+from gov_agent import apply_prefill
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,15 @@ _DOCUMENT_FLOW_STATES = {
     wdm.DOCUMENT_DELETE_CONFIRM_STATE,
 }
 
+# Profile-driven apply states own their own keyword handling (CONFIRM, EDIT …),
+# so the global document-command parser must not intercept those words here.
+_APPLY_FLOW_STATES = {
+    "apply_collect_missing",
+    "apply_review",
+    "apply_edit_value",
+    "apply_await_document",
+}
+
 
 def _has_document_request_intent(body_lower: str) -> bool:
     return any(token in body_lower for token in ("my", "show", "document", "preview"))
@@ -324,6 +334,50 @@ def _portal_next_manual_state(portal: str) -> str:
         "csss": "csss_collect_name",
         "minority": "minority_collect_name",
     }.get(portal, "collect_name")
+
+
+def _bank_already_verified(phone: str, portal: str) -> bool:
+    """Only NSP has a bank step; True when this phone has a prior verified account."""
+    if portal != "nsp":
+        return False
+    try:
+        from gov_agent.npci_agent import has_verified_bank_account
+        return bool(has_verified_bank_account(phone))
+    except Exception:
+        return False
+
+
+def _apply_review_summary(data: dict[str, Any]) -> tuple[str, str, dict]:
+    """Rebuild the confirm summary from session data (all fields present)."""
+    portal = data.get("portal", "nsp")
+    bank_verified = bool(data.get("_bank_verified"))
+    keys = apply_prefill.portal_field_keys(portal, bank_verified=bank_verified)
+    filled = {key: data[key] for key in keys if key in data}
+    summary = apply_prefill.build_summary(portal, filled, [], bank_verified=bank_verified)
+    return (summary, "apply_review", data)
+
+
+async def _enter_apply_flow(phone: str, data: dict[str, Any], portal: str) -> tuple[str, str, dict]:
+    """Start an application using the saved profile instead of re-asking everything.
+
+    Brand-new users (empty profile) keep the original field-by-field flow. A
+    returning user is shown what's already on file and asked only for whatever is
+    still missing.
+    """
+    data["portal"] = portal
+    profile = await _load_profile(phone)
+    if not profile.get("full_name"):
+        return ("What is your full name as per Aadhaar?", _portal_next_manual_state(portal), data)
+
+    bank_verified = _bank_already_verified(phone, portal)
+    data["_bank_verified"] = bank_verified
+    filled, missing = apply_prefill.resolve_prefill(profile, portal, bank_verified=bank_verified)
+    data.update(filled)
+    summary = apply_prefill.build_summary(portal, filled, missing, bank_verified=bank_verified)
+    if missing:
+        data["_apply_missing"] = list(missing)
+        return (summary, "apply_collect_missing", data)
+    return (summary, "apply_review", data)
 
 
 async def _initialize_nsp_prefill_session(phone: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -614,7 +668,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
     if body_lower in {"set pin", "set passkey", "change pin", "change passkey"}:
         return ("🔐 Enter a 4-digit security PIN:", "set_passkey", data)
 
-    document_command = wdm.parse_document_command(body)
+    document_command = None if state in _APPLY_FLOW_STATES else wdm.parse_document_command(body)
     if document_command:
         kind = document_command["kind"]
         if kind == "hub":
@@ -1042,20 +1096,29 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
             return (MENU, "greeting", data)
 
     elif state == "portal_select":
-        if body == "1":
-            data["portal"] = "nsp"
-            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
-        elif body == "2":
-            data["portal"] = "ssp"
-            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
-        elif body == "3":
-            data["portal"] = "csss"
-            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
-        elif body == "4":
-            data["portal"] = "minority"
-            return ("🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.", "digilocker_offer", data)
-        else:
+        portal_map = {"1": "nsp", "2": "ssp", "3": "csss", "4": "minority"}
+        portal = portal_map.get(body)
+        if not portal:
             return (PORTAL_MENU, "portal_select", data)
+        data["portal"] = portal
+        # Skip the DigiLocker offer and every field question when the saved
+        # profile already covers everything this portal needs — jump straight
+        # to the confirm summary.
+        profile = await _load_profile(msg.phone)
+        bank_verified = _bank_already_verified(msg.phone, portal)
+        if profile.get("full_name") and apply_prefill.is_portal_complete(
+            profile, portal, bank_verified=bank_verified
+        ):
+            data["_bank_verified"] = bank_verified
+            filled, _ = apply_prefill.resolve_prefill(profile, portal, bank_verified=bank_verified)
+            data.update(filled)
+            summary = apply_prefill.build_summary(portal, filled, [], bank_verified=bank_verified)
+            return (summary, "apply_review", data)
+        return (
+            "🔗 *Connect DigiLocker?*\n\nReply *YES* to review required documents first, or *NO* to enter manually.",
+            "digilocker_offer",
+            data,
+        )
 
     elif state == "digilocker_offer":
         if body.lower() in ["yes", "y", "haan", "ಹೌದು"]:
@@ -1083,17 +1146,10 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                 )
             except Exception:
                 # Fallback to manual entry
-                return ("What is your full name as per Aadhaar?", "collect_name", data)
+                return await _enter_apply_flow(msg.phone, data, data.get("portal", "nsp"))
         else:
-            # Skip DigiLocker, go to manual entry
-            portal = data.get("portal", "nsp")
-            next_states = {
-                "nsp": "collect_name",
-                "ssp": "ssp_collect_name",
-                "csss": "csss_collect_name",
-                "minority": "minority_collect_name",
-            }
-            return ("What is your full name as per Aadhaar?", next_states.get(portal, "collect_name"), data)
+            # Skip DigiLocker, go to manual entry (prefilled from profile if known)
+            return await _enter_apply_flow(msg.phone, data, data.get("portal", "nsp"))
 
     elif state == "digilocker_awaiting_auth":
         if body.lower() in ["check", "status"]:
@@ -1122,15 +1178,8 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
                     data
                 )
         elif body.lower() in ["skip", "no", "n", "ಬೇಡ"]:
-            # Skip to manual entry
-            portal = data.get("portal", "nsp")
-            next_states = {
-                "nsp": "collect_name",
-                "ssp": "ssp_collect_name",
-                "csss": "csss_collect_name",
-                "minority": "minority_collect_name",
-            }
-            return ("What is your full name as per Aadhaar?", next_states.get(portal, "collect_name"), data)
+            # Skip to manual entry (prefilled from profile if known)
+            return await _enter_apply_flow(msg.phone, data, data.get("portal", "nsp"))
         else:
             return (
                 "⏳ Waiting for DigiLocker authorization...\n\n"
@@ -1409,6 +1458,69 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
         except Exception as e:
             return (f"❌ Fill error: {str(e)[:100]}", "greeting", data)
 
+    elif state == "apply_collect_missing":
+        missing = list(data.get("_apply_missing") or [])
+        if not missing:
+            return _apply_review_summary(data)
+        key = missing[0]
+        field = apply_prefill.FIELDS[key]
+        ok, value, error = field.validate(body)
+        if not ok:
+            return (error, "apply_collect_missing", data)
+        data[key] = value
+        await _save_profile_field(msg.phone, field.profile_key, value)
+        missing.pop(0)
+        data["_apply_missing"] = missing
+        if missing:
+            return (apply_prefill.FIELDS[missing[0]].prompt, "apply_collect_missing", data)
+        data.pop("_apply_missing", None)
+        return _apply_review_summary(data)
+
+    elif state == "apply_review":
+        command = body.strip().lower()
+        if command in {"confirm", "yes", "y", "ok", "submit", "proceed"}:
+            return (
+                "📎 Last step — send a clear photo of your Aadhaar to submit.",
+                "apply_await_document",
+                data,
+            )
+        edit_key = apply_prefill.match_edit_field(data.get("portal", "nsp"), body)
+        if edit_key:
+            data["_apply_edit_field"] = edit_key
+            return (apply_prefill.FIELDS[edit_key].prompt, "apply_edit_value", data)
+        return (
+            "Reply *CONFIRM* to submit, or *EDIT <field>* (e.g. EDIT income) to change one.",
+            "apply_review",
+            data,
+        )
+
+    elif state == "apply_edit_value":
+        key = data.get("_apply_edit_field")
+        if not key or key not in apply_prefill.FIELDS:
+            data.pop("_apply_edit_field", None)
+            return _apply_review_summary(data)
+        field = apply_prefill.FIELDS[key]
+        ok, value, error = field.validate(body)
+        if not ok:
+            return (error, "apply_edit_value", data)
+        data[key] = value
+        await _save_profile_field(msg.phone, field.profile_key, value)
+        data.pop("_apply_edit_field", None)
+        return _apply_review_summary(data)
+
+    elif state == "apply_await_document":
+        if msg.message_type == "image" and msg.media_id:
+            data["media_id"] = msg.media_id
+            portal = data.get("portal", "nsp")
+            if portal == "nsp" and not data.get("_bank_verified"):
+                return await _run_bank_verification(msg.phone, data)
+            return await _submit_application(msg.phone, data, portal)
+        return (
+            "📎 Please send a clear photo of your Aadhaar card to submit.",
+            "apply_await_document",
+            data,
+        )
+
     elif state == "collect_name":
         data["name"] = body.strip()
         await _save_profile_field(msg.phone, "full_name", data["name"])
@@ -1669,11 +1781,7 @@ async def route(session: dict, msg: WhatsAppIncoming) -> tuple[dict[str, Any] | 
 
     elif state == "eligibility_result":
         if body.strip() == "1" and data.get("elig_result", {}).get("eligible"):
-            return (
-                "What is your full name as per Aadhaar?",
-                "collect_name",
-                data,
-            )
+            return await _enter_apply_flow(msg.phone, data, "nsp")
         return (MENU, "greeting", data)
 
     elif state == "eligibility_query":
