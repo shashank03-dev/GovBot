@@ -34,6 +34,9 @@ services:
       # --- Non-secret model / OCR config ---
       - key: GEMINI_GENERATION_MODELS
         value: gemini-3.1-flash-lite,gemini-3.5-flash-lite
+      # Ping our own health URL every 10 min so the free instance never sleeps.
+      - key: KEEP_ALIVE_URL
+        value: https://govbot-backend-tj1i.onrender.com/govbot/health
       - key: GEMINI_VISION_VALIDATION
         value: "false"
       - key: MISTRAL_OCR_MODEL

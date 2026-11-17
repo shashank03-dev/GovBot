@@ -216,6 +216,7 @@ make dev-frontend
 | --- | --- |
 | `GEMINI_API_KEY_2` | Optional second Gemini key; adds quota only if it belongs to a different Google Cloud project |
 | `GEMINI_GENERATION_MODELS` | Optional Gemini fallback order, default `gemini-3.1-flash-lite,gemini-3.5-flash-lite` |
+| `KEEP_ALIVE_URL` | Optional deployed `/govbot/health` URL the backend pings every 10 min so free hosts don't sleep |
 | `GEMINI_RATE_LIMITS` | Optional per-project budgets as `model=rpm/rpd,...`; match the limits AI Studio shows |
 | `TEXT_LLM_PROVIDERS_JSON` | Optional test-time text/chat pool for Groq, Gemini, and Mistral |
 | `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template for OTP delivery |

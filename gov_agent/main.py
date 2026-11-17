@@ -179,8 +179,15 @@ app.include_router(
 @asynccontextmanager
 async def lifespan(app):
     from gov_agent.config import validate_config
+    from gov_agent.keep_alive import start_keep_alive, stop_keep_alive
+
     validate_config()
-    yield
+    # Read-only background pings (opt-in via KEEP_ALIVE_URL); nothing runs at startup.
+    keep_alive_task = start_keep_alive()
+    try:
+        yield
+    finally:
+        await stop_keep_alive(keep_alive_task)
 
 app.router.lifespan_context = lifespan
 

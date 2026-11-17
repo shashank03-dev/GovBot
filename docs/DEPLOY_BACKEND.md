@@ -6,6 +6,10 @@
 > `main`, set the secrets marked `sync: false` on the service's Environment page, and refresh
 > `WHATSAPP_TOKEN` there before each demo when using Meta's 24-hour test token.
 >
+> `KEEP_ALIVE_URL` makes the backend ping its own health URL every 10 minutes so the free
+> instance never sleeps (Render sleeps it after 15 idle minutes). An always-on service uses
+> ~744 of the workspace's 750 free instance-hours per month, shared with other free services.
+>
 > Gemini rate limits apply per Google Cloud project, not per key: `GEMINI_API_KEY_2` only adds
 > quota when it comes from a second project.
 >
