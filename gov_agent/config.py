@@ -11,8 +11,13 @@ as configurable constants for the application.
 - SUPABASE_URL: The endpoint URL for the Supabase project database.
 - SUPABASE_KEY: The API key for authenticating with the Supabase project.
 - GEMINI_API_KEY: The API key for accessing Google's Gemini AI services.
+- GEMINI_API_KEY_2: Optional second Gemini key. Google rate-limits per project,
+  so it only adds quota when it comes from a different Google Cloud project.
 - GEMINI_GENERATION_MODELS: Optional comma-separated Gemini text/vision
   generation fallback order.
+- GEMINI_RATE_LIMITS: Optional per-project budgets, "model=rpm/rpd,...", to match
+  the limits AI Studio shows for your project.
+- GEMINI_EMBEDDING_MODEL: Embedding model for RAG queries (must match the index).
 - GEMINI_VISION_VALIDATION: Optional flag for a second Gemini image check
   after OCR extraction. Disabled by default to conserve free-tier quota.
 - MISTRAL_API_KEY / MISTRAL_API_KEY_1: Optional Mistral key for Document AI OCR.
@@ -50,7 +55,13 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_DOCUMENTS_BUCKET = os.getenv("SUPABASE_DOCUMENTS_BUCKET", "user-documents")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2", "")
+GEMINI_API_KEYS = tuple(
+    dict.fromkeys(key.strip() for key in (GEMINI_API_KEY or "", GEMINI_API_KEY_2) if key and key.strip())
+)
 GEMINI_GENERATION_MODELS = os.getenv("GEMINI_GENERATION_MODELS", "")
+GEMINI_RATE_LIMITS = os.getenv("GEMINI_RATE_LIMITS", "")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 GEMINI_VISION_VALIDATION = os.getenv("GEMINI_VISION_VALIDATION", "false").lower() == "true"
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY") or os.getenv("MISTRAL_API_KEY_1", "")
 MISTRAL_OCR_MODEL = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest")

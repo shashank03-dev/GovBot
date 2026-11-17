@@ -1366,13 +1366,18 @@ def extract_document_data(
 
     prompt, fallback = _extraction_prompt(doc_type)
     try:
-        raw_text = generate_text([
-            prompt,
-            inline_data_part(
-                data_b64=_normalize_base64(image_b64),
-                mime_type=mime_type or "image/jpeg",
-            ),
-        ])
+        raw_text = generate_text(
+            [
+                prompt,
+                inline_data_part(
+                    data_b64=_normalize_base64(image_b64),
+                    mime_type=mime_type or "image/jpeg",
+                ),
+            ],
+            response_mime_type="application/json",
+            temperature=0.1,
+            max_output_tokens=512,
+        )
         parsed = _parse_json_object(raw_text, fallback)
         confidence = float(parsed.get("confidence", 0.0) or 0.0)
         extracted = {k: v for k, v in parsed.items() if k != "confidence"}
@@ -1523,13 +1528,18 @@ def analyze_document_validity(
     flags: list[str] = []
 
     try:
-        raw_text = generate_text([
-            prompt,
-            inline_data_part(
-                data_b64=_normalize_base64(image_b64),
-                mime_type="image/jpeg",
-            ),
-        ])
+        raw_text = generate_text(
+            [
+                prompt,
+                inline_data_part(
+                    data_b64=_normalize_base64(image_b64),
+                    mime_type="image/jpeg",
+                ),
+            ],
+            response_mime_type="application/json",
+            temperature=0.1,
+            max_output_tokens=256,
+        )
         result = _parse_json_object(raw_text, {"issue_date": "", "doc_type_detected": "", "quality": "good"})
         quality = result.get("quality", "good")
         if quality == "unreadable":

@@ -196,12 +196,14 @@ class LLMTextRouterTests(unittest.IsolatedAsyncioTestCase):
 
 class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
     def test_uses_current_google_genai_sdk_not_deprecated_generativeai(self):
-        source = Path("gov_agent/providers/gemini_provider.py").read_text()
+        source = Path("gov_agent/gemini_client.py").read_text()
 
         self.assertIn("from google import genai", source)
         self.assertNotIn("google.generativeai", source)
 
-    async def test_passes_system_instruction_to_generate_content_config(self):
+    async def test_passes_system_instruction_through_shared_pool(self):
+        from gov_agent import gemini_client
+
         recorded = {}
 
         class _FakeModels:
@@ -211,16 +213,13 @@ class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
                 recorded["config"] = config
                 return types.SimpleNamespace(text="translated")
 
-        class _FakeClient:
-            def __init__(self, *, api_key):
-                recorded["api_key"] = api_key
-                self.models = _FakeModels()
+        def _factory(api_key):
+            recorded["api_key"] = api_key
+            return types.SimpleNamespace(models=_FakeModels())
 
-        with patch(
-            "gov_agent.providers.gemini_provider.genai.Client",
-            new=_FakeClient,
-        ):
-            provider = GeminiTextProvider(api_key="gemini-key", model="gemini-2.0-flash")
+        pool = gemini_client.GeminiPool(["pool-key"], client_factory=_factory)
+        with patch.object(gemini_client, "get_gemini_pool", return_value=pool):
+            provider = GeminiTextProvider(api_key="ignored", model="gemini-3.5-flash-lite")
             text = await provider.generate_text(
                 "Hello",
                 system_instruction="Translate politely",
@@ -229,8 +228,8 @@ class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(text, "translated")
-        self.assertEqual(recorded["api_key"], "gemini-key")
-        self.assertEqual(recorded["model_name"], "gemini-2.0-flash")
+        self.assertEqual(recorded["api_key"], "pool-key")
+        self.assertEqual(recorded["model_name"], "gemini-3.5-flash-lite")
         self.assertEqual(recorded["prompt"], "Hello")
         self.assertEqual(recorded["config"].system_instruction, "Translate politely")
         self.assertEqual(recorded["config"].temperature, 0.2)

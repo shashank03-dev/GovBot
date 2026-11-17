@@ -1,4 +1,17 @@
-# Deploying the GovBot backend (free) on Hugging Face Spaces
+# Deploying the GovBot backend
+
+> **Current free option: Render.** As of November 2026 Hugging Face only hosts Docker Spaces
+> for PRO accounts (creating one returns `402 Payment Required`), so the free deploy is the
+> Render web service described by `render.yaml` (free plan, Singapore, Docker). Deploy from
+> `main`, set the secrets marked `sync: false` on the service's Environment page, and refresh
+> `WHATSAPP_TOKEN` there before each demo when using Meta's 24-hour test token.
+>
+> Gemini rate limits apply per Google Cloud project, not per key: `GEMINI_API_KEY_2` only adds
+> quota when it comes from a second project.
+>
+> The Hugging Face instructions below still work on a PRO account.
+
+## Hugging Face Spaces (PRO accounts)
 
 The backend is a container (Playwright + tesseract-ocr + FastAPI + ChromaDB), so it needs a
 container host, not serverless. Hugging Face **Docker Spaces** give a free CPU tier of

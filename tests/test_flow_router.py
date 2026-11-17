@@ -276,7 +276,8 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
         session = {"state": "greeting", "collected_data": {}}
         msg = WhatsAppIncoming(phone="919999999999", message_type="text", body="documnts")
 
-        reply, new_state, new_data = await flow_router.route(session, msg)
+        with patch.object(flow_router, "list_user_documents", return_value=[]):
+            reply, new_state, new_data = await flow_router.route(session, msg)
 
         self.assertIn("Document Manager", reply)
         self.assertIn("VIEW", reply.upper())
@@ -649,7 +650,7 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
             flow_router,
             "update_user_document",
             return_value={"id": "doc-custom-1", "doc_type": "custom", "custom_label": "Domicile Certificate"},
-        ) as update_mock:
+        ) as update_mock, patch.object(flow_router, "list_user_documents", return_value=[document]):
             final_reply, final_state, _ = await flow_router.route(
                 {"state": field_state, "collected_data": field_data},
                 WhatsAppIncoming(phone="919999999999", message_type="text", body="Updated summary"),
@@ -687,7 +688,7 @@ class FlowRouterTests(unittest.IsolatedAsyncioTestCase):
             flow_router,
             "_emit_activity",
             new=AsyncMock(),
-        ):
+        ), patch.object(flow_router, "list_user_documents", return_value=[]):
             confirm_reply, confirm_state, _ = await flow_router.route(
                 {"state": new_state, "collected_data": new_data},
                 WhatsAppIncoming(phone="919999999999", message_type="text", body="yes"),

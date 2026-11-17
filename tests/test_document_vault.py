@@ -280,6 +280,7 @@ class DemoFallbackExtractionTests(unittest.TestCase):
     def test_sparse_local_ocr_falls_through_to_remote_ocr(self):
         with (
             patch("gov_agent.document_vault.has_gemini_client", return_value=False),
+            patch("gov_agent.document_vault.has_mistral_ocr_client", return_value=True),
             patch("gov_agent.document_vault.extract_local_ocr_text") as local_ocr_mock,
             patch("gov_agent.document_vault.extract_ocr_markdown") as remote_ocr_mock,
         ):

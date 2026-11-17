@@ -212,11 +212,13 @@ def _build_provider_configs() -> list[ProviderConfig]:
     if providers:
         return providers
     if GEMINI_API_KEY:
+        from gov_agent.gemini_client import configured_generation_models
+
         return [
             ProviderConfig(
                 name="legacy-gemini",
                 provider="gemini",
-                model="gemini-2.0-flash",
+                model=configured_generation_models()[0],
                 api_key=GEMINI_API_KEY,
                 enabled=True,
                 weight=1,

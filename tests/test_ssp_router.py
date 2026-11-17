@@ -147,7 +147,9 @@ class SSPRouterTests(unittest.TestCase):
         )
         client = _build_client()
 
-        with patch.object(ssp_router, "supabase", fake_supabase):
+        with patch.object(ssp_router, "supabase", fake_supabase), patch.object(
+            ssp_router, "get_latest_review_session_for_phone", return_value=None
+        ):
             response = client.get("/api/ssp/draft/919999999999", headers=_auth_headers("919999999999"))
 
         self.assertEqual(response.status_code, 200)

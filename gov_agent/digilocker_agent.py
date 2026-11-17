@@ -2,7 +2,6 @@
 DigiLocker Agent — Document Processing Logic
 
 Processes documents fetched from DigiLocker (mock):
-- Extracts text using Gemini Vision
 - Validates document types
 - Pre-fills application data
 """
@@ -14,24 +13,6 @@ from gov_agent.db import supabase
 from gov_agent.demo_documents import INCOME_CASTE_CERTIFICATE, MARKSHEET
 
 logger = logging.getLogger(__name__)
-
-
-def has_gemini_client() -> bool:
-    from gov_agent.gemini_client import has_gemini_client as _has_gemini_client
-
-    return _has_gemini_client()
-
-
-def inline_data_part(*, data_b64: str, mime_type: str) -> Any:
-    from gov_agent.gemini_client import inline_data_part as _inline_data_part
-
-    return _inline_data_part(data_b64=data_b64, mime_type=mime_type)
-
-
-def generate_text(contents: Any) -> str:
-    from gov_agent.gemini_client import generate_text as _generate_text
-
-    return _generate_text(contents)
 
 
 def get_documents_for_phone(phone: str) -> list:
@@ -54,59 +35,22 @@ def get_latest_consent(phone: str) -> dict | None:
     return result.data[0] if result.data else None
 
 
-def extract_aadhaar_data(doc_data: str) -> dict:
-    """Extract Aadhaar data using Gemini Vision (mock processing)."""
-    
-    if not has_gemini_client():
-        # Return mock data for demo
-        return {
-            "name": "SHASHANK GOWDA T",
-            "aadhaar_number": "XXXX-XXXX-5424",
-            "dob": "2006-10-30",
-            "gender": "Male",
-            "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
-        }
-    
-    try:
-        # Decode base64 if needed
-        if doc_data.startswith("JVBER"):
-            # It's our mock PDF data, return mock extracted data
-            return {
-                "name": "SHASHANK GOWDA T",
-                "aadhaar_number": "XXXX-XXXX-5424",
-                "dob": "2006-10-30",
-                "gender": "Male",
-                "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
-            }
-        
-        # For real base64 images, use Gemini
-        prompt = """
-        Extract the following from this Aadhaar card:
-        - Full name
-        - Aadhaar number (mask all but last 4 digits)
-        - Date of birth (YYYY-MM-DD format)
-        - Gender
-        - Address
-        
-        Return as JSON.
-        """
+_DEMO_AADHAAR = {
+    "name": "SHASHANK GOWDA T",
+    "aadhaar_number": "XXXX-XXXX-5424",
+    "dob": "2006-10-30",
+    "gender": "Male",
+    "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
+}
 
-        generate_text([
-            prompt,
-            inline_data_part(data_b64=doc_data, mime_type="image/jpeg"),
-        ])
-        
-        # Parse response (simplified)
-        return {
-            "name": "SHASHANK GOWDA T",
-            "aadhaar_number": "XXXX-XXXX-5424",
-            "dob": "2006-10-30",
-            "gender": "Male",
-            "address": "C/O Thimmaraju T, No 3 Shashank Nilaya, Near Arch, Doddabidarakallu, Bangalore, Karnataka - 560073",
-        }
-    except Exception as e:
-        logger.error(f"Error extracting Aadhaar: {e}")
-        return {}
+
+def extract_aadhaar_data(doc_data: str) -> dict:
+    """Return the mock DigiLocker Aadhaar record.
+
+    DigiLocker is mocked, so every path returns the demo record. This used to
+    send the image to Gemini and discard the answer, spending quota for nothing.
+    """
+    return dict(_DEMO_AADHAAR)
 
 
 def extract_income_certificate_data(doc_data: str) -> dict:
