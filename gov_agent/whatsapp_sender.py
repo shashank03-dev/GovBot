@@ -8,7 +8,9 @@ from gov_agent.config import (
     WHATSAPP_PHONE_NUMBER_ID,
     WHATSAPP_OTP_TEMPLATE_LANGUAGE,
     WHATSAPP_OTP_TEMPLATE_NAME,
+    WHATSAPP_PROVIDER,
 )
+from gov_agent import twilio_whatsapp
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -87,6 +89,13 @@ def _build_media_payload(to: str, media: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _post_whatsapp_payload(payload: dict) -> dict:
+    if WHATSAPP_PROVIDER == "twilio":
+        logger.info(
+            "Twilio WhatsApp request - to: %s, type: %s, payload: %s",
+            payload.get("to"), payload.get("type"), _redact_payload_for_log(payload),
+        )
+        return await twilio_whatsapp.send_payload(payload)
+
     # Debug: Check if credentials are loaded
     logger.info(
         "WhatsApp API debug - TOKEN exists: %s, PHONE_ID exists: %s, PHONE_ID value: %s",
@@ -174,6 +183,11 @@ async def send_message(to: str, body: str) -> bool:
 
 async def send_otp_message(to: str, code: str, validity_minutes: int = 10) -> bool:
     body = f"Your GovBot OTP is: {code}\nValid for {validity_minutes} minutes."
+
+    if WHATSAPP_PROVIDER == "twilio":
+        # Twilio's sandbox has no Meta templates; the user just messaged the
+        # bot, so the 24-hour session allows a plain message.
+        return await send_message(to, body)
 
     if not WHATSAPP_OTP_TEMPLATE_NAME:
         logger.info(

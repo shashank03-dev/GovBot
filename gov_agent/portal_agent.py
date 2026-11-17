@@ -30,6 +30,14 @@ async def launch_browser() -> Tuple[Browser, Page]:
 
 
 async def download_media(media_id: str, save_path: str) -> str:
+    from gov_agent import twilio_whatsapp
+
+    if twilio_whatsapp.is_twilio_media_url(media_id):
+        content, _, _ = await twilio_whatsapp.download_media(media_id)
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(save_path).write_bytes(content)
+        return save_path
+
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(

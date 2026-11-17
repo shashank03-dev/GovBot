@@ -199,9 +199,12 @@ make dev-frontend
 
 | Variable | Purpose |
 | --- | --- |
-| `WHATSAPP_TOKEN` | WhatsApp Cloud API access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID |
-| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token |
+| `WHATSAPP_PROVIDER` | `meta` (default) or `twilio`; picks which WhatsApp credentials are required |
+| `WHATSAPP_TOKEN` | WhatsApp Cloud API access token (`meta`) |
+| `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID (`meta`) |
+| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token (`meta`) |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Twilio credentials (`twilio`; also used for SMS fallback) |
+| `TWILIO_WHATSAPP_FROM` | Twilio WhatsApp sender, e.g. sandbox `whatsapp:+14155238886` (`twilio`) |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_KEY` | Supabase service-role key |
 | `GEMINI_API_KEY` | Gemini API key |
@@ -225,9 +228,8 @@ make dev-frontend
 | `BASE_URL` | Public backend or app URL used in generated links |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
 | `SUPABASE_DOCUMENTS_BUCKET` | Storage bucket for uploaded documents |
-| `TWILIO_ACCOUNT_SID` | Twilio account SID for SMS fallback |
-| `TWILIO_AUTH_TOKEN` | Twilio auth token |
-| `TWILIO_FROM_NUMBER` | Twilio sender number |
+| `TWILIO_FROM_NUMBER` | Twilio SMS sender number for SMS fallback |
+| `TWILIO_WEBHOOK_URL` | Optional exact public Twilio webhook URL, used to check `X-Twilio-Signature` |
 
 </details>
 

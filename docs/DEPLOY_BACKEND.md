@@ -15,6 +15,24 @@
 >
 > The Hugging Face instructions below still work on a PRO account.
 
+## WhatsApp through the Twilio Sandbox (no Meta business verification)
+
+New Meta accounts can receive webhooks but can't deliver replies until the business is
+verified and has a payment method (errors 131031 / 141006 / 141010). For demos, switch the
+channel to Twilio's free WhatsApp Sandbox instead:
+
+1. Sign up at twilio.com (trial credit, no card), then open **Messaging → Try it out →
+   Send a WhatsApp message**. From each demo phone, send the shown `join <code>` message to the
+   sandbox number. A phone that sends nothing for 3 days must send `join <code>` again.
+2. In **Sandbox settings**, set **When a message comes in** to
+   `https://<backend>/govbot/twilio/webhook` (method `POST`) and save.
+3. On the backend set `WHATSAPP_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+   and `TWILIO_WHATSAPP_FROM=whatsapp:+14155238886` (the sandbox number), then redeploy.
+
+The webhook checks `X-Twilio-Signature` against `TWILIO_AUTH_TOKEN`. If Twilio's requests are
+rejected with 403, set `TWILIO_WEBHOOK_URL` to the exact URL from step 2. The Meta webhook
+stays mounted, so switching back is just `WHATSAPP_PROVIDER=meta`.
+
 ## Hugging Face Spaces (PRO accounts)
 
 The backend is a container (Playwright + tesseract-ocr + FastAPI + ChromaDB), so it needs a

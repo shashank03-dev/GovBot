@@ -722,6 +722,11 @@ def _ensure_bucket() -> None:
 
 
 async def download_whatsapp_media(media_id: str) -> tuple[bytes, str, Optional[str]]:
+    from gov_agent import twilio_whatsapp
+
+    if twilio_whatsapp.is_twilio_media_url(media_id):
+        # Twilio channel: the "media id" is the Twilio media URL itself.
+        return await twilio_whatsapp.download_media(media_id)
     url = f"https://graph.facebook.com/v25.0/{media_id}"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     async with httpx.AsyncClient(timeout=30.0) as client:

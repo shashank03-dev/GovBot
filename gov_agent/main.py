@@ -52,6 +52,13 @@ app.include_router(
     include_in_schema=False,
 )
 
+from gov_agent import twilio_webhook
+app.include_router(
+    twilio_webhook.router,
+    prefix="/govbot/twilio/webhook",
+    tags=["WhatsApp"],
+)
+
 from gov_agent import auth_router
 app.include_router(
     auth_router.router,

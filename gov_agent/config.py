@@ -4,10 +4,14 @@ Environment variable configuration module.
 This module loads environment variables from a .env file and exports them
 as configurable constants for the application.
 
+- WHATSAPP_PROVIDER: "meta" (default, WhatsApp Cloud API) or "twilio" (Twilio
+  WhatsApp Sandbox). Decides which of the two credential sets below is required.
 - WHATSAPP_TOKEN: The authentication token for the WhatsApp API.
 - WHATSAPP_PHONE_NUMBER_ID: The unique phone number identifier for WhatsApp.
 - WHATSAPP_VERIFY_TOKEN: The verification token used to authenticate
   WhatsApp webhooks.
+- TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM: Twilio
+  WhatsApp credentials and sender ("whatsapp:+14155238886" for the sandbox).
 - SUPABASE_URL: The endpoint URL for the Supabase project database.
 - SUPABASE_KEY: The API key for authenticating with the Supabase project.
 - GEMINI_API_KEY: The API key for accessing Google's Gemini AI services.
@@ -72,10 +76,24 @@ SECRET_KEY = os.getenv("SECRET_KEY") or DEFAULT_DEV_SECRET_KEY
 OFFICIAL_USERNAME = os.getenv("OFFICIAL_USERNAME", "")
 OFFICIAL_PASSWORD = os.getenv("OFFICIAL_PASSWORD", "")
 
-_REQUIRED = [
+# Which WhatsApp channel sends and receives messages: "meta" (WhatsApp Cloud
+# API, needs a business-verified account to deliver) or "twilio" (Twilio's
+# WhatsApp Sandbox, no business verification; good for demos).
+WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "meta").strip().lower() or "meta"
+
+_META_WHATSAPP_REQUIRED = [
     "WHATSAPP_TOKEN",
     "WHATSAPP_PHONE_NUMBER_ID",
     "WHATSAPP_VERIFY_TOKEN",
+]
+_TWILIO_WHATSAPP_REQUIRED = [
+    "TWILIO_ACCOUNT_SID",
+    "TWILIO_AUTH_TOKEN",
+    "TWILIO_WHATSAPP_FROM",
+]
+
+_REQUIRED = [
+    *(_TWILIO_WHATSAPP_REQUIRED if WHATSAPP_PROVIDER == "twilio" else _META_WHATSAPP_REQUIRED),
     "SUPABASE_URL",
     "SUPABASE_KEY",
     "GEMINI_API_KEY",
@@ -89,6 +107,8 @@ def validate_config() -> None:
     Call once at application startup (e.g. lifespan handler or __main__).
     Importing the module is always safe even without a .env file.
     """
+    if WHATSAPP_PROVIDER not in {"meta", "twilio"}:
+        raise ValueError(f"WHATSAPP_PROVIDER must be 'meta' or 'twilio', got {WHATSAPP_PROVIDER!r}")
     missing = [k for k in _REQUIRED if not os.getenv(k)]
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
@@ -127,6 +147,14 @@ def load_text_provider_env_configs() -> list[TextProviderEnvConfig]:
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "")
+# Twilio WhatsApp sender, e.g. the sandbox number "whatsapp:+14155238886".
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "").strip()
+if TWILIO_WHATSAPP_FROM and not TWILIO_WHATSAPP_FROM.startswith("whatsapp:"):
+    TWILIO_WHATSAPP_FROM = f"whatsapp:{TWILIO_WHATSAPP_FROM}"
+# Public URL Twilio posts to, used to check X-Twilio-Signature. Optional: when
+# unset it is rebuilt from the request and the proxy's X-Forwarded-* headers.
+TWILIO_WEBHOOK_URL = os.getenv("TWILIO_WEBHOOK_URL", "").strip()
+TWILIO_VALIDATE_SIGNATURE = os.getenv("TWILIO_VALIDATE_SIGNATURE", "true").lower() != "false"
 
 BASE_URL = os.getenv("BASE_URL", "https://govbot.vercel.app")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://govbot-fawn.vercel.app")
