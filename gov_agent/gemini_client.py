@@ -57,14 +57,18 @@ DEFAULT_COOLDOWN_SECONDS = 60.0
 UNAVAILABLE_COOLDOWN_SECONDS = 15.0
 MISSING_MODEL_COOLDOWN_SECONDS = 3600.0
 
-# Errors caused by the request itself: retrying on another key or model would
-# burn quota for the same failure.
-NON_RETRIABLE_ERROR_MARKERS = (
-    "INVALID_ARGUMENT",
-    "UNABLE TO PROCESS INPUT IMAGE",
-    "PERMISSION_DENIED",
-    "API_KEY_INVALID",
-)
+BAD_KEY_COOLDOWN_SECONDS = 3600.0
+
+# Error kinds, decided by _classify_error:
+#   input       - the input itself is unusable; no slot can succeed, so stop.
+#   bad_request - this model rejected the request; another model may accept it.
+#   bad_key     - this key/project is unusable; bench it for every model.
+#   rate_limit  - this slot is out of quota; cool it down per Google's hint.
+#   missing     - this model isn't served for this key; bench the slot.
+#   unavailable - transient upstream failure; short cooldown, try next slot.
+_INPUT_ERROR_MARKERS = ("UNABLE TO PROCESS INPUT IMAGE",)
+_BAD_KEY_MARKERS = ("PERMISSION_DENIED", "API_KEY_INVALID", "API KEY NOT VALID", "UNAUTHENTICATED")
+_STATUS_CODE_PATTERN = re.compile(r"\b(400|401|403|404|429)\b")
 
 _PACIFIC = ZoneInfo("America/Los_Angeles")
 _RETRY_DELAY_PATTERNS = (
@@ -121,19 +125,32 @@ def _error_text(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _status_code(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)  # google.genai.errors.APIError
+    if isinstance(code, int):
+        return code
+    match = _STATUS_CODE_PATTERN.search(str(exc)[:16])  # e.g. "429 RESOURCE_EXHAUSTED ..."
+    return int(match.group(1)) if match else None
+
+
+def _classify_error(exc: Exception) -> str:
+    text = _error_text(exc).upper()
+    code = _status_code(exc)
+    if any(marker in text for marker in _INPUT_ERROR_MARKERS):
+        return "input"
+    if code == 429 or "RESOURCE_EXHAUSTED" in text or "RATE LIMIT" in text:
+        return "rate_limit"
+    if code in (401, 403) or any(marker in text for marker in _BAD_KEY_MARKERS):
+        return "bad_key"
+    if code == 404 or "NOT_FOUND" in text:
+        return "missing"
+    if code == 400 or "INVALID_ARGUMENT" in text:
+        return "bad_request"
+    return "unavailable"
+
+
 def _is_rate_limit_error(exc: Exception) -> bool:
-    text = _error_text(exc).upper()
-    return "RESOURCE_EXHAUSTED" in text or "429" in text or "RATE LIMIT" in text
-
-
-def _is_non_retriable(exc: Exception) -> bool:
-    text = _error_text(exc).upper()
-    return any(marker in text for marker in NON_RETRIABLE_ERROR_MARKERS)
-
-
-def _is_missing_model(exc: Exception) -> bool:
-    text = _error_text(exc).upper()
-    return "NOT_FOUND" in text or "404" in text
+    return _classify_error(exc) == "rate_limit"
 
 
 def _rate_limit_cooldown(exc: Exception, now: float) -> float:
@@ -174,6 +191,15 @@ class _Slot:
         self.day_count += 1
         return True
 
+    def refund(self, reserved_at: float) -> None:
+        # Google doesn't count requests it rejects with 429, so neither do we.
+        try:
+            self.recent.remove(reserved_at)
+        except ValueError:
+            pass
+        if self.day == _pacific_day(reserved_at) and self.day_count > 0:
+            self.day_count -= 1
+
 
 class GeminiPool:
     def __init__(
@@ -189,6 +215,7 @@ class GeminiPool:
         self._client_factory = client_factory or (lambda key: genai.Client(api_key=key))
         self._clients: dict[int, Any] = {}
         self._slots: dict[tuple[int, str], _Slot] = {}
+        self._key_benched_until: dict[int, float] = {}
         self._next_key = 0
         self._clock = clock
         self._lock = threading.Lock()
@@ -220,14 +247,27 @@ class GeminiPool:
             self._next_key = (self._next_key + 1) % max(1, len(self._api_keys))
         return [(start + offset) % len(self._api_keys) for offset in range(len(self._api_keys))]
 
-    def _reserve(self, key_index: int, model: str) -> bool:
+    def _reserve(self, key_index: int, model: str) -> float | None:
+        """Reserve budget on a slot; returns the reservation time, or None."""
         with self._lock:
-            return self._slot(key_index, model).try_reserve(self._clock())
+            now = self._clock()
+            if self._key_benched_until.get(key_index, 0.0) > now:
+                return None
+            return now if self._slot(key_index, model).try_reserve(now) else None
+
+    def _refund(self, key_index: int, model: str, reserved_at: float) -> None:
+        with self._lock:
+            self._slot(key_index, model).refund(reserved_at)
 
     def _cool_down(self, key_index: int, model: str, seconds: float) -> None:
         with self._lock:
             slot = self._slot(key_index, model)
             slot.cooldown_until = max(slot.cooldown_until, self._clock() + seconds)
+
+    def _bench_key(self, key_index: int, seconds: float) -> None:
+        with self._lock:
+            until = self._clock() + seconds
+            self._key_benched_until[key_index] = max(self._key_benched_until.get(key_index, 0.0), until)
 
     def call(self, models: list[str], operation: Callable[[Any, str], Any]) -> Any:
         """Run ``operation(client, model)`` on the first slot with quota left."""
@@ -238,32 +278,36 @@ class GeminiPool:
 
         last_exc: Exception | None = None
         attempted = False
+        key_order = self._key_order()  # rotate once per request, not per model
         for model in models:
-            for key_index in self._key_order():
-                if not self._reserve(key_index, model):
+            for key_index in key_order:
+                reserved_at = self._reserve(key_index, model)
+                if reserved_at is None:
                     continue
                 attempted = True
                 try:
                     return operation(self._client(key_index), model)
                 except Exception as exc:  # noqa: BLE001 - classified below
                     last_exc = exc
-                    if _is_non_retriable(exc):
-                        logger.warning("gemini key=%s model=%s non-retriable error: %s", key_index + 1, model, exc)
+                    kind = _classify_error(exc)
+                    log_args = (key_index + 1, model, kind, exc)
+                    if kind == "input":
+                        logger.warning("gemini key=%s model=%s %s error, not retrying: %s", *log_args)
                         raise
-                    if _is_rate_limit_error(exc):
-                        cooldown = _rate_limit_cooldown(exc, self._clock())
-                    elif _is_missing_model(exc):
-                        cooldown = MISSING_MODEL_COOLDOWN_SECONDS
+                    if kind == "bad_request":
+                        # Same request on another key fails the same way; try the next model.
+                        logger.warning("gemini key=%s model=%s %s error, trying next model: %s", *log_args)
+                        break
+                    if kind == "bad_key":
+                        self._bench_key(key_index, BAD_KEY_COOLDOWN_SECONDS)
+                    elif kind == "rate_limit":
+                        self._refund(key_index, model, reserved_at)
+                        self._cool_down(key_index, model, _rate_limit_cooldown(exc, self._clock()))
+                    elif kind == "missing":
+                        self._cool_down(key_index, model, MISSING_MODEL_COOLDOWN_SECONDS)
                     else:
-                        cooldown = UNAVAILABLE_COOLDOWN_SECONDS
-                    self._cool_down(key_index, model, cooldown)
-                    logger.warning(
-                        "gemini key=%s model=%s failed (cooldown %.0fs), trying next slot: %s",
-                        key_index + 1,
-                        model,
-                        cooldown,
-                        exc,
-                    )
+                        self._cool_down(key_index, model, UNAVAILABLE_COOLDOWN_SECONDS)
+                    logger.warning("gemini key=%s model=%s %s error, trying next slot: %s", *log_args)
 
         if last_exc is not None and not _is_rate_limit_error(last_exc):
             raise last_exc

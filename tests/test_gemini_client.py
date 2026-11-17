@@ -168,6 +168,67 @@ class GeminiPoolTests(unittest.TestCase):
         error = classify_provider_error(GeminiRateLimitError("all slots busy"))
         self.assertEqual(error.kind, "rate_limited")
 
+    def test_invalid_key_is_benched_and_other_key_serves_the_request(self):
+        def behaviour(key, model):
+            if key == "key-1":
+                raise RuntimeError("400 INVALID_ARGUMENT API key not valid. Please pass a valid API key. API_KEY_INVALID")
+            return key
+
+        pool, calls = _pool(["key-1", "key-2"], behaviour)
+        self.assertEqual(_generate(pool), "key-2")
+        calls.clear()
+        self.assertEqual([_generate(pool) for _ in range(3)], ["key-2"] * 3)
+        self.assertNotIn("key-1", [key for key, _ in calls])
+
+    def test_model_specific_bad_request_moves_to_next_model_not_next_key(self):
+        def behaviour(key, model):
+            if model == "model-a":
+                raise RuntimeError("400 INVALID_ARGUMENT response_mime_type is not supported")
+            return model
+
+        pool, calls = _pool(["key-1", "key-2"], behaviour)
+        self.assertEqual(_generate(pool), "model-b")
+        self.assertEqual([model for _, model in calls], ["model-a", "model-b"])
+
+    def test_status_code_attribute_drives_classification(self):
+        class _ApiError(Exception):
+            def __init__(self, code, message):
+                super().__init__(message)
+                self.code = code
+
+        self.assertEqual(gemini_client._classify_error(_ApiError(429, "quota")), "rate_limit")
+        self.assertEqual(gemini_client._classify_error(_ApiError(503, "request 40412 overloaded")), "unavailable")
+        self.assertEqual(gemini_client._classify_error(RuntimeError("503 UNAVAILABLE id=4290")), "unavailable")
+        self.assertEqual(gemini_client._classify_error(RuntimeError("404 NOT_FOUND models/x")), "missing")
+
+    def test_rate_limited_attempt_is_refunded_from_local_budget(self):
+        clock = _Clock()
+        state = {"limited": True}
+
+        def behaviour(key, model):
+            if state["limited"]:
+                raise RuntimeError("429 RESOURCE_EXHAUSTED retryDelay: '5s'")
+            return model
+
+        pool, _ = _pool(["key-1"], behaviour, limits={"model-a": (5, 1), "model-b": (5, 1)}, clock=clock)
+        with self.assertRaises(GeminiRateLimitError):
+            _generate(pool)
+        state["limited"] = False
+        clock.now += 6
+        # RPD is 1: the rejected attempt must not have used it up.
+        self.assertEqual(_generate(pool), "model-a")
+
+    def test_key_rotation_advances_once_per_request_even_on_fallback(self):
+        def behaviour(key, model):
+            if model == "model-a":
+                raise RuntimeError("503 UNAVAILABLE")
+            return key
+
+        pool, _ = _pool(["key-1", "key-2"], behaviour)
+        first = _generate(pool)
+        second = _generate(pool)
+        self.assertNotEqual(first, second)
+
     def test_no_keys_raises_clear_error(self):
         pool, _ = _pool([], lambda key, model: model)
         with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):

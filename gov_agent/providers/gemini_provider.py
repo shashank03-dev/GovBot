@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from gov_agent import gemini_client
+from gov_agent.config import GEMINI_API_KEYS
 
 from .base import classify_provider_error
 
@@ -11,11 +13,16 @@ class GeminiTextProvider:
     """Chat replies through the shared Gemini pool.
 
     The pool owns the API keys, so chat and document analysis share one rate
-    budget per project. ``api_key`` is accepted for config compatibility only.
+    budget per project. Keys come from GEMINI_API_KEY / GEMINI_API_KEY_2.
     """
 
     def __init__(self, *, api_key: str = "", model: str):
         self._model_name = model
+        if api_key and api_key not in GEMINI_API_KEYS:
+            logging.getLogger(__name__).warning(
+                "Gemini provider key is not GEMINI_API_KEY or GEMINI_API_KEY_2 and will not be used; "
+                "set it as GEMINI_API_KEY_2 to add its project's quota"
+            )
 
     async def generate_text(
         self,
