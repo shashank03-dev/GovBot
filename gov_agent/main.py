@@ -1,9 +1,18 @@
+import logging
 import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from gov_agent import auth_router
+
+# Send app logs (gov_agent.*) to stdout so hosts like Render show them; uvicorn
+# only configures its own loggers. Skipped if something already configured root.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
 try:
     from api.app import app  # type: ignore
