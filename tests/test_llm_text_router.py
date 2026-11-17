@@ -234,3 +234,59 @@ class GeminiTextProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recorded["config"].system_instruction, "Translate politely")
         self.assertEqual(recorded["config"].temperature, 0.2)
         self.assertEqual(recorded["config"].max_output_tokens, 64)
+
+class HedgedCallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fast_call_does_not_send_hedge(self):
+        from gov_agent.providers.gemini_provider import _hedged
+
+        calls = []
+
+        def call():
+            calls.append(1)
+            return "fast"
+
+        self.assertEqual(await _hedged(call, 1.0), "fast")
+        self.assertEqual(len(calls), 1)
+
+    async def test_slow_call_is_raced_by_hedge(self):
+        import threading
+        import time
+
+        from gov_agent.providers.gemini_provider import _hedged
+
+        lock = threading.Lock()
+        count = {"n": 0}
+
+        def call():
+            with lock:
+                count["n"] += 1
+                attempt = count["n"]
+            if attempt == 1:
+                time.sleep(0.5)
+                return "slow"
+            return "hedge"
+
+        self.assertEqual(await _hedged(call, 0.05), "hedge")
+
+    async def test_failed_first_attempt_is_retried_once(self):
+        from gov_agent.providers.gemini_provider import _hedged
+
+        attempts = iter([RuntimeError("503 UNAVAILABLE"), "recovered"])
+
+        def call():
+            item = next(attempts)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        self.assertEqual(await _hedged(call, 1.0), "recovered")
+
+    async def test_raises_when_every_attempt_fails(self):
+        from gov_agent.providers.gemini_provider import _hedged
+
+        def call():
+            raise RuntimeError("503 UNAVAILABLE")
+
+        with self.assertRaises(RuntimeError):
+            await _hedged(call, 0.01)
+

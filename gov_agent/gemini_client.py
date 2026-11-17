@@ -39,22 +39,27 @@ from gov_agent.config import (
     GEMINI_RATE_LIMITS,
 )
 
-# Stable, fast, image-capable and cheap; no shutdown date announced as of 2026-11.
-DEFAULT_GENERATION_MODELS = ("gemini-3.5-flash-lite", "gemini-2.5-flash-lite")
+# Measured 2026-11-17 on image extraction: 3.1 Flash-Lite median 2.6s, 3.5 Flash-Lite
+# 4.6s, same answers; 3.1 is also cheaper. 2.5 Flash-Lite returns 404 for new users.
+DEFAULT_GENERATION_MODELS = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite")
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 
 # Conservative per-project budgets (RPM, RPD). Google no longer publishes free-tier
 # numbers per model, so check AI Studio -> Rate limits and override with
 # GEMINI_RATE_LIMITS="model=rpm/rpd,..." when your project shows different values.
 DEFAULT_RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "gemini-3.1-flash-lite": (15, 500),
     "gemini-3.5-flash-lite": (15, 500),
-    "gemini-2.5-flash-lite": (15, 1000),
     "gemini-embedding-001": (100, 1000),
 }
 FALLBACK_RATE_LIMIT = (10, 250)
 
 DEFAULT_COOLDOWN_SECONDS = 60.0
 UNAVAILABLE_COOLDOWN_SECONDS = 15.0
+REQUEST_TIMEOUT_MS = 30_000
+# Per-attempt cap so a stalled request (Google sometimes holds one for 8s+ before
+# a 504) moves on to the next key instead of eating the whole reply budget.
+DEFAULT_ATTEMPT_TIMEOUT_MS = 20_000
 MISSING_MODEL_COOLDOWN_SECONDS = 3600.0
 
 BAD_KEY_COOLDOWN_SECONDS = 3600.0
@@ -212,7 +217,10 @@ class GeminiPool:
     ):
         self._api_keys = [key for key in api_keys if key]
         self._rate_limits = rate_limits if rate_limits is not None else dict(DEFAULT_RATE_LIMITS)
-        self._client_factory = client_factory or (lambda key: genai.Client(api_key=key))
+        # No SDK-level retries: the pool decides where to retry, and fails fast.
+        self._client_factory = client_factory or (
+            lambda key: genai.Client(api_key=key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
+        )
         self._clients: dict[int, Any] = {}
         self._slots: dict[tuple[int, str], _Slot] = {}
         self._key_benched_until: dict[int, float] = {}
@@ -360,8 +368,11 @@ def generate_text(
     response_mime_type: str | None = None,
     temperature: float | None = None,
     max_output_tokens: int | None = None,
+    timeout_ms: int | None = None,
 ) -> str:
-    config_kwargs: dict[str, Any] = {}
+    config_kwargs: dict[str, Any] = {
+        "http_options": types.HttpOptions(timeout=timeout_ms or DEFAULT_ATTEMPT_TIMEOUT_MS),
+    }
     if system_instruction:
         config_kwargs["system_instruction"] = system_instruction
     if response_mime_type:
@@ -370,7 +381,7 @@ def generate_text(
         config_kwargs["temperature"] = temperature
     if max_output_tokens is not None:
         config_kwargs["max_output_tokens"] = max_output_tokens
-    config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
+    config = types.GenerateContentConfig(**config_kwargs)
 
     def _generate(client: Any, candidate_model: str) -> str:
         response = client.models.generate_content(

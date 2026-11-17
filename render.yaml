@@ -33,7 +33,7 @@ services:
 
       # --- Non-secret model / OCR config ---
       - key: GEMINI_GENERATION_MODELS
-        value: gemini-3.5-flash-lite,gemini-2.5-flash-lite
+        value: gemini-3.1-flash-lite,gemini-3.5-flash-lite
       - key: GEMINI_VISION_VALIDATION
         value: "false"
       - key: MISTRAL_OCR_MODEL

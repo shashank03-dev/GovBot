@@ -19,7 +19,9 @@ _DEFAULT_LATENCY_MS = {
     "gemini": 140.0,
     "mistral": 180.0,
 }
-_INTERACTIVE_TIMEOUT_SECONDS = 2.5
+# Measured Flash-Lite chat latency swings 0.5-11s; the Gemini provider hedges a
+# second attempt after 2.5s, so leave room for that attempt to finish.
+_INTERACTIVE_TIMEOUT_SECONDS = float(os.getenv("LLM_INTERACTIVE_TIMEOUT_SECONDS", "12"))
 
 
 @dataclass

@@ -215,7 +215,7 @@ make dev-frontend
 | Variable | Purpose |
 | --- | --- |
 | `GEMINI_API_KEY_2` | Optional second Gemini key; adds quota only if it belongs to a different Google Cloud project |
-| `GEMINI_GENERATION_MODELS` | Optional Gemini fallback order, default `gemini-3.5-flash-lite,gemini-2.5-flash-lite` |
+| `GEMINI_GENERATION_MODELS` | Optional Gemini fallback order, default `gemini-3.1-flash-lite,gemini-3.5-flash-lite` |
 | `GEMINI_RATE_LIMITS` | Optional per-project budgets as `model=rpm/rpd,...`; match the limits AI Studio shows |
 | `TEXT_LLM_PROVIDERS_JSON` | Optional test-time text/chat pool for Groq, Gemini, and Mistral |
 | `WHATSAPP_OTP_TEMPLATE_NAME` | Approved WhatsApp template for OTP delivery |
@@ -278,7 +278,7 @@ OFFICIAL_PASSWORD=shared-official-password
 `TEXT_LLM_PROVIDERS_JSON` only affects the shared text/chat router. OCR, image analysis, and embeddings keep their provider-specific paths.
 
 ```env
-TEXT_LLM_PROVIDERS_JSON=[{"name":"groq-1","provider":"groq","model":"llama-3.1-8b-instant","api_key_env":"GROQ_API_KEY_1","enabled":true,"weight":3},{"name":"mistral-1","provider":"mistral","model":"mistral-small-latest","api_key_env":"MISTRAL_API_KEY_1","enabled":true,"weight":2},{"name":"gemini-1","provider":"gemini","model":"gemini-3.5-flash-lite","api_key_env":"GEMINI_API_KEY","enabled":true,"weight":1}]
+TEXT_LLM_PROVIDERS_JSON=[{"name":"groq-1","provider":"groq","model":"llama-3.1-8b-instant","api_key_env":"GROQ_API_KEY_1","enabled":true,"weight":3},{"name":"mistral-1","provider":"mistral","model":"mistral-small-latest","api_key_env":"MISTRAL_API_KEY_1","enabled":true,"weight":2},{"name":"gemini-1","provider":"gemini","model":"gemini-3.1-flash-lite","api_key_env":"GEMINI_API_KEY","enabled":true,"weight":1}]
 GROQ_API_KEY_1=your_groq_key
 MISTRAL_API_KEY_1=your_mistral_key
 GEMINI_API_KEY=your_gemini_key

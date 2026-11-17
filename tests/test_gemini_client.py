@@ -237,16 +237,16 @@ class GeminiPoolTests(unittest.TestCase):
 
 class GeminiConfigParsingTests(unittest.TestCase):
     def test_rate_limit_override_parsing(self):
-        limits = gemini_client._parse_rate_limits("custom=7/70, bad-entry ,gemini-2.5-flash-lite=20/2000")
+        limits = gemini_client._parse_rate_limits("custom=7/70, bad-entry ,gemini-3.5-flash-lite=20/2000")
         self.assertEqual(limits["custom"], (7, 70))
-        self.assertEqual(limits["gemini-2.5-flash-lite"], (20, 2000))
-        self.assertIn("gemini-3.5-flash-lite", limits)
+        self.assertEqual(limits["gemini-3.5-flash-lite"], (20, 2000))
+        self.assertIn("gemini-3.1-flash-lite", limits)
 
     def test_default_models_avoid_retired_generations(self):
         with patch.object(gemini_client, "GEMINI_GENERATION_MODELS", ""):
             models = gemini_client.configured_generation_models()
         self.assertEqual(models, list(gemini_client.DEFAULT_GENERATION_MODELS))
-        for retired in ("gemini-2.0-flash", "gemini-2.5-flash"):
+        for retired in ("gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"):
             self.assertNotIn(retired, models)
 
 
