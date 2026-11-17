@@ -154,6 +154,12 @@ if TWILIO_WHATSAPP_FROM and not TWILIO_WHATSAPP_FROM.startswith("whatsapp:"):
 # Public URL Twilio posts to, used to check X-Twilio-Signature. Optional: when
 # unset it is rebuilt from the request and the proxy's X-Forwarded-* headers.
 TWILIO_WEBHOOK_URL = os.getenv("TWILIO_WEBHOOK_URL", "").strip()
+# How replies go back: "twiml" answers inside the webhook response (works on
+# trial accounts, whose REST API only sends approved templates), falling back
+# to the REST API when the reply takes longer than Twilio waits; "api" always
+# uses the REST API.
+TWILIO_REPLY_MODE = os.getenv("TWILIO_REPLY_MODE", "twiml").strip().lower() or "twiml"
+TWILIO_TWIML_WAIT_SECONDS = _float_env("TWILIO_TWIML_WAIT_SECONDS", 12.0)
 TWILIO_VALIDATE_SIGNATURE = os.getenv("TWILIO_VALIDATE_SIGNATURE", "true").lower() != "false"
 
 BASE_URL = os.getenv("BASE_URL", "https://govbot.vercel.app")

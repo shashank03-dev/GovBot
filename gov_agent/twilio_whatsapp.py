@@ -143,6 +143,20 @@ async def send_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {"ok": True}
 
 
+def twiml_for_payloads(payloads: list[Mapping[str, Any]]) -> str:
+    """Build a TwiML <Response> that replies with these Meta-shaped payloads."""
+    from twilio.twiml.messaging_response import MessagingResponse
+
+    twiml = MessagingResponse()
+    for payload in payloads:
+        for params in messages_for_payload(payload):
+            if params.get("MediaUrl"):
+                twiml.message().media(params["MediaUrl"])
+            elif params.get("Body"):
+                twiml.message(params["Body"])
+    return str(twiml)
+
+
 def is_twilio_media_url(value: str | None) -> bool:
     if not value:
         return False

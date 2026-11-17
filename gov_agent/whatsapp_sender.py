@@ -149,6 +149,18 @@ async def _send_whatsapp(to: str, body: str) -> dict:
     return await _post_whatsapp_payload(_build_text_payload(to, body))
 
 
+def payloads_for_response(to: str, response: dict[str, Any] | str) -> list[dict[str, Any]]:
+    """The send payloads ``send_response`` would post for this reply, in order."""
+    if isinstance(response, str):
+        return [_build_text_payload(to, response)]
+    if str(response.get("kind") or "text") == "document_media_with_details":
+        return [
+            _build_media_payload(to, response["media"]),
+            _build_text_payload(to, str(response.get("text", ""))),
+        ]
+    return [_build_text_payload(to, str(response.get("text", "")))]
+
+
 async def send_response(to: str, response: dict[str, Any] | str) -> bool:
     if isinstance(response, str):
         return await send_message(to, response)

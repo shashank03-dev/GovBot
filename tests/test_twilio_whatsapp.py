@@ -187,6 +187,7 @@ class WebhookTests(unittest.TestCase):
             TWILIO_AUTH_TOKEN=AUTH_TOKEN,
             TWILIO_WEBHOOK_URL=WEBHOOK_URL,
             TWILIO_VALIDATE_SIGNATURE=True,
+            TWILIO_REPLY_MODE="api",
         )
         self.settings.start()
         self.addCleanup(self.settings.stop)
@@ -260,6 +261,71 @@ class WebhookTests(unittest.TestCase):
         self._post(params)
         _, handle, _ = self._post(params)
         handle.assert_not_awaited()
+
+
+class TwimlReplyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        whatsapp_webhook.reset_recent_message_ids_for_tests()
+
+    def test_payloads_become_escaped_twiml_messages(self):
+        payloads = whatsapp_sender.payloads_for_response(
+            "91",
+            {
+                "kind": "document_media_with_details",
+                "media": {"link": "https://files.example/a.pdf", "mime_type": "application/pdf"},
+                "text": "Your <PAN> & details",
+            },
+        )
+        with _twilio_settings():
+            xml = twilio_whatsapp.twiml_for_payloads(payloads)
+        self.assertIn("<Message><Media>https://files.example/a.pdf</Media></Message>", xml)
+        self.assertIn("<Message>Your &lt;PAN&gt; &amp; details</Message>", xml)
+
+    async def test_fast_reply_is_returned_inline(self):
+        incoming = twilio_webhook.incoming_from_form({"From": "whatsapp:+919632363213", "Body": "hi"})
+        send = AsyncMock(return_value=True)
+        with (
+            _twilio_settings(),
+            patch.object(twilio_webhook.session_manager, "handle_incoming", AsyncMock(return_value="Welcome back!")),
+            patch.object(twilio_webhook.whatsapp_sender, "send_response", send),
+        ):
+            xml = await twilio_webhook._reply_as_twiml(incoming)
+        self.assertIn("<Message>Welcome back!</Message>", xml)
+        send.assert_not_awaited()
+
+    async def test_slow_reply_falls_back_to_the_api(self):
+        import asyncio
+
+        async def slow(_incoming):
+            await asyncio.sleep(0.05)
+            return "done"
+
+        incoming = twilio_webhook.incoming_from_form({"From": "whatsapp:+919632363213", "Body": "hi"})
+        send = AsyncMock(return_value=True)
+        with (
+            patch.object(config, "TWILIO_TWIML_WAIT_SECONDS", 0.01),
+            patch.object(twilio_webhook.session_manager, "handle_incoming", slow),
+            patch.object(twilio_webhook.whatsapp_sender, "send_response", send),
+        ):
+            xml = await twilio_webhook._reply_as_twiml(incoming)
+            self.assertNotIn("<Message>", xml)
+            for _ in range(100):
+                if send.await_count:
+                    break
+                await asyncio.sleep(0.01)
+        send.assert_awaited_once_with("919632363213", "done")
+
+    def test_webhook_answers_with_twiml_by_default(self):
+        params = {"MessageSid": "SM9", "From": "whatsapp:+919632363213", "Body": "hi"}
+        with (
+            _twilio_settings(),
+            patch.multiple(config, TWILIO_AUTH_TOKEN=AUTH_TOKEN, TWILIO_WEBHOOK_URL=WEBHOOK_URL, TWILIO_REPLY_MODE="twiml"),
+            patch.object(twilio_webhook.session_manager, "handle_incoming", AsyncMock(return_value="Hello")),
+        ):
+            response = _client().post("/govbot/twilio/webhook", data=params, headers=_signed(params))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("text/xml"))
+        self.assertIn("<Message>Hello</Message>", response.text)
 
 
 class ConfigTests(unittest.TestCase):

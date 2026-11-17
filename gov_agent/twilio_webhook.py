@@ -1,13 +1,18 @@
 """Inbound WhatsApp messages from Twilio (WHATSAPP_PROVIDER=twilio).
 
-Twilio posts each message as a form. We check the X-Twilio-Signature, answer
-straight away with an empty TwiML response (Twilio gives up after 15 seconds,
-and OCR or a cold Gemini call can take longer), and do the work in the
-background, sending replies through the Twilio Messages API.
+Twilio posts each message as a form and we check the X-Twilio-Signature.
+
+Replies (TWILIO_REPLY_MODE=twiml, the default) go back inside the webhook's
+TwiML response, which trial accounts allow even though their REST API only
+sends approved templates. Twilio waits 15 seconds, so if the bot takes longer
+than TWILIO_TWIML_WAIT_SECONDS (OCR, a cold Gemini call) we return empty TwiML
+and send the reply through the REST API once it's ready. With
+TWILIO_REPLY_MODE=api every reply goes through the REST API in the background.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -82,6 +87,40 @@ async def _handle(incoming: WhatsAppIncoming) -> None:
         logger.error("Twilio webhook processing error: %s", exc, exc_info=True)
 
 
+def _send_when_done(phone: str, task: asyncio.Task) -> None:
+    async def _send() -> None:
+        try:
+            reply = task.result()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Twilio webhook processing error: %s", exc, exc_info=exc)
+            return
+        logger.info("Reply for %s was slow; sending it through the Twilio API", phone)
+        result = await whatsapp_sender.send_response(phone, reply)
+        logger.info("Twilio WhatsApp send result: %s", result)
+
+    asyncio.ensure_future(_send())
+
+
+async def _reply_as_twiml(incoming: WhatsAppIncoming) -> str:
+    task = asyncio.ensure_future(session_manager.handle_incoming(incoming))
+    try:
+        reply = await asyncio.wait_for(asyncio.shield(task), timeout=config.TWILIO_TWIML_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        task.add_done_callback(lambda done: _send_when_done(incoming.phone, done))
+        return _EMPTY_TWIML
+    except Exception as exc:  # noqa: BLE001 - always answer Twilio
+        logger.error("Twilio webhook processing error: %s", exc, exc_info=True)
+        return _EMPTY_TWIML
+
+    log_preview = reply[:100] if isinstance(reply, str) else str(reply)[:100]
+    logger.info("Replying to %s in TwiML: %s", incoming.phone, log_preview)
+    try:
+        return twilio_whatsapp.twiml_for_payloads(whatsapp_sender.payloads_for_response(incoming.phone, reply))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Could not build TwiML reply: %s", exc, exc_info=True)
+        return _EMPTY_TWIML
+
+
 @router.post("")
 async def receive_message(request: Request, background_tasks: BackgroundTasks) -> Response:
     form = await request.form()
@@ -97,6 +136,9 @@ async def receive_message(request: Request, background_tasks: BackgroundTasks) -
     elif params.get("From"):
         incoming = incoming_from_form(params)
         logger.info("Twilio WhatsApp message from %s, type %s", incoming.phone, incoming.message_type)
-        background_tasks.add_task(_handle, incoming)
+        if config.TWILIO_REPLY_MODE == "api":
+            background_tasks.add_task(_handle, incoming)
+        else:
+            return Response(content=await _reply_as_twiml(incoming), media_type="text/xml")
 
-    return Response(content=_EMPTY_TWIML, media_type="application/xml")
+    return Response(content=_EMPTY_TWIML, media_type="text/xml")
