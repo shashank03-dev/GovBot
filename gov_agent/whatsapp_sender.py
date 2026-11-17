@@ -94,7 +94,7 @@ async def _post_whatsapp_payload(payload: dict) -> dict:
     )
 
     url = (
-        f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}"
+        f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_NUMBER_ID}"
         f"/messages"
     )
     headers = {

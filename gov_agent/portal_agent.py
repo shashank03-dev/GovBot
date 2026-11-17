@@ -33,7 +33,7 @@ async def download_media(media_id: str, save_path: str) -> str:
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
-            f"https://graph.facebook.com/v18.0/{media_id}",
+            f"https://graph.facebook.com/v25.0/{media_id}",
             headers=headers
         )
         response.raise_for_status()
