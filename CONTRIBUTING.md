@@ -30,6 +30,8 @@ This repo now has one enforced workflow surface. Use the root `Makefile` instead
 
 - Frontend: Vercel project `govbot` (root directory `frontend`), production at `https://govbot-fawn.vercel.app`.
 - Backend: Render web service `govbot-backend` from `render.yaml`, at `https://govbot-backend-tj1i.onrender.com` (health: `/govbot/health`).
+- Vercel functions are pinned to `sin1` (Singapore) in `frontend/vercel.json`, next to the Render backend. Moving either one apart adds a cross-ocean round trip to every `/api/*` call.
+- Render's health check path is `/govbot/health`, managed by the `GovBot` Render Blueprint (auto-sync off; plan and approve changes to `render.yaml` before they apply).
 - Vercel production `BACKEND_URL` and `NEXT_PUBLIC_API_URL` must point at the Render URL. `NEXT_PUBLIC_*` values are baked in at build time, so redeploy Vercel after changing them.
 - Quick end-to-end check: `curl https://govbot-fawn.vercel.app/api/analytics/summary` should return JSON from FastAPI, not an ngrok or Vercel error page.
 
