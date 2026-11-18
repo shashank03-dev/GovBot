@@ -9,7 +9,9 @@ Provides aggregated data for government officials:
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
+from typing import Any, Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from gov_agent.application_store import latest_applications_by_phone_portal
@@ -18,6 +20,28 @@ from gov_agent.official_auth import require_official_auth
 
 logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_official_auth)])
+
+# Handlers are plain ``def`` so FastAPI runs them in its threadpool: the
+# Supabase client is synchronous and would otherwise block the event loop,
+# serialising every dashboard request behind each other. Independent
+# queries inside a handler also run concurrently on this pool.
+_QUERY_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="analytics")
+
+
+def _parallel(*calls: Callable[[], Any]) -> list[Any]:
+    """Run independent Supabase queries concurrently, preserving order."""
+    futures = [_QUERY_POOL.submit(call) for call in calls]
+    return [future.result() for future in futures]
+
+
+def _count(table: str, **eq: Any) -> Callable[[], int]:
+    """Exact row count without transferring rows (HEAD request)."""
+    def run() -> int:
+        query = supabase.table(table).select("*", count="exact", head=True)
+        for column, value in eq.items():
+            query = query.eq(column, value)
+        return query.execute().count or 0
+    return run
 
 
 class DateRangeRequest(BaseModel):
@@ -33,44 +57,36 @@ def _get_default_date_range(days: int = 30) -> tuple[str, str]:
 
 
 @router.get("/analytics/overview")
-async def get_analytics_overview():
+def get_analytics_overview():
     """Get high-level dashboard metrics."""
     
     try:
-        apps_result = (
-            supabase.table("applications")
-            .select("phone, portal, status, submitted_at")
-            .order("submitted_at", desc=True)
-            .execute()
+        apps_result, total_credentials, disburse_result, verified_banks, fraud_flags = _parallel(
+            lambda: (
+                supabase.table("applications")
+                .select("phone, portal, status, submitted_at")
+                .order("submitted_at", desc=True)
+                .execute()
+            ),
+            _count("verifiable_credentials"),
+            lambda: (
+                supabase.table("disbursement_tracking")
+                .select("amount")
+                .eq("status", "credited")
+                .execute()
+            ),
+            _count("bank_verifications", verified=True),
+            _count("fraud_flags"),
         )
         applications = latest_applications_by_phone_portal(apps_result.data or [])
         total_applications = len(applications)
-        
+
         status_counts = {}
         for status in ["submitted", "approved", "rejected", "processing"]:
             status_counts[status] = sum(1 for app in applications if app.get("status") == status)
-        
-        # Total credentials issued
-        creds_result = supabase.table("verifiable_credentials").select("*", count="exact").execute()
-        total_credentials = creds_result.count or 0
-        
-        # Total disbursements
-        disburse_result = (
-            supabase.table("disbursement_tracking")
-            .select("amount")
-            .eq("status", "credited")
-            .execute()
-        )
+
         total_disbursed = sum(d.get("amount", 0) for d in (disburse_result.data or []))
-        
-        # Bank verifications
-        bank_result = supabase.table("bank_verifications").select("*", count="exact").eq("verified", True).execute()
-        verified_banks = bank_result.count or 0
-        
-        # Fraud flags
-        fraud_result = supabase.table("fraud_flags").select("*", count="exact").execute()
-        fraud_flags = fraud_result.count or 0
-        
+
         # Today's applications
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         today_applications = sum(
@@ -94,7 +110,7 @@ async def get_analytics_overview():
 
 
 @router.get("/analytics/applications/timeline")
-async def get_application_timeline(days: int = 30):
+def get_application_timeline(days: int = 30):
     """Get daily application counts for the last N days."""
     
     try:
@@ -142,33 +158,30 @@ async def get_application_timeline(days: int = 30):
 
 
 @router.get("/analytics/fraud/summary")
-async def get_fraud_summary():
+def get_fraud_summary():
     """Get fraud detection summary."""
     
     try:
-        # Total fraud flags
-        total_result = supabase.table("fraud_flags").select("*", count="exact").execute()
-        total_flags = total_result.count or 0
-        
-        # Recent flags (last 7 days)
         week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        recent_result = (
-            supabase.table("fraud_flags")
-            .select("*", count="exact")
-            .gte("flagged_at", week_ago)
-            .execute()
+        total_flags, recent_flags, flags_result = _parallel(
+            _count("fraud_flags"),
+            lambda: (
+                supabase.table("fraud_flags")
+                .select("*", count="exact", head=True)
+                .gte("flagged_at", week_ago)
+                .execute()
+                .count
+                or 0
+            ),
+            lambda: (
+                supabase.table("fraud_flags")
+                .select("*")
+                .order("flagged_at", desc=True)
+                .limit(50)
+                .execute()
+            ),
         )
-        recent_flags = recent_result.count or 0
-        
-        # Get all flags with details
-        flags_result = (
-            supabase.table("fraud_flags")
-            .select("*")
-            .order("flagged_at", desc=True)
-            .limit(50)
-            .execute()
-        )
-        
+
         # Unique fraudsters (by Aadhaar hash)
         unique_hashes = set()
         for flag in (flags_result.data or []):
@@ -187,47 +200,36 @@ async def get_fraud_summary():
 
 
 @router.get("/analytics/disbursements/summary")
-async def get_disbursement_summary():
+def get_disbursement_summary():
     """Get scholarship disbursement summary."""
     
     try:
-        # By status
-        status_counts = {}
-        for status in ["pending", "processing", "credited", "failed"]:
-            result = (
+        statuses = ["pending", "processing", "credited", "failed"]
+
+        def amounts(status: str) -> Callable[[], Any]:
+            return lambda: (
                 supabase.table("disbursement_tracking")
-                .select("*", count="exact")
+                .select("amount")
                 .eq("status", status)
                 .execute()
             )
-            status_counts[status] = result.count or 0
-        
-        # Total amounts
-        pending_result = (
-            supabase.table("disbursement_tracking")
-            .select("amount")
-            .eq("status", "pending")
-            .execute()
+
+        *counts, pending_result, credited_result, recent_result = _parallel(
+            *(_count("disbursement_tracking", status=status) for status in statuses),
+            amounts("pending"),
+            amounts("credited"),
+            lambda: (
+                supabase.table("disbursement_tracking")
+                .select("*, applications(confirmation_number)")
+                .order("created_at", desc=True)
+                .limit(20)
+                .execute()
+            ),
         )
+        status_counts = dict(zip(statuses, counts))
         pending_amount = sum(d.get("amount", 0) for d in (pending_result.data or []))
-        
-        credited_result = (
-            supabase.table("disbursement_tracking")
-            .select("amount")
-            .eq("status", "credited")
-            .execute()
-        )
         credited_amount = sum(d.get("amount", 0) for d in (credited_result.data or []))
-        
-        # Recent disbursements
-        recent_result = (
-            supabase.table("disbursement_tracking")
-            .select("*, applications(confirmation_number)")
-            .order("created_at", desc=True)
-            .limit(20)
-            .execute()
-        )
-        
+
         return {
             "status_counts": status_counts,
             "pending_amount_inr": pending_amount,
@@ -241,7 +243,7 @@ async def get_disbursement_summary():
 
 
 @router.get("/analytics/regional")
-async def get_regional_analytics():
+def get_regional_analytics():
     """Get regional/state-wise analytics."""
     
     try:
@@ -286,42 +288,37 @@ async def get_regional_analytics():
 
 
 @router.get("/analytics/realtime")
-async def get_realtime_stats():
+def get_realtime_stats():
     """Get real-time statistics (for live dashboard updates)."""
     
     try:
-        # Last hour applications
-        hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        hour_result = (
-            supabase.table("applications")
-            .select("phone, portal, submitted_at")
-            .gte("submitted_at", hour_ago)
-            .order("submitted_at", desc=True)
-            .execute()
+        now = datetime.now(timezone.utc)
+        hour_ago = (now - timedelta(hours=1)).isoformat()
+        fifteen_min_ago = (now - timedelta(minutes=15)).isoformat()
+        hour_result, active_sessions, pending_disbursements = _parallel(
+            lambda: (
+                supabase.table("applications")
+                .select("phone, portal, submitted_at")
+                .gte("submitted_at", hour_ago)
+                .order("submitted_at", desc=True)
+                .execute()
+            ),
+            lambda: (
+                supabase.table("sessions")
+                .select("*", count="exact", head=True)
+                .gte("updated_at", fifteen_min_ago)
+                .execute()
+                .count
+                or 0
+            ),
+            _count("disbursement_tracking", status="pending"),
         )
         last_hour_applications = latest_applications_by_phone_portal(hour_result.data or [])
-        
-        # Active sessions (last 15 minutes)
-        fifteen_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
-        sessions_result = (
-            supabase.table("sessions")
-            .select("*", count="exact")
-            .gte("updated_at", fifteen_min_ago)
-            .execute()
-        )
-        
-        # Pending disbursements
-        pending_result = (
-            supabase.table("disbursement_tracking")
-            .select("*", count="exact")
-            .eq("status", "pending")
-            .execute()
-        )
-        
+
         return {
             "last_hour_applications": len(last_hour_applications),
-            "active_sessions": sessions_result.count or 0,
-            "pending_disbursements": pending_result.count or 0,
+            "active_sessions": active_sessions,
+            "pending_disbursements": pending_disbursements,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         

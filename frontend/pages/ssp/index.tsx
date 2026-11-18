@@ -52,8 +52,8 @@ export default function SSPHomePage() {
             <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-full bg-[radial-gradient(circle_at_50%_45%,#f9edb0,#f5f5f5_70%)] text-7xl">
               🏛️
             </div>
-            <div className="mt-5 text-[26px] text-[#111]">{content.governmentName}</div>
-            <h1 className="mt-4 text-[66px] font-light uppercase tracking-[0.03em] text-black">
+            <div className="mt-5 text-[20px] text-[#111] sm:text-[26px]">{content.governmentName}</div>
+            <h1 className="mt-4 break-words text-[34px] font-light uppercase leading-tight tracking-[0.03em] text-black sm:text-[48px] md:text-[66px]">
               {content.landing.title}
             </h1>
           </div>

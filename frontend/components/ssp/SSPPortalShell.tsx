@@ -173,7 +173,7 @@ export default function SSPPortalShell({
         <div className="mt-14 border-t border-[#efe6a6] bg-[#f5efb7] px-6 py-8 text-[#66707b]">
           <div className="grid gap-8 md:grid-cols-2">
             {HELPLINES.map((item) => (
-              <div key={item.titleEn}>
+              <div key={item.titleEn} className="min-w-0 break-words">
                 <div className="text-lg uppercase tracking-[0.08em] text-[#6f6040]">
                   {text(language, item.titleEn, item.titleKn)}
                 </div>
