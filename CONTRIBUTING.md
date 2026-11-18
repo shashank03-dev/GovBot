@@ -26,11 +26,16 @@ This repo now has one enforced workflow surface. Use the root `Makefile` instead
 - `make build` runs the production Next.js build.
 - `make check` runs the full repo gate: backend tests, frontend tests, lint, typecheck, and build.
 
+## Deployment Topology
+
+- Frontend: Vercel project `govbot` (root directory `frontend`), production at `https://govbot-fawn.vercel.app`.
+- Backend: Render web service `govbot-backend` from `render.yaml`, at `https://govbot-backend-tj1i.onrender.com` (health: `/govbot/health`).
+- Vercel production `BACKEND_URL` and `NEXT_PUBLIC_API_URL` must point at the Render URL. `NEXT_PUBLIC_*` values are baked in at build time, so redeploy Vercel after changing them.
+- Quick end-to-end check: `curl https://govbot-fawn.vercel.app/api/analytics/summary` should return JSON from FastAPI, not an ngrok or Vercel error page.
+
 ## Vercel Demo Setup
 
-The tracked frontend is already linked to the `govbot` Vercel project under `frontend/.vercel/project.json`.
-
-For demo deployments where Vercel serves the frontend and ngrok exposes the backend:
+For temporary rehearsals where Vercel serves the frontend and ngrok exposes a local backend (switch the vars back to the Render URL afterwards, or every proxied route breaks when the tunnel closes):
 
 1. In the Vercel frontend project, set:
    `BACKEND_URL=https://<your-ngrok-host>`
